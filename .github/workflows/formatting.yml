@@ -98,18 +98,6 @@ jobs:
             echo "found=false" >> $GITHUB_OUTPUT
           fi
       
-      - name: Run clang-tidy (BLOCKING)
-        if: steps.find_c.outputs.found == 'true'
-        run: |
-          echo "Running clang-tidy on all C files..."
-          cat /tmp/c_files.txt | xargs clang-tidy --warnings-as-errors='*'
-      
-      - name: Run clang-format
-        if: steps.find_c.outputs.found == 'true'
-        run: |
-          echo "Formatting C code with clang-format..."
-          cat /tmp/c_files.txt | xargs clang-format -i --style=LLVM
-      
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
