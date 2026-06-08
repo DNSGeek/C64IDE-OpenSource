@@ -1,0 +1,67 @@
+// VCCore.xcconfig
+// This file is included by the C64IDE target's xcconfig (or applied
+// directly as per-file flags on VC64Bridge.mm in Build Phases).
+//
+// To use: In Xcode, select VC64Bridge.mm in Build Phases → Compile Sources
+// and paste the VCCORE_FLAGS value as the per-file compiler flags.
+// OR include this xcconfig in your target's Debug/Release xcconfig files.
+
+// ⚠️ UPDATE THIS PATH to point to your local VCCore checkout
+BASE = /full/path/to/virtualc64_git_source
+
+VCCORE_INCLUDE_FLAGS = \
+    -fno-modules \
+    -I$(BASE)/VCCore \
+    -I$(BASE)/VCCore/Components \
+    -I$(BASE)/VCCore/Components/CIA \
+    -I$(BASE)/VCCore/Components/CPU \
+    -I$(BASE)/VCCore/Components/CPU/Peddle \
+    -I$(BASE)/VCCore/Components/Memory \
+    -I$(BASE)/VCCore/Components/SID \
+    -I$(BASE)/VCCore/Components/SID/resid \
+    -I$(BASE)/VCCore/Components/VICII \
+    -I$(BASE)/VCCore/Infrastructure \
+    -I$(BASE)/VCCore/Media \
+    -I$(BASE)/VCCore/Media/Cartridges \
+    -I$(BASE)/VCCore/Media/Cartridges/CustomCartridges \
+    -I$(BASE)/VCCore/Misc/RegressionTester \
+    -I$(BASE)/VCCore/Misc/RemoteServers \
+    -I$(BASE)/VCCore/Misc/RetroShell \
+    -I$(BASE)/VCCore/Peripherals/Datasette \
+    -I$(BASE)/VCCore/Peripherals/Drive \
+    -I$(BASE)/VCCore/Peripherals/Joystick \
+    -I$(BASE)/VCCore/Peripherals/Keyboard \
+    -I$(BASE)/VCCore/Peripherals/Monitor \
+    -I$(BASE)/VCCore/Peripherals/Mouse \
+    -I$(BASE)/VCCore/Peripherals/Network \
+    -I$(BASE)/VCCore/Peripherals/Paddle \
+    -I$(BASE)/VCCore/Ports \
+    -I$(BASE)/VCCore/rvlib \
+    -I$(BASE)/VCCore/rvlib/Devices \
+    -I$(BASE)/VCCore/rvlib/FileSystems \
+    -I$(BASE)/VCCore/rvlib/FileSystems/Amiga \
+    -I$(BASE)/VCCore/rvlib/FileSystems/CBM \
+    -I$(BASE)/VCCore/rvlib/Images \
+    -I$(BASE)/VCCore/rvlib/Images/ADF \
+    -I$(BASE)/VCCore/rvlib/Images/D64 \
+    -I$(BASE)/VCCore/rvlib/Images/DMS \
+    -I$(BASE)/VCCore/rvlib/Images/EADF \
+    -I$(BASE)/VCCore/rvlib/Images/Encoders \
+    -I$(BASE)/VCCore/rvlib/Images/EXE \
+    -I$(BASE)/VCCore/rvlib/Images/HDF \
+    -I$(BASE)/VCCore/rvlib/Images/IMG \
+    -I$(BASE)/VCCore/rvlib/Images/ST \
+    -I$(BASE)/VCCore/rvlib/ThirdParty/xdms \
+    -I$(BASE)/VCCore/ThirdParty \
+    -I$(BASE)/VCCore/utlib/include/utl \
+    -I$(BASE)/VCCore/utlib/include/utl/abilities \
+    -I$(BASE)/VCCore/utlib/include/utl/chrono \
+    -I$(BASE)/VCCore/utlib/include/utl/concurrency \
+    -I$(BASE)/VCCore/utlib/include/utl/io \
+    -I$(BASE)/VCCore/utlib/include/utl/primitives \
+    -I$(BASE)/VCCore/utlib/include/utl/storage \
+    -I$(BASE)/VCCore/utlib/include/utl/support \
+    -I$(BASE)/VCCore/utlib/include/utl/types \
+    -I$(BASE)/VCCore/utlib/include/utl/wrappers \
+    -I$(BASE)/VCCore/utlib/thirdparty
+

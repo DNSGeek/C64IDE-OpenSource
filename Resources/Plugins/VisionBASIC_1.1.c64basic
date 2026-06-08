@@ -1,0 +1,721 @@
+{
+  "name": "VisionBASIC 1.1",
+  "version": "1.1",
+  "author": "peepo",
+  "description": "VisionBASIC 1.1 enhanced BASIC for the Commodore 64. Adds graphics, sound, sprite, interrupt, and inline assembly commands.",
+  "url": "https://www.visionbasic.net",
+  "tokenBase": 203,
+  "extendsBasicV2": true,
+  "activationSYS": 2368,
+  "assemblerMnemonics": [
+    "ADC",
+    "AND",
+    "ASL",
+    "BCC",
+    "BCS",
+    "BEQ",
+    "BIT",
+    "BMI",
+    "BNE",
+    "BPL",
+    "BRK",
+    "BVC",
+    "BVS",
+    "CLC",
+    "CLD",
+    "CLI",
+    "CLV",
+    "CMP",
+    "CPX",
+    "CPY",
+    "DEC",
+    "DEX",
+    "DEY",
+    "EOR",
+    "INC",
+    "INX",
+    "INY",
+    "JMP",
+    "JSR",
+    "LDA",
+    "LDX",
+    "LDY",
+    "LSR",
+    "NOP",
+    "ORA",
+    "PHA",
+    "PHP",
+    "PLA",
+    "PLP",
+    "ROL",
+    "ROR",
+    "RTI",
+    "RTS",
+    "SBC",
+    "SEC",
+    "SED",
+    "SEI",
+    "STA",
+    "STX",
+    "STY",
+    "TAX",
+    "TAY",
+    "TSX",
+    "TXA",
+    "TXS",
+    "TYA"
+  ],
+  "compositeKeywords": [
+    {
+      "keyword": "LONGPEEK",
+      "tokens": [
+        "LONG",
+        "PEEK"
+      ],
+      "description": "Peek a 16-bit value from memory"
+    },
+    {
+      "keyword": "REUPEEK",
+      "tokens": [
+        "REU",
+        "PEEK"
+      ],
+      "description": "Peek a byte from REU memory"
+    },
+    {
+      "keyword": "HALTINT",
+      "tokens": [
+        "HALT",
+        "INT"
+      ],
+      "description": "Halt interrupt processing"
+    }
+  ],
+  "keywords": [
+    {
+      "keyword": "STATUS",
+      "token": 203,
+      "type": "function",
+      "category": "system",
+      "syntax": "STATUS",
+      "description": "Returns the status of the last I/O operation (replaces GO token)",
+      "example": "PRINT STATUS"
+    },
+    {
+      "keyword": "AT",
+      "token": 204,
+      "type": "procedure",
+      "category": "screen",
+      "syntax": "AT col, row",
+      "description": "Position the cursor at the specified column and row",
+      "parameters": [
+        {
+          "name": "col",
+          "type": "integer",
+          "range": "0-39"
+        },
+        {
+          "name": "row",
+          "type": "integer",
+          "range": "0-24"
+        }
+      ],
+      "example": "AT 10, 5 : PRINT \"HELLO\""
+    },
+    {
+      "keyword": "BORDER",
+      "token": 205,
+      "type": "procedure",
+      "category": "screen",
+      "syntax": "BORDER color",
+      "description": "Set the border color",
+      "parameters": [
+        {
+          "name": "color",
+          "type": "integer",
+          "range": "0-15"
+        }
+      ],
+      "example": "BORDER 0"
+    },
+    {
+      "keyword": "SCREEN",
+      "token": 206,
+      "type": "procedure",
+      "category": "screen",
+      "syntax": "SCREEN color",
+      "description": "Set the screen background color",
+      "parameters": [
+        {
+          "name": "color",
+          "type": "integer",
+          "range": "0-15"
+        }
+      ],
+      "example": "SCREEN 6"
+    },
+    {
+      "keyword": "CURSOR",
+      "token": 207,
+      "type": "procedure",
+      "category": "screen",
+      "syntax": "CURSOR mode",
+      "description": "Enable or disable the cursor",
+      "parameters": [
+        {
+          "name": "mode",
+          "type": "integer",
+          "range": "0-1",
+          "description": "0=off, 1=on"
+        }
+      ]
+    },
+    {
+      "keyword": "HSCROLL",
+      "token": 208,
+      "type": "procedure",
+      "category": "screen",
+      "syntax": "HSCROLL offset",
+      "description": "Set horizontal scroll offset (0-7 pixels)"
+    },
+    {
+      "keyword": "VSCROLL",
+      "token": 209,
+      "type": "procedure",
+      "category": "screen",
+      "syntax": "VSCROLL offset",
+      "description": "Set vertical scroll offset (0-7 pixels)"
+    },
+    {
+      "keyword": "MODE",
+      "token": 210,
+      "type": "procedure",
+      "category": "graphics",
+      "syntax": "MODE n",
+      "description": "Set graphics mode (text, hires, multicolor, etc.)"
+    },
+    {
+      "keyword": "MOB",
+      "token": 211,
+      "type": "procedure",
+      "category": "graphics",
+      "syntax": "MOB sprite#, x, y",
+      "description": "Position a sprite (MOB) on screen",
+      "parameters": [
+        {
+          "name": "sprite#",
+          "type": "integer",
+          "range": "0-7"
+        },
+        {
+          "name": "x",
+          "type": "integer",
+          "range": "0-511"
+        },
+        {
+          "name": "y",
+          "type": "integer",
+          "range": "0-255"
+        }
+      ],
+      "example": "MOB 0, 160, 100"
+    },
+    {
+      "keyword": "MOBCOLOR",
+      "token": 212,
+      "type": "procedure",
+      "category": "graphics",
+      "syntax": "MOBCOLOR sprite#, color",
+      "description": "Set a sprite's color",
+      "parameters": [
+        {
+          "name": "sprite#",
+          "type": "integer",
+          "range": "0-7"
+        },
+        {
+          "name": "color",
+          "type": "integer",
+          "range": "0-15"
+        }
+      ]
+    },
+    {
+      "keyword": "MOBSHAPE",
+      "token": 213,
+      "type": "procedure",
+      "category": "graphics",
+      "syntax": "MOBSHAPE sprite#, pointer",
+      "description": "Set a sprite's shape data pointer"
+    },
+    {
+      "keyword": "MOBSIZE",
+      "token": 214,
+      "type": "procedure",
+      "category": "graphics",
+      "syntax": "MOBSIZE sprite#, xexpand, yexpand",
+      "description": "Set sprite expansion (double size)"
+    },
+    {
+      "keyword": "MOBON",
+      "token": 215,
+      "type": "procedure",
+      "category": "graphics",
+      "syntax": "MOBON sprite#",
+      "description": "Enable a sprite"
+    },
+    {
+      "keyword": "MOBOFF",
+      "token": 216,
+      "type": "procedure",
+      "category": "graphics",
+      "syntax": "MOBOFF sprite#",
+      "description": "Disable a sprite"
+    },
+    {
+      "keyword": "COLLISION",
+      "token": 217,
+      "type": "function",
+      "category": "graphics",
+      "syntax": "COLLISION(sprite#)",
+      "description": "Check sprite collision status"
+    },
+    {
+      "keyword": "PLOT",
+      "token": 218,
+      "type": "procedure",
+      "category": "graphics",
+      "syntax": "PLOT x, y, color",
+      "description": "Plot a pixel in bitmap mode"
+    },
+    {
+      "keyword": "LINE",
+      "token": 219,
+      "type": "procedure",
+      "category": "graphics",
+      "syntax": "LINE x1, y1, x2, y2, color",
+      "description": "Draw a line in bitmap mode"
+    },
+    {
+      "keyword": "CIRCLE",
+      "token": 220,
+      "type": "procedure",
+      "category": "graphics",
+      "syntax": "CIRCLE cx, cy, radius, color",
+      "description": "Draw a circle in bitmap mode"
+    },
+    {
+      "keyword": "FILL",
+      "token": 221,
+      "type": "procedure",
+      "category": "graphics",
+      "syntax": "FILL x, y, color",
+      "description": "Flood fill an area in bitmap mode"
+    },
+    {
+      "keyword": "VOICE",
+      "token": 222,
+      "type": "procedure",
+      "category": "sound",
+      "syntax": "VOICE voice#, waveform, frequency, pulsewidth",
+      "description": "Configure a SID voice",
+      "parameters": [
+        {
+          "name": "voice#",
+          "type": "integer",
+          "range": "1-3"
+        },
+        {
+          "name": "waveform",
+          "type": "integer",
+          "description": "16=tri, 32=saw, 64=pulse, 128=noise"
+        }
+      ]
+    },
+    {
+      "keyword": "ADSR",
+      "token": 223,
+      "type": "procedure",
+      "category": "sound",
+      "syntax": "ADSR voice#, attack, decay, sustain, release",
+      "description": "Set ADSR envelope for a SID voice",
+      "parameters": [
+        {
+          "name": "voice#",
+          "type": "integer",
+          "range": "1-3"
+        },
+        {
+          "name": "attack",
+          "type": "integer",
+          "range": "0-15"
+        },
+        {
+          "name": "decay",
+          "type": "integer",
+          "range": "0-15"
+        },
+        {
+          "name": "sustain",
+          "type": "integer",
+          "range": "0-15"
+        },
+        {
+          "name": "release",
+          "type": "integer",
+          "range": "0-15"
+        }
+      ],
+      "example": "ADSR 1, 0, 9, 0, 0"
+    },
+    {
+      "keyword": "VOLUME",
+      "token": 224,
+      "type": "procedure",
+      "category": "sound",
+      "syntax": "VOLUME level",
+      "description": "Set SID master volume",
+      "parameters": [
+        {
+          "name": "level",
+          "type": "integer",
+          "range": "0-15"
+        }
+      ]
+    },
+    {
+      "keyword": "FILTER",
+      "token": 225,
+      "type": "procedure",
+      "category": "sound",
+      "syntax": "FILTER cutoff, resonance, type",
+      "description": "Configure SID filter"
+    },
+    {
+      "keyword": "PLAY",
+      "token": 226,
+      "type": "procedure",
+      "category": "sound",
+      "syntax": "PLAY voice#",
+      "description": "Gate on — start playing the current note on a voice"
+    },
+    {
+      "keyword": "QUIET",
+      "token": 227,
+      "type": "procedure",
+      "category": "sound",
+      "syntax": "QUIET",
+      "description": "Silence all SID voices"
+    },
+    {
+      "keyword": "JOY",
+      "token": 228,
+      "type": "function",
+      "category": "io",
+      "syntax": "JOY(port)",
+      "description": "Read joystick state",
+      "parameters": [
+        {
+          "name": "port",
+          "type": "integer",
+          "range": "1-2"
+        }
+      ],
+      "example": "IF JOY(1) AND 16 THEN PRINT \"FIRE!\""
+    },
+    {
+      "keyword": "FIRE",
+      "token": 229,
+      "type": "function",
+      "category": "io",
+      "syntax": "FIRE(port)",
+      "description": "Check if joystick fire button is pressed (returns 0 or 1)"
+    },
+    {
+      "keyword": "PADDLE",
+      "token": 230,
+      "type": "function",
+      "category": "io",
+      "syntax": "PADDLE(n)",
+      "description": "Read paddle controller value"
+    },
+    {
+      "keyword": "ASSEM",
+      "token": 231,
+      "type": "system",
+      "category": "assembly",
+      "syntax": "ASSEM",
+      "description": "Begin inline assembly block. Use BASIC to end the block.",
+      "example": "ASSEM\n  LDA #$00\n  STA $D020\nBASIC",
+      "notes": "Code between ASSEM and BASIC is assembled as 6502 machine code"
+    },
+    {
+      "keyword": "BASIC",
+      "token": 232,
+      "type": "system",
+      "category": "assembly",
+      "syntax": "BASIC",
+      "description": "End inline assembly block and return to BASIC mode"
+    },
+    {
+      "keyword": "LONG",
+      "token": 233,
+      "type": "function",
+      "category": "memory",
+      "syntax": "LONG address",
+      "description": "16-bit POKE/PEEK prefix. Use with PEEK for LONGPEEK."
+    },
+    {
+      "keyword": "HALT",
+      "token": 234,
+      "type": "procedure",
+      "category": "system",
+      "syntax": "HALT",
+      "description": "Halt execution (used with INT for HALTINT)"
+    },
+    {
+      "keyword": "INTERRUPT",
+      "token": 235,
+      "type": "procedure",
+      "category": "system",
+      "syntax": "INTERRUPT line#",
+      "description": "Set up a raster interrupt to call a BASIC subroutine",
+      "parameters": [
+        {
+          "name": "line#",
+          "type": "integer",
+          "range": "0-311",
+          "description": "Raster line number"
+        }
+      ],
+      "example": "INTERRUPT 100 : REM CALL SUBROUTINE AT RASTER LINE 100"
+    },
+    {
+      "keyword": "FAST",
+      "token": 236,
+      "type": "procedure",
+      "category": "system",
+      "syntax": "FAST",
+      "description": "Enable fast mode (blanks screen for ~20% speed increase)"
+    },
+    {
+      "keyword": "SLOW",
+      "token": 237,
+      "type": "procedure",
+      "category": "system",
+      "syntax": "SLOW",
+      "description": "Disable fast mode (restore screen)"
+    },
+    {
+      "keyword": "COPY",
+      "token": 238,
+      "type": "procedure",
+      "category": "memory",
+      "syntax": "COPY source, dest, length",
+      "description": "Copy a block of memory"
+    },
+    {
+      "keyword": "SWAP",
+      "token": 239,
+      "type": "procedure",
+      "category": "memory",
+      "syntax": "SWAP var1, var2",
+      "description": "Swap the values of two variables"
+    },
+    {
+      "keyword": "BANK",
+      "token": 240,
+      "type": "procedure",
+      "category": "memory",
+      "syntax": "BANK n",
+      "description": "Select memory bank configuration"
+    },
+    {
+      "keyword": "REU",
+      "token": 241,
+      "type": "procedure",
+      "category": "memory",
+      "syntax": "REU command",
+      "description": "RAM Expansion Unit operations (peek/poke/copy)",
+      "notes": "Use with PEEK for REUPEEK"
+    },
+    {
+      "keyword": "CHAR",
+      "token": 242,
+      "type": "procedure",
+      "category": "screen",
+      "syntax": "CHAR x, y, char, color",
+      "description": "Place a character at screen position"
+    },
+    {
+      "keyword": "WINDOW",
+      "token": 243,
+      "type": "procedure",
+      "category": "screen",
+      "syntax": "WINDOW x1, y1, x2, y2",
+      "description": "Define a text window region"
+    },
+    {
+      "keyword": "COLOR",
+      "token": 244,
+      "type": "procedure",
+      "category": "screen",
+      "syntax": "COLOR foreground, background",
+      "description": "Set text foreground and background colors"
+    },
+    {
+      "keyword": "MULTICOLOR",
+      "token": 245,
+      "type": "procedure",
+      "category": "graphics",
+      "syntax": "MULTICOLOR color1, color2",
+      "description": "Set multicolor mode colors"
+    },
+    {
+      "keyword": "ELSE",
+      "token": 246,
+      "type": "conditional",
+      "category": "flow",
+      "syntax": "IF condition THEN action ELSE alternative",
+      "description": "Alternative branch in IF/THEN statement"
+    },
+    {
+      "keyword": "REPEAT",
+      "token": 247,
+      "type": "loop",
+      "category": "flow",
+      "syntax": "REPEAT",
+      "description": "Begin a REPEAT/UNTIL loop"
+    },
+    {
+      "keyword": "UNTIL",
+      "token": 248,
+      "type": "loop",
+      "category": "flow",
+      "syntax": "UNTIL condition",
+      "description": "End a REPEAT/UNTIL loop — loops until condition is true"
+    },
+    {
+      "keyword": "WHILE",
+      "token": 249,
+      "type": "loop",
+      "category": "flow",
+      "syntax": "WHILE condition",
+      "description": "Begin a WHILE/WEND loop — loops while condition is true"
+    },
+    {
+      "keyword": "WEND",
+      "token": 250,
+      "type": "loop",
+      "category": "flow",
+      "syntax": "WEND",
+      "description": "End a WHILE/WEND loop"
+    },
+    {
+      "keyword": "HEX$",
+      "token": 251,
+      "type": "function",
+      "category": "string",
+      "syntax": "HEX$(value)",
+      "description": "Convert a number to its hexadecimal string representation",
+      "example": "PRINT HEX$(53280)"
+    },
+    {
+      "keyword": "BIN$",
+      "token": 252,
+      "type": "function",
+      "category": "string",
+      "syntax": "BIN$(value)",
+      "description": "Convert a number to its binary string representation"
+    },
+    {
+      "keyword": "DEEK",
+      "token": 253,
+      "type": "function",
+      "category": "memory",
+      "syntax": "DEEK(address)",
+      "description": "Read a 16-bit value from memory (double PEEK)",
+      "example": "PRINT DEEK($0300)"
+    },
+    {
+      "keyword": "DOKE",
+      "token": 254,
+      "type": "procedure",
+      "category": "memory",
+      "syntax": "DOKE address, value",
+      "description": "Write a 16-bit value to memory (double POKE)",
+      "example": "DOKE $0300, 49152"
+    },
+    {
+      "keyword": "AUTO",
+      "token": 255,
+      "type": "command",
+      "category": "editor",
+      "description": "Auto line numbering in the editor",
+      "documented": false,
+      "notes": "Editor command only — requires a loaded program. Shows PROGRAM ONLY error if no program in memory."
+    },
+    {
+      "keyword": "PREV",
+      "token": 256,
+      "type": "command",
+      "category": "editor",
+      "description": "Previous line in editor",
+      "documented": false,
+      "notes": "Editor command only — shows PROGRAM ONLY error if no program in memory."
+    },
+    {
+      "keyword": "FILE",
+      "token": 257,
+      "type": "command",
+      "category": "system",
+      "description": "Opens undocumented settings window",
+      "documented": false
+    },
+    {
+      "keyword": "BMP",
+      "token": 258,
+      "type": "procedure",
+      "category": "graphics",
+      "description": "Bitmap operation (reserved/unimplemented)",
+      "documented": false,
+      "notes": "Returns SOMEONE GOOFED ERROR — unimplemented reserved token"
+    },
+    {
+      "keyword": "INTEGER",
+      "token": 259,
+      "type": "function",
+      "category": "math",
+      "description": "Integer type (reserved/unimplemented)",
+      "documented": false,
+      "notes": "Returns SOMEONE GOOFED ERROR"
+    },
+    {
+      "keyword": "DUBL",
+      "token": 260,
+      "type": "function",
+      "category": "math",
+      "description": "Double precision type (reserved/unimplemented)",
+      "documented": false,
+      "notes": "Returns SOMEONE GOOFED ERROR"
+    },
+    {
+      "keyword": "SUB",
+      "token": 261,
+      "type": "procedure",
+      "category": "flow",
+      "description": "Subroutine definition (reserved/unimplemented)",
+      "documented": false,
+      "notes": "Returns SOMEONE GOOFED ERROR"
+    },
+    {
+      "keyword": "TREND",
+      "token": 262,
+      "type": "function",
+      "category": "system",
+      "description": "Reserved/unimplemented",
+      "documented": false,
+      "notes": "Returns SOMEONE GOOFED ERROR"
+    }
+  ]
+}

@@ -1,0 +1,890 @@
+{
+  "name": "Commodore 128 BASIC 7.0",
+  "version": "7.0",
+  "author": "Commodore Business Machines",
+  "description": "BASIC 7.0 as found in the Commodore 128. Extends BASIC V2 with structured flow control (DO/LOOP/EXIT), disk commands, sprite control, music, hi-res graphics, and more. Uses two prefix bytes: $CE for function tokens and $FE for command tokens.",
+  "url": "https://www.c64-wiki.com/wiki/BASIC_7.0",
+  "extendsBasicV2": true,
+  "loadAddress": 7169,
+  "tokenPrefixes": [
+    {
+      "byte": 206,
+      "description": "CE-prefix: BASIC 7.0 extended functions"
+    },
+    {
+      "byte": 254,
+      "description": "FE-prefix: BASIC 7.0 extended commands"
+    }
+  ],
+  "keywords": [
+    {
+      "keyword": "RGR",
+      "token": 204,
+      "type": "function",
+      "category": "graphics",
+      "syntax": "RGR(n)",
+      "description": "Read graphics register n"
+    },
+    {
+      "keyword": "RCLR",
+      "token": 205,
+      "type": "function",
+      "category": "graphics",
+      "syntax": "RCLR(n)",
+      "description": "Read color register n"
+    },
+    {
+      "keyword": "JOY",
+      "token": 207,
+      "type": "function",
+      "category": "io",
+      "syntax": "JOY(n)",
+      "description": "Read joystick port n (1 or 2)",
+      "parameters": [
+        {
+          "name": "n",
+          "type": "integer",
+          "range": "1-2"
+        }
+      ],
+      "example": "IF JOY(1) AND 16 THEN PRINT \"FIRE!\""
+    },
+    {
+      "keyword": "RDOT",
+      "token": 208,
+      "type": "function",
+      "category": "graphics",
+      "syntax": "RDOT(x, y)",
+      "description": "Read the pixel value at graphics position x,y"
+    },
+    {
+      "keyword": "DEC",
+      "token": 209,
+      "type": "function",
+      "category": "math",
+      "syntax": "DEC(hex$)",
+      "description": "Convert a hexadecimal string to a decimal number",
+      "example": "PRINT DEC(\"FF\")"
+    },
+    {
+      "keyword": "HEX$",
+      "token": 210,
+      "type": "function",
+      "category": "string",
+      "syntax": "HEX$(n)",
+      "description": "Convert a decimal number to a hexadecimal string",
+      "example": "PRINT HEX$(255)"
+    },
+    {
+      "keyword": "ERR$",
+      "token": 211,
+      "type": "function",
+      "category": "system",
+      "syntax": "ERR$(n)",
+      "description": "Return the error message string for error number n"
+    },
+    {
+      "keyword": "INSTR",
+      "token": 212,
+      "type": "function",
+      "category": "string",
+      "syntax": "INSTR(string$, search$)",
+      "description": "Return position of search$ within string$ (1-based), or 0 if not found",
+      "example": "PRINT INSTR(\"HELLO\",\"LL\")"
+    },
+    {
+      "keyword": "ELSE",
+      "token": 213,
+      "type": "conditional",
+      "category": "flow",
+      "syntax": "IF condition THEN action ELSE alternative",
+      "description": "Alternative branch in an IF/THEN statement"
+    },
+    {
+      "keyword": "RESUME",
+      "token": 214,
+      "type": "command",
+      "category": "flow",
+      "syntax": "RESUME [line]",
+      "description": "Resume execution after a TRAP error handler"
+    },
+    {
+      "keyword": "TRAP",
+      "token": 215,
+      "type": "command",
+      "category": "flow",
+      "syntax": "TRAP line",
+      "description": "Set error trap — on error, GOTO line",
+      "example": "TRAP 9000"
+    },
+    {
+      "keyword": "TRON",
+      "token": 216,
+      "type": "command",
+      "category": "system",
+      "syntax": "TRON",
+      "description": "Enable program trace — prints each line number as it executes"
+    },
+    {
+      "keyword": "TROFF",
+      "token": 217,
+      "type": "command",
+      "category": "system",
+      "syntax": "TROFF",
+      "description": "Disable program trace"
+    },
+    {
+      "keyword": "SOUND",
+      "token": 218,
+      "type": "command",
+      "category": "sound",
+      "syntax": "SOUND voice, frequency, duration [,direction [,mindur [,wave [,pulse [,adsr]]]]]",
+      "description": "Generate a sound from the SID chip",
+      "example": "SOUND 1,1000,30"
+    },
+    {
+      "keyword": "VOL",
+      "token": 219,
+      "type": "command",
+      "category": "sound",
+      "syntax": "VOL n",
+      "description": "Set SID master volume (0-15)",
+      "parameters": [
+        {
+          "name": "n",
+          "type": "integer",
+          "range": "0-15"
+        }
+      ]
+    },
+    {
+      "keyword": "AUTO",
+      "token": 220,
+      "type": "command",
+      "category": "editor",
+      "syntax": "AUTO [start [,step]]",
+      "description": "Enable automatic line numbering",
+      "example": "AUTO 100,10"
+    },
+    {
+      "keyword": "PUDEF",
+      "token": 221,
+      "type": "command",
+      "category": "io",
+      "syntax": "PUDEF char$",
+      "description": "Define the fill, decimal point, comma, and space characters used by PRINT USING"
+    },
+    {
+      "keyword": "GRAPHIC",
+      "token": 222,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "GRAPHIC mode [,clear]",
+      "description": "Set graphics mode (0=text, 1=hires, 2=split hires, 3=multicolor, 4=split multicolor)",
+      "parameters": [
+        {
+          "name": "mode",
+          "type": "integer",
+          "range": "0-4"
+        },
+        {
+          "name": "clear",
+          "type": "integer",
+          "range": "0-1",
+          "description": "1=clear screen",
+          "optional": true
+        }
+      ],
+      "example": "GRAPHIC 1,1"
+    },
+    {
+      "keyword": "PAINT",
+      "token": 223,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "PAINT [mode,] x, y [,fcolor [,bcolor]]",
+      "description": "Flood fill an area starting at x,y"
+    },
+    {
+      "keyword": "CHAR",
+      "token": 224,
+      "type": "command",
+      "category": "screen",
+      "syntax": "CHAR [mode,] column, row, string$ [,color]",
+      "description": "Display a string at the specified screen position",
+      "example": "CHAR ,10,12,\"HELLO\",1"
+    },
+    {
+      "keyword": "BOX",
+      "token": 225,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "BOX [mode,] x1, y1, x2, y2 [,angle [,fill]]",
+      "description": "Draw a rectangle",
+      "example": "BOX ,10,10,150,100"
+    },
+    {
+      "keyword": "CIRCLE",
+      "token": 226,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "CIRCLE [mode,] x, y, rx [,ry [,start [,end [,fill]]]]",
+      "description": "Draw a circle or arc",
+      "example": "CIRCLE ,160,100,50"
+    },
+    {
+      "keyword": "GSHAPE",
+      "token": 227,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "GSHAPE string$, x, y [,mode]",
+      "description": "Retrieve a shape from the graphics screen into a string"
+    },
+    {
+      "keyword": "SSHAPE",
+      "token": 228,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "SSHAPE string$, x1, y1 [,x2, y2]",
+      "description": "Save a rectangular region of the graphics screen to a string"
+    },
+    {
+      "keyword": "DRAW",
+      "token": 229,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "DRAW [mode,] x1, y1 [TO x2, y2 ...]",
+      "description": "Draw lines on the graphics screen",
+      "example": "DRAW ,0,0 TO 319,199"
+    },
+    {
+      "keyword": "LOCATE",
+      "token": 230,
+      "type": "command",
+      "category": "screen",
+      "syntax": "LOCATE x, y",
+      "description": "Move the graphics cursor to x,y without drawing"
+    },
+    {
+      "keyword": "COLOR",
+      "token": 231,
+      "type": "command",
+      "category": "screen",
+      "syntax": "COLOR source, color [,luminance]",
+      "description": "Set color for the specified source (0=background, 1=foreground, etc.)"
+    },
+    {
+      "keyword": "SCNCLR",
+      "token": 232,
+      "type": "command",
+      "category": "screen",
+      "syntax": "SCNCLR [window]",
+      "description": "Clear the graphics screen or a defined window"
+    },
+    {
+      "keyword": "SCALE",
+      "token": 233,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "SCALE mode [,xmax [,ymax]]",
+      "description": "Enable or disable graphics coordinate scaling"
+    },
+    {
+      "keyword": "HELP",
+      "token": 234,
+      "type": "command",
+      "category": "system",
+      "syntax": "HELP",
+      "description": "Highlight the statement that caused the last error"
+    },
+    {
+      "keyword": "DO",
+      "token": 235,
+      "type": "loop",
+      "category": "flow",
+      "syntax": "DO",
+      "description": "Begin a DO/LOOP block",
+      "example": "DO\n  X=X+1\nLOOP UNTIL X>10"
+    },
+    {
+      "keyword": "LOOP",
+      "token": 236,
+      "type": "loop",
+      "category": "flow",
+      "syntax": "LOOP [UNTIL condition | WHILE condition]",
+      "description": "End a DO/LOOP block, with optional condition"
+    },
+    {
+      "keyword": "EXIT",
+      "token": 237,
+      "type": "loop",
+      "category": "flow",
+      "syntax": "EXIT",
+      "description": "Exit the current DO/LOOP or FOR/NEXT loop"
+    },
+    {
+      "keyword": "DIRECTORY",
+      "token": 238,
+      "type": "command",
+      "category": "io",
+      "syntax": "DIRECTORY [drive] [,pattern$]",
+      "description": "Display the disk directory",
+      "example": "DIRECTORY \"*.PRG\""
+    },
+    {
+      "keyword": "DSAVE",
+      "token": 239,
+      "type": "command",
+      "category": "io",
+      "syntax": "DSAVE \"filename\" [,D drive] [,U unit]",
+      "description": "Save the current BASIC program to disk"
+    },
+    {
+      "keyword": "DLOAD",
+      "token": 240,
+      "type": "command",
+      "category": "io",
+      "syntax": "DLOAD \"filename\" [,D drive] [,U unit]",
+      "description": "Load a BASIC program from disk"
+    },
+    {
+      "keyword": "HEADER",
+      "token": 241,
+      "type": "command",
+      "category": "io",
+      "syntax": "HEADER \"diskname\" [,I id] [,U unit]",
+      "description": "Format a disk",
+      "notes": "Destructive — erases all data"
+    },
+    {
+      "keyword": "SCRATCH",
+      "token": 242,
+      "type": "command",
+      "category": "io",
+      "syntax": "SCRATCH \"filename\" [,U unit]",
+      "description": "Delete a file from disk"
+    },
+    {
+      "keyword": "COLLECT",
+      "token": 243,
+      "type": "command",
+      "category": "io",
+      "syntax": "COLLECT [,U unit]",
+      "description": "Validate the disk — recover sectors from improperly closed files"
+    },
+    {
+      "keyword": "COPY",
+      "token": 244,
+      "type": "command",
+      "category": "io",
+      "syntax": "COPY \"source\" TO \"dest\" [,U unit]",
+      "description": "Copy a file on disk"
+    },
+    {
+      "keyword": "RENAME",
+      "token": 245,
+      "type": "command",
+      "category": "io",
+      "syntax": "RENAME \"oldname\" TO \"newname\" [,U unit]",
+      "description": "Rename a file on disk"
+    },
+    {
+      "keyword": "BACKUP",
+      "token": 246,
+      "type": "command",
+      "category": "io",
+      "syntax": "BACKUP [,U unit]",
+      "description": "Copy an entire disk to another disk"
+    },
+    {
+      "keyword": "DELETE",
+      "token": 247,
+      "type": "command",
+      "category": "editor",
+      "syntax": "DELETE firstline [,lastline]",
+      "description": "Delete one or more program lines"
+    },
+    {
+      "keyword": "RENUMBER",
+      "token": 248,
+      "type": "command",
+      "category": "editor",
+      "syntax": "RENUMBER [start [,step [,firstline [,lastline]]]]",
+      "description": "Renumber program lines",
+      "example": "RENUMBER 100,10"
+    },
+    {
+      "keyword": "KEY",
+      "token": 249,
+      "type": "command",
+      "category": "system",
+      "syntax": "KEY n, string$",
+      "description": "Assign a string to a function key",
+      "example": "KEY 1,\"RUN\""
+    },
+    {
+      "keyword": "MONITOR",
+      "token": 250,
+      "type": "command",
+      "category": "system",
+      "syntax": "MONITOR",
+      "description": "Enter the machine code monitor"
+    },
+    {
+      "keyword": "USING",
+      "token": 251,
+      "type": "command",
+      "category": "io",
+      "syntax": "PRINT USING format$; values",
+      "description": "Format numbers for PRINT output",
+      "example": "PRINT USING \"###.##\"; 3.14159"
+    },
+    {
+      "keyword": "UNTIL",
+      "token": 252,
+      "type": "loop",
+      "category": "flow",
+      "syntax": "LOOP UNTIL condition",
+      "description": "Condition clause for LOOP — loops until condition becomes true"
+    },
+    {
+      "keyword": "WHILE",
+      "token": 253,
+      "type": "loop",
+      "category": "flow",
+      "syntax": "LOOP WHILE condition",
+      "description": "Condition clause for LOOP — loops while condition remains true"
+    },
+    {
+      "keyword": "POT",
+      "prefix": 206,
+      "token": 2,
+      "type": "function",
+      "category": "io",
+      "syntax": "POT(n)",
+      "description": "Read potentiometer (paddle) value for port n",
+      "parameters": [
+        {
+          "name": "n",
+          "type": "integer",
+          "range": "1-4"
+        }
+      ]
+    },
+    {
+      "keyword": "BUMP",
+      "prefix": 206,
+      "token": 3,
+      "type": "function",
+      "category": "graphics",
+      "syntax": "BUMP(n)",
+      "description": "Check sprite collision register n (1=sprite-sprite, 2=sprite-background)"
+    },
+    {
+      "keyword": "PEN",
+      "prefix": 206,
+      "token": 4,
+      "type": "function",
+      "category": "io",
+      "syntax": "PEN(n)",
+      "description": "Read lightpen register n (0=X, 1=Y trigger, 2=X trigger)"
+    },
+    {
+      "keyword": "RSPPOS",
+      "prefix": 206,
+      "token": 5,
+      "type": "function",
+      "category": "graphics",
+      "syntax": "RSPPOS(sprite, axis)",
+      "description": "Read sprite position. Axis: 0=X, 1=Y",
+      "parameters": [
+        {
+          "name": "sprite",
+          "type": "integer",
+          "range": "0-7"
+        },
+        {
+          "name": "axis",
+          "type": "integer",
+          "range": "0-1",
+          "description": "0=X, 1=Y"
+        }
+      ]
+    },
+    {
+      "keyword": "RSPRITE",
+      "prefix": 206,
+      "token": 6,
+      "type": "function",
+      "category": "graphics",
+      "syntax": "RSPRITE(sprite)",
+      "description": "Read sprite enable/color register"
+    },
+    {
+      "keyword": "RSPCOLOR",
+      "prefix": 206,
+      "token": 7,
+      "type": "function",
+      "category": "graphics",
+      "syntax": "RSPCOLOR(sprite)",
+      "description": "Read sprite color register"
+    },
+    {
+      "keyword": "XOR",
+      "prefix": 206,
+      "token": 8,
+      "type": "operator",
+      "category": "math",
+      "syntax": "a XOR b",
+      "description": "Bitwise exclusive OR",
+      "example": "PRINT 255 XOR 15"
+    },
+    {
+      "keyword": "RWINDOW",
+      "prefix": 206,
+      "token": 9,
+      "type": "function",
+      "category": "screen",
+      "syntax": "RWINDOW(n)",
+      "description": "Read current window boundary n (0=left, 1=top, 2=right, 3=bottom)"
+    },
+    {
+      "keyword": "POINTER",
+      "prefix": 206,
+      "token": 10,
+      "type": "function",
+      "category": "system",
+      "syntax": "POINTER(var)",
+      "description": "Return the address of a variable"
+    },
+    {
+      "keyword": "BANK",
+      "prefix": 254,
+      "token": 2,
+      "type": "command",
+      "category": "memory",
+      "syntax": "BANK n",
+      "description": "Set memory bank for PEEK/POKE (0-15 on C128)",
+      "parameters": [
+        {
+          "name": "n",
+          "type": "integer",
+          "range": "0-15"
+        }
+      ],
+      "example": "BANK 15 : POKE 53280,0"
+    },
+    {
+      "keyword": "FILTER",
+      "prefix": 254,
+      "token": 3,
+      "type": "command",
+      "category": "sound",
+      "syntax": "FILTER cutoff, resonance [,mode [,voice]]",
+      "description": "Configure the SID filter"
+    },
+    {
+      "keyword": "PLAY",
+      "prefix": 254,
+      "token": 4,
+      "type": "command",
+      "category": "sound",
+      "syntax": "PLAY string$",
+      "description": "Play a music string (MML-style notation)",
+      "example": "PLAY \"T6O4CDEFGAB\""
+    },
+    {
+      "keyword": "TEMPO",
+      "prefix": 254,
+      "token": 5,
+      "type": "command",
+      "category": "sound",
+      "syntax": "TEMPO n",
+      "description": "Set music playback tempo (1-255)"
+    },
+    {
+      "keyword": "MOVSPR",
+      "prefix": 254,
+      "token": 6,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "MOVSPR sprite, x, y",
+      "description": "Move sprite to absolute screen position",
+      "parameters": [
+        {
+          "name": "sprite",
+          "type": "integer",
+          "range": "0-7"
+        },
+        {
+          "name": "x",
+          "type": "integer",
+          "range": "0-511"
+        },
+        {
+          "name": "y",
+          "type": "integer",
+          "range": "0-255"
+        }
+      ],
+      "example": "MOVSPR 0,160,100"
+    },
+    {
+      "keyword": "SPRITE",
+      "prefix": 254,
+      "token": 7,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "SPRITE n, enable [,color [,priority [,multicolor [,xexpand [,yexpand]]]]]",
+      "description": "Configure a hardware sprite",
+      "example": "SPRITE 0,1,1,0"
+    },
+    {
+      "keyword": "SPRCOLOR",
+      "prefix": 254,
+      "token": 8,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "SPRCOLOR mc1, mc2",
+      "description": "Set the two shared multicolor sprite colors"
+    },
+    {
+      "keyword": "RREG",
+      "prefix": 254,
+      "token": 9,
+      "type": "command",
+      "category": "system",
+      "syntax": "RREG A, X, Y",
+      "description": "Read the 6502 registers A, X, Y after a SYS call into variables"
+    },
+    {
+      "keyword": "ENVELOPE",
+      "prefix": 254,
+      "token": 10,
+      "type": "command",
+      "category": "sound",
+      "syntax": "ENVELOPE n, attack, decay, sustain, release [,waveform [,pulse]]",
+      "description": "Define a numbered sound envelope for use with PLAY",
+      "example": "ENVELOPE 1,0,9,0,0,33,2048"
+    },
+    {
+      "keyword": "SLEEP",
+      "prefix": 254,
+      "token": 11,
+      "type": "command",
+      "category": "system",
+      "syntax": "SLEEP n",
+      "description": "Pause execution for n seconds",
+      "example": "SLEEP 2"
+    },
+    {
+      "keyword": "CATALOG",
+      "prefix": 254,
+      "token": 12,
+      "type": "command",
+      "category": "io",
+      "syntax": "CATALOG [drive] [,pattern$]",
+      "description": "Display disk directory (alias for DIRECTORY)"
+    },
+    {
+      "keyword": "DOPEN",
+      "prefix": 254,
+      "token": 13,
+      "type": "command",
+      "category": "io",
+      "syntax": "DOPEN #channel, \"filename\" [,D drive] [,U unit] [,W]",
+      "description": "Open a disk file for sequential reading or writing",
+      "example": "DOPEN #1,\"DATA\",W"
+    },
+    {
+      "keyword": "APPEND",
+      "prefix": 254,
+      "token": 14,
+      "type": "command",
+      "category": "io",
+      "syntax": "APPEND #channel, \"filename\" [,U unit]",
+      "description": "Open a disk file for appending"
+    },
+    {
+      "keyword": "DCLOSE",
+      "prefix": 254,
+      "token": 15,
+      "type": "command",
+      "category": "io",
+      "syntax": "DCLOSE [#channel]",
+      "description": "Close a disk file or all open disk files"
+    },
+    {
+      "keyword": "BSAVE",
+      "prefix": 254,
+      "token": 16,
+      "type": "command",
+      "category": "io",
+      "syntax": "BSAVE \"filename\", B bank, P start TO P end [,U unit]",
+      "description": "Save a block of memory to disk",
+      "example": "BSAVE \"SCREEN\",B0,P2048 TO P3047"
+    },
+    {
+      "keyword": "BLOAD",
+      "prefix": 254,
+      "token": 17,
+      "type": "command",
+      "category": "io",
+      "syntax": "BLOAD \"filename\" [,B bank] [,P address] [,U unit]",
+      "description": "Load a binary file from disk to memory",
+      "example": "BLOAD \"SPRITES\""
+    },
+    {
+      "keyword": "RECORD",
+      "prefix": 254,
+      "token": 18,
+      "type": "command",
+      "category": "io",
+      "syntax": "RECORD #channel, record [,byte]",
+      "description": "Position to a record in a relative file"
+    },
+    {
+      "keyword": "CONCAT",
+      "prefix": 254,
+      "token": 19,
+      "type": "command",
+      "category": "io",
+      "syntax": "CONCAT \"source\" TO \"dest\" [,U unit]",
+      "description": "Concatenate (append) one disk file to another"
+    },
+    {
+      "keyword": "DVERIFY",
+      "prefix": 254,
+      "token": 20,
+      "type": "command",
+      "category": "io",
+      "syntax": "DVERIFY \"filename\" [,U unit]",
+      "description": "Verify a saved BASIC program against the disk copy"
+    },
+    {
+      "keyword": "DCLEAR",
+      "prefix": 254,
+      "token": 21,
+      "type": "command",
+      "category": "io",
+      "syntax": "DCLEAR [,U unit]",
+      "description": "Initialize disk drive and close all channels"
+    },
+    {
+      "keyword": "SPRSAV",
+      "prefix": 254,
+      "token": 22,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "SPRSAV sprite, string$",
+      "description": "Save or restore sprite shape data to/from a string variable"
+    },
+    {
+      "keyword": "COLLISION",
+      "prefix": 254,
+      "token": 23,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "COLLISION type, line",
+      "description": "Set up a collision interrupt handler — on collision, GOTO line",
+      "parameters": [
+        {
+          "name": "type",
+          "type": "integer",
+          "range": "1-2",
+          "description": "1=sprite-sprite, 2=sprite-background"
+        },
+        {
+          "name": "line",
+          "type": "integer",
+          "description": "Line number to GOTO on collision"
+        }
+      ],
+      "example": "COLLISION 1,5000"
+    },
+    {
+      "keyword": "BEGIN",
+      "prefix": 254,
+      "token": 24,
+      "type": "conditional",
+      "category": "flow",
+      "syntax": "BEGIN",
+      "description": "Begin a multi-statement THEN or ELSE block (paired with BEND)",
+      "example": "IF X>10 THEN BEGIN\n  PRINT \"BIG\"\n  X=0\nBEND"
+    },
+    {
+      "keyword": "BEND",
+      "prefix": 254,
+      "token": 25,
+      "type": "conditional",
+      "category": "flow",
+      "syntax": "BEND",
+      "description": "End a BEGIN block"
+    },
+    {
+      "keyword": "WINDOW",
+      "prefix": 254,
+      "token": 26,
+      "type": "command",
+      "category": "screen",
+      "syntax": "WINDOW x1, y1, x2, y2 [,clear]",
+      "description": "Define a text window",
+      "example": "WINDOW 5,5,35,20,1"
+    },
+    {
+      "keyword": "BOOT",
+      "prefix": 254,
+      "token": 27,
+      "type": "command",
+      "category": "system",
+      "syntax": "BOOT [\"filename\"] [,U unit]",
+      "description": "Load and run a boot program from disk"
+    },
+    {
+      "keyword": "STASH",
+      "prefix": 254,
+      "token": 31,
+      "type": "command",
+      "category": "memory",
+      "syntax": "STASH count, source, dest, bank",
+      "description": "Copy bytes from main memory to a specified RAM bank"
+    },
+    {
+      "keyword": "FETCH",
+      "prefix": 254,
+      "token": 33,
+      "type": "command",
+      "category": "memory",
+      "syntax": "FETCH count, source, dest, bank",
+      "description": "Copy bytes from a RAM bank into main memory"
+    },
+    {
+      "keyword": "SWAP",
+      "prefix": 254,
+      "token": 35,
+      "type": "command",
+      "category": "memory",
+      "syntax": "SWAP count, source, dest, bank",
+      "description": "Exchange bytes between main memory and a RAM bank"
+    },
+    {
+      "keyword": "FAST",
+      "prefix": 254,
+      "token": 37,
+      "type": "command",
+      "category": "system",
+      "syntax": "FAST",
+      "description": "Switch the C128 CPU to 2 MHz fast mode",
+      "notes": "Blanks the screen — use SLOW to restore"
+    },
+    {
+      "keyword": "SLOW",
+      "prefix": 254,
+      "token": 38,
+      "type": "command",
+      "category": "system",
+      "syntax": "SLOW",
+      "description": "Switch the C128 CPU back to 1 MHz mode and restore screen"
+    }
+  ]
+}

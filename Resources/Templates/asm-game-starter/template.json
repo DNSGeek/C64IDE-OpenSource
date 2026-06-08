@@ -1,0 +1,6 @@
+{
+  "name": "Simple Game Starter",
+  "summary": "A 6502 assembly game skeleton with BASIC SYS stub, CIA timer frame sync, joystick reading (port 2), one placeholder sprite, CHROUT score display, title screen, and game over screen. Follows standard ca65/ld65 conventions.",
+  "category": "Assembly",
+  "projectFileName": "asm-game-starter.c64proj"
+}

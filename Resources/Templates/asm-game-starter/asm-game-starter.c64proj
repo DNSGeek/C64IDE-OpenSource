@@ -1,0 +1,39 @@
+{
+  "buildOptions" : {
+    "basicStripWhitespace" : false,
+    "defines" : {
+
+    },
+    "generateDebugInfo" : true,
+    "generateListing" : false,
+    "includePaths" : [
+
+    ],
+    "outputDirectory" : "build",
+    "targetPlatform" : "c64",
+    "viceAutoRun" : true,
+    "viceBasicROM" : "",
+    "viceC64Model" : "",
+    "viceChargenROM" : "",
+    "viceExtraArgs" : [
+
+    ],
+    "viceKernalROM" : "",
+    "viceSIDModel" : 0,
+    "viceVideoStandard" : "pal"
+  },
+  "dialect" : null,
+  "mainFile" : "game.s",
+  "name" : "Simple Game Starter (Assembly)",
+  "session" : {
+    "breakpoints" : {
+
+    },
+    "openFiles" : [
+      "game.s",
+      "c64.inc"
+    ],
+    "selectedTab" : 0
+  },
+  "version" : 1
+}

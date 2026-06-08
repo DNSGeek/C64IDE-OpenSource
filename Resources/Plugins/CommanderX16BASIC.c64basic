@@ -1,0 +1,727 @@
+{
+  "name": "Commander X16 BASIC",
+  "version": "R49",
+  "author": "Commander X16 Community",
+  "description": "BASIC V2 extensions for the Commander X16. All token values verified against the R49 ROM binary dispatch tables. Single-byte tokens ($CC-$F7) for the main command set; $CE-prefixed two-byte tokens for later commands (CE $AC-$B7) and all expression functions (CE $C2-$D0).",
+  "url": "https://commanderx16.com",
+  "extendsBasicV2": true,
+  "loadAddress": 2049,
+  "tokenPrefixes": [
+    {
+      "byte": 206,
+      "description": "$CE prefix for late commands (REBOOT-BANNER) and all expression functions (VPEEK-MOD)"
+    }
+  ],
+  "keywords": [
+    {
+      "keyword": "MON",
+      "token": 204,
+      "type": "command",
+      "category": "system",
+      "syntax": "MON",
+      "description": "Enter the machine code monitor"
+    },
+    {
+      "keyword": "DOS",
+      "token": 205,
+      "type": "command",
+      "category": "io",
+      "syntax": "DOS [command$]",
+      "description": "Send a DOS command or display disk status",
+      "example": "DOS\"$\""
+    },
+    {
+      "keyword": "OLD",
+      "token": 206,
+      "type": "command",
+      "category": "system",
+      "syntax": "OLD",
+      "description": "Recover a program deleted with NEW"
+    },
+    {
+      "keyword": "GEOS",
+      "token": 207,
+      "type": "command",
+      "category": "system",
+      "syntax": "GEOS",
+      "description": "Launch the GEOS graphical environment"
+    },
+    {
+      "keyword": "VPOKE",
+      "token": 208,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "VPOKE bank, address, value",
+      "description": "Write a byte to VERA video RAM",
+      "parameters": [
+        {
+          "name": "bank",
+          "type": "integer",
+          "range": "0-1"
+        },
+        {
+          "name": "address",
+          "type": "integer",
+          "range": "0-65535"
+        },
+        {
+          "name": "value",
+          "type": "integer",
+          "range": "0-255"
+        }
+      ],
+      "example": "VPOKE 0,0,65"
+    },
+    {
+      "keyword": "VLOAD",
+      "token": 209,
+      "type": "command",
+      "category": "io",
+      "syntax": "VLOAD \"filename\", device, bank, address",
+      "description": "Load a file directly into VERA video RAM",
+      "example": "VLOAD \"SPRITES.BIN\",8,0,0"
+    },
+    {
+      "keyword": "SCREEN",
+      "token": 210,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "SCREEN mode",
+      "description": "Set screen display mode. 0=40x30 text, 2=80x60 text, 128=320x240 bitmap",
+      "example": "SCREEN 128"
+    },
+    {
+      "keyword": "PSET",
+      "token": 211,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "PSET x, y, color",
+      "description": "Plot a pixel at x,y with palette color index",
+      "example": "PSET 160,120,7"
+    },
+    {
+      "keyword": "LINE",
+      "token": 212,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "LINE x1, y1, x2, y2, color",
+      "description": "Draw a line between two points",
+      "example": "LINE 0,0,319,239,7"
+    },
+    {
+      "keyword": "FRAME",
+      "token": 213,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "FRAME x1, y1, x2, y2, color",
+      "description": "Draw a rectangle outline",
+      "example": "FRAME 10,10,100,80,7"
+    },
+    {
+      "keyword": "RECT",
+      "token": 214,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "RECT x1, y1, x2, y2, color",
+      "description": "Draw a filled rectangle",
+      "example": "RECT 10,10,100,80,3"
+    },
+    {
+      "keyword": "CHAR",
+      "token": 215,
+      "type": "command",
+      "category": "screen",
+      "syntax": "CHAR x, y, color, string$",
+      "description": "Print a string at character-cell position x,y with given color",
+      "example": "CHAR 10,5,7,\"HELLO X16\""
+    },
+    {
+      "keyword": "MOUSE",
+      "token": 216,
+      "type": "command",
+      "category": "io",
+      "syntax": "MOUSE mode",
+      "description": "Enable/disable mouse cursor. 0=off, 1=on",
+      "example": "MOUSE 1"
+    },
+    {
+      "keyword": "COLOR",
+      "token": 217,
+      "type": "command",
+      "category": "screen",
+      "syntax": "COLOR foreground [,background]",
+      "description": "Set text foreground and background colors (0-15)",
+      "example": "COLOR 7,0"
+    },
+    {
+      "keyword": "TEST",
+      "token": 218,
+      "type": "command",
+      "category": "system",
+      "syntax": "TEST",
+      "description": "Run built-in system self-test"
+    },
+    {
+      "keyword": "RESET",
+      "token": 219,
+      "type": "command",
+      "category": "system",
+      "syntax": "RESET",
+      "description": "Perform a soft reset of the X16"
+    },
+    {
+      "keyword": "CLS",
+      "token": 220,
+      "type": "command",
+      "category": "screen",
+      "syntax": "CLS",
+      "description": "Clear the screen"
+    },
+    {
+      "keyword": "CODEX",
+      "token": 221,
+      "type": "command",
+      "category": "system",
+      "syntax": "CODEX",
+      "description": "Launch the CODEX interactive development environment"
+    },
+    {
+      "keyword": "LOCATE",
+      "token": 222,
+      "type": "command",
+      "category": "screen",
+      "syntax": "LOCATE row, col",
+      "description": "Move text cursor to row, col (1-based)",
+      "example": "LOCATE 12,20 : PRINT \"HELLO\""
+    },
+    {
+      "keyword": "BOOT",
+      "token": 223,
+      "type": "command",
+      "category": "system",
+      "syntax": "BOOT",
+      "description": "Boot from SD card — load and run AUTOBOOT.X16"
+    },
+    {
+      "keyword": "KEYMAP",
+      "token": 224,
+      "type": "command",
+      "category": "system",
+      "syntax": "KEYMAP layout$",
+      "description": "Set keyboard layout (e.g. \"en-us\", \"de\", \"fr\")",
+      "example": "KEYMAP \"en-us\""
+    },
+    {
+      "keyword": "BLOAD",
+      "token": 225,
+      "type": "command",
+      "category": "io",
+      "syntax": "BLOAD \"filename\", device, bank, address",
+      "description": "Load a file into banked RAM",
+      "example": "BLOAD \"DATA.BIN\",8,1,40960"
+    },
+    {
+      "keyword": "BVLOAD",
+      "token": 226,
+      "type": "command",
+      "category": "io",
+      "syntax": "BVLOAD \"filename\", device, bank, address",
+      "description": "Load a file into banked VERA video RAM"
+    },
+    {
+      "keyword": "BVERIFY",
+      "token": 227,
+      "type": "command",
+      "category": "io",
+      "syntax": "BVERIFY \"filename\", device, bank, address",
+      "description": "Verify a saved binary file against memory"
+    },
+    {
+      "keyword": "BANK",
+      "token": 228,
+      "type": "command",
+      "category": "memory",
+      "syntax": "BANK ram_bank, rom_bank",
+      "description": "Set active RAM bank ($A000-$BFFF) and ROM bank ($C000-$DFFF)",
+      "parameters": [
+        {
+          "name": "ram_bank",
+          "type": "integer",
+          "range": "0-255"
+        },
+        {
+          "name": "rom_bank",
+          "type": "integer",
+          "range": "0-31"
+        }
+      ],
+      "example": "BANK 1,0"
+    },
+    {
+      "keyword": "FMINIT",
+      "token": 229,
+      "type": "command",
+      "category": "sound",
+      "syntax": "FMINIT",
+      "description": "Initialize the YM2151 FM sound chip"
+    },
+    {
+      "keyword": "FMNOTE",
+      "token": 230,
+      "type": "command",
+      "category": "sound",
+      "syntax": "FMNOTE channel, note",
+      "description": "Play a MIDI note on an FM channel (0-7). Note 60=middle C",
+      "example": "FMNOTE 0,60"
+    },
+    {
+      "keyword": "FMDRUM",
+      "token": 231,
+      "type": "command",
+      "category": "sound",
+      "syntax": "FMDRUM channel, drum",
+      "description": "Play a drum sound on the YM2151"
+    },
+    {
+      "keyword": "FMINST",
+      "token": 232,
+      "type": "command",
+      "category": "sound",
+      "syntax": "FMINST channel, instrument",
+      "description": "Set FM instrument/patch for a channel",
+      "example": "FMINST 0,1"
+    },
+    {
+      "keyword": "FMVIB",
+      "token": 233,
+      "type": "command",
+      "category": "sound",
+      "syntax": "FMVIB speed, depth",
+      "description": "Set YM2151 LFO vibrato parameters"
+    },
+    {
+      "keyword": "FMFREQ",
+      "token": 234,
+      "type": "command",
+      "category": "sound",
+      "syntax": "FMFREQ channel, frequency",
+      "description": "Set raw frequency for an FM channel"
+    },
+    {
+      "keyword": "FMVOL",
+      "token": 235,
+      "type": "command",
+      "category": "sound",
+      "syntax": "FMVOL channel, volume",
+      "description": "Set FM channel volume (0-127)",
+      "example": "FMVOL 0,100"
+    },
+    {
+      "keyword": "FMPAN",
+      "token": 236,
+      "type": "command",
+      "category": "sound",
+      "syntax": "FMPAN channel, pan",
+      "description": "Set FM channel stereo pan. 0=off, 1=right, 2=left, 3=both"
+    },
+    {
+      "keyword": "FMPLAY",
+      "token": 237,
+      "type": "command",
+      "category": "sound",
+      "syntax": "FMPLAY channel, note$",
+      "description": "Play MML music string on FM channel",
+      "example": "FMPLAY 0,\"T6O4CDEFGAB\""
+    },
+    {
+      "keyword": "FMCHORD",
+      "token": 238,
+      "type": "command",
+      "category": "sound",
+      "syntax": "FMCHORD start_channel, note$",
+      "description": "Play chord across FM channels",
+      "example": "FMCHORD 0,\"CEG\""
+    },
+    {
+      "keyword": "FMPOKE",
+      "token": 239,
+      "type": "command",
+      "category": "sound",
+      "syntax": "FMPOKE register, value",
+      "description": "Write directly to a YM2151 register"
+    },
+    {
+      "keyword": "PSGINIT",
+      "token": 240,
+      "type": "command",
+      "category": "sound",
+      "syntax": "PSGINIT",
+      "description": "Initialize VERA PSG and silence all 16 voices"
+    },
+    {
+      "keyword": "PSGNOTE",
+      "token": 241,
+      "type": "command",
+      "category": "sound",
+      "syntax": "PSGNOTE voice, note",
+      "description": "Play a MIDI note on PSG voice (0-15). Note 60=middle C",
+      "example": "PSGNOTE 0,60"
+    },
+    {
+      "keyword": "PSGVOL",
+      "token": 242,
+      "type": "command",
+      "category": "sound",
+      "syntax": "PSGVOL voice, volume",
+      "description": "Set PSG voice volume (0-63)",
+      "example": "PSGVOL 0,63"
+    },
+    {
+      "keyword": "PSGWAV",
+      "token": 243,
+      "type": "command",
+      "category": "sound",
+      "syntax": "PSGWAV voice, waveform",
+      "description": "Set PSG waveform. 0=pulse, 1=sawtooth, 2=triangle, 3=noise",
+      "example": "PSGWAV 0,1"
+    },
+    {
+      "keyword": "PSGFREQ",
+      "token": 244,
+      "type": "command",
+      "category": "sound",
+      "syntax": "PSGFREQ voice, frequency",
+      "description": "Set raw frequency for a PSG voice (0-65535)"
+    },
+    {
+      "keyword": "PSGPAN",
+      "token": 245,
+      "type": "command",
+      "category": "sound",
+      "syntax": "PSGPAN voice, pan",
+      "description": "Set PSG voice stereo pan. 0=off, 1=right, 2=left, 3=both"
+    },
+    {
+      "keyword": "PSGPLAY",
+      "token": 246,
+      "type": "command",
+      "category": "sound",
+      "syntax": "PSGPLAY voice, note$",
+      "description": "Play MML music string on PSG voice",
+      "example": "PSGPLAY 0,\"T6O4CDEFGAB\""
+    },
+    {
+      "keyword": "PSGCHORD",
+      "token": 247,
+      "type": "command",
+      "category": "sound",
+      "syntax": "PSGCHORD start_voice, note$",
+      "description": "Play chord across PSG voices",
+      "example": "PSGCHORD 0,\"CEG\""
+    },
+    {
+      "keyword": "REBOOT",
+      "prefix": 206,
+      "token": 172,
+      "type": "command",
+      "category": "system",
+      "syntax": "REBOOT",
+      "description": "Full system reboot — reloads ROM and restarts",
+      "notes": "Token: CE $AC"
+    },
+    {
+      "keyword": "POWEROFF",
+      "prefix": 206,
+      "token": 173,
+      "type": "command",
+      "category": "system",
+      "syntax": "POWEROFF",
+      "description": "Power off the Commander X16",
+      "notes": "Token: CE $AD"
+    },
+    {
+      "keyword": "I2CPOKE",
+      "prefix": 206,
+      "token": 174,
+      "type": "command",
+      "category": "system",
+      "syntax": "I2CPOKE device, register, value",
+      "description": "Write a byte to an I2C bus device register",
+      "notes": "Token: CE $AE"
+    },
+    {
+      "keyword": "SLEEP",
+      "prefix": 206,
+      "token": 175,
+      "type": "command",
+      "category": "system",
+      "syntax": "SLEEP jiffies",
+      "description": "Pause for given number of jiffies (1/60 sec each)",
+      "example": "SLEEP 60",
+      "notes": "Token: CE $AF"
+    },
+    {
+      "keyword": "BSAVE",
+      "prefix": 206,
+      "token": 176,
+      "type": "command",
+      "category": "io",
+      "syntax": "BSAVE \"filename\", device, bank, start, end",
+      "description": "Save a block of banked RAM to a file",
+      "example": "BSAVE \"DATA.BIN\",8,1,40960,49151",
+      "notes": "Token: CE $B0"
+    },
+    {
+      "keyword": "MENU",
+      "prefix": 206,
+      "token": 177,
+      "type": "command",
+      "category": "system",
+      "syntax": "MENU",
+      "description": "Display the BASIC utility menu",
+      "notes": "Token: CE $B1"
+    },
+    {
+      "keyword": "REN",
+      "prefix": 206,
+      "token": 178,
+      "type": "command",
+      "category": "editor",
+      "syntax": "REN [start [,step]]",
+      "description": "Renumber program lines",
+      "example": "REN 100,10",
+      "notes": "Token: CE $B2"
+    },
+    {
+      "keyword": "LINPUT#",
+      "prefix": 206,
+      "token": 179,
+      "type": "command",
+      "category": "io",
+      "syntax": "LINPUT# channel, variable$",
+      "description": "Read a complete line from a file (accepts commas)",
+      "example": "LINPUT# 1,A,",
+      "notes": "Token: CE $B3"
+    },
+    {
+      "keyword": "LINPUT",
+      "prefix": 206,
+      "token": 180,
+      "type": "command",
+      "category": "io",
+      "syntax": "LINPUT [prompt$;] variable$",
+      "description": "Read a complete line from keyboard (accepts commas and colons)",
+      "example": "LINPUT \"PATH:\",P,",
+      "notes": "Token: CE $B4"
+    },
+    {
+      "keyword": "BINPUT#",
+      "prefix": 206,
+      "token": 181,
+      "type": "command",
+      "category": "io",
+      "syntax": "BINPUT# channel, variable$, count",
+      "description": "Read exactly count bytes from a file into a string variable",
+      "notes": "Token: CE $B5"
+    },
+    {
+      "keyword": "HELP",
+      "prefix": 206,
+      "token": 182,
+      "type": "command",
+      "category": "system",
+      "syntax": "HELP [keyword$]",
+      "description": "Display help for a BASIC keyword or list all X16 extensions",
+      "example": "HELP \"VPOKE\"",
+      "notes": "Token: CE $B6"
+    },
+    {
+      "keyword": "BANNER",
+      "prefix": 206,
+      "token": 183,
+      "type": "command",
+      "category": "system",
+      "syntax": "BANNER",
+      "description": "Display the Commander X16 startup banner",
+      "notes": "Token: CE $B7"
+    },
+    {
+      "keyword": "VPEEK",
+      "prefix": 206,
+      "token": 194,
+      "type": "function",
+      "category": "graphics",
+      "syntax": "VPEEK(bank, address)",
+      "description": "Read a byte from VERA video RAM",
+      "parameters": [
+        {
+          "name": "bank",
+          "type": "integer",
+          "range": "0-1"
+        },
+        {
+          "name": "address",
+          "type": "integer",
+          "range": "0-65535"
+        }
+      ],
+      "example": "PRINT VPEEK(0,0)",
+      "notes": "Token: CE $C2"
+    },
+    {
+      "keyword": "MX",
+      "prefix": 206,
+      "token": 195,
+      "type": "function",
+      "category": "io",
+      "syntax": "MX",
+      "description": "Return current mouse X position",
+      "example": "X = MX",
+      "notes": "Token: CE $C3"
+    },
+    {
+      "keyword": "MY",
+      "prefix": 206,
+      "token": 196,
+      "type": "function",
+      "category": "io",
+      "syntax": "MY",
+      "description": "Return current mouse Y position",
+      "example": "Y = MY",
+      "notes": "Token: CE $C4"
+    },
+    {
+      "keyword": "MB",
+      "prefix": 206,
+      "token": 197,
+      "type": "function",
+      "category": "io",
+      "syntax": "MB",
+      "description": "Return mouse button state. Bit 0=left, bit 1=right, bit 2=middle",
+      "example": "IF MB AND 1 THEN PRINT \"LEFT\"",
+      "notes": "Token: CE $C5"
+    },
+    {
+      "keyword": "JOY",
+      "prefix": 206,
+      "token": 198,
+      "type": "function",
+      "category": "io",
+      "syntax": "JOY(port)",
+      "description": "Read SNES-style gamepad for port 1-4. Returns button bitmask.",
+      "parameters": [
+        {
+          "name": "port",
+          "type": "integer",
+          "range": "1-4"
+        }
+      ],
+      "example": "J = JOY(1)",
+      "notes": "Token: CE $C6"
+    },
+    {
+      "keyword": "HEX$",
+      "prefix": 206,
+      "token": 199,
+      "type": "function",
+      "category": "string",
+      "syntax": "HEX$(n)",
+      "description": "Convert number to hexadecimal string",
+      "example": "PRINT HEX$(255)",
+      "notes": "Token: CE $C7"
+    },
+    {
+      "keyword": "BIN$",
+      "prefix": 206,
+      "token": 200,
+      "type": "function",
+      "category": "string",
+      "syntax": "BIN$(n)",
+      "description": "Convert number to binary string",
+      "example": "PRINT BIN$(10)",
+      "notes": "Token: CE $C8"
+    },
+    {
+      "keyword": "I2CPEEK",
+      "prefix": 206,
+      "token": 201,
+      "type": "function",
+      "category": "system",
+      "syntax": "I2CPEEK(device, register)",
+      "description": "Read a byte from an I2C bus device register",
+      "notes": "Token: CE $C9"
+    },
+    {
+      "keyword": "POINTER",
+      "prefix": 206,
+      "token": 202,
+      "type": "function",
+      "category": "system",
+      "syntax": "POINTER(variable)",
+      "description": "Return the memory address of a BASIC variable",
+      "notes": "Token: CE $CA"
+    },
+    {
+      "keyword": "STRPTR",
+      "prefix": 206,
+      "token": 203,
+      "type": "function",
+      "category": "string",
+      "syntax": "STRPTR(string$)",
+      "description": "Return the memory address of a string variable's data",
+      "notes": "Token: CE $CB"
+    },
+    {
+      "keyword": "RPT$",
+      "prefix": 206,
+      "token": 204,
+      "type": "function",
+      "category": "string",
+      "syntax": "RPT$(char$, count)",
+      "description": "Return a string of char$ repeated count times",
+      "example": "PRINT RPT$(\"*\",40)",
+      "notes": "Token: CE $CC"
+    },
+    {
+      "keyword": "MWHEEL",
+      "prefix": 206,
+      "token": 205,
+      "type": "function",
+      "category": "io",
+      "syntax": "MWHEEL",
+      "description": "Return mouse scroll wheel delta since last call",
+      "notes": "Token: CE $CD"
+    },
+    {
+      "keyword": "TDATA",
+      "prefix": 206,
+      "token": 206,
+      "type": "function",
+      "category": "graphics",
+      "syntax": "TDATA(layer, x, y)",
+      "description": "Read tile data from VERA tile map layer at tile position x,y",
+      "notes": "Token: CE $CE"
+    },
+    {
+      "keyword": "TATTR",
+      "prefix": 206,
+      "token": 207,
+      "type": "function",
+      "category": "graphics",
+      "syntax": "TATTR(layer, x, y)",
+      "description": "Read tile attribute byte from VERA tile map layer at tile position x,y",
+      "notes": "Token: CE $CF"
+    },
+    {
+      "keyword": "MOD",
+      "prefix": 206,
+      "token": 208,
+      "type": "function",
+      "category": "math",
+      "syntax": "MOD(a, b)",
+      "description": "Return modulo (remainder) of a divided by b",
+      "example": "PRINT MOD(10,3)",
+      "notes": "Token: CE $D0"
+    }
+  ]
+}

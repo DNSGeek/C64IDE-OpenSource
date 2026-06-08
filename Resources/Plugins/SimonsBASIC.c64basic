@@ -1,0 +1,1291 @@
+{
+  "name": "Simons' BASIC",
+  "version": "1.0",
+  "author": "David Simons / Commodore",
+  "description": "Simons' BASIC for the Commodore 64. Adds 114 commands covering structured programming, hi-res graphics, sprites, sound, string handling, and disk operations. Uses two-byte tokens with $64 as the prefix byte.",
+  "url": "https://www.c64-wiki.com/wiki/Simons%27_BASIC",
+  "extendsBasicV2": true,
+  "activationSYS": 64738,
+  "tokenPrefixes": [
+    {
+      "byte": 100,
+      "description": "Simons' BASIC prefix ($64) — all Simons' BASIC keywords use this prefix"
+    }
+  ],
+  "keywords": [
+    {
+      "keyword": "HIRES",
+      "prefix": 100,
+      "token": 1,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "HIRES mode, color",
+      "description": "Switch to hi-resolution graphics mode",
+      "parameters": [
+        {
+          "name": "mode",
+          "type": "integer",
+          "range": "0-1",
+          "description": "0=off, 1=on"
+        },
+        {
+          "name": "color",
+          "type": "integer",
+          "range": "0-15"
+        }
+      ],
+      "example": "HIRES 1,0"
+    },
+    {
+      "keyword": "PLOT",
+      "prefix": 100,
+      "token": 2,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "PLOT x, y, mode",
+      "description": "Plot a point in hi-res mode",
+      "parameters": [
+        {
+          "name": "x",
+          "type": "integer",
+          "range": "0-319"
+        },
+        {
+          "name": "y",
+          "type": "integer",
+          "range": "0-199"
+        },
+        {
+          "name": "mode",
+          "type": "integer",
+          "range": "0-1",
+          "description": "0=erase, 1=set"
+        }
+      ],
+      "example": "PLOT 160,100,1"
+    },
+    {
+      "keyword": "LINE",
+      "prefix": 100,
+      "token": 3,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "LINE x1, y1, x2, y2, mode",
+      "description": "Draw a line in hi-res mode",
+      "example": "LINE 0,0,319,199,1"
+    },
+    {
+      "keyword": "BLOCK",
+      "prefix": 100,
+      "token": 4,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "BLOCK x1, y1, x2, y2, mode",
+      "description": "Draw a filled or outline block (rectangle)",
+      "example": "BLOCK 10,10,100,100,1"
+    },
+    {
+      "keyword": "FCHR",
+      "prefix": 100,
+      "token": 5,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "FCHR x, y, char, color",
+      "description": "Print a character at hi-res screen position"
+    },
+    {
+      "keyword": "FCOL",
+      "prefix": 100,
+      "token": 6,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "FCOL color",
+      "description": "Set the foreground color for hi-res graphics"
+    },
+    {
+      "keyword": "FILL",
+      "prefix": 100,
+      "token": 7,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "FILL x, y, mode",
+      "description": "Flood fill an area in hi-res mode starting at x,y"
+    },
+    {
+      "keyword": "REC",
+      "prefix": 100,
+      "token": 8,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "REC x1, y1, x2, y2, mode",
+      "description": "Draw a rectangle outline (non-filled) in hi-res mode"
+    },
+    {
+      "keyword": "ROT",
+      "prefix": 100,
+      "token": 9,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "ROT angle",
+      "description": "Rotate the hi-res graphics image"
+    },
+    {
+      "keyword": "DRAW",
+      "prefix": 100,
+      "token": 10,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "DRAW source, x, y",
+      "description": "Draw a shape from a data block at position x,y"
+    },
+    {
+      "keyword": "CHAR",
+      "prefix": 100,
+      "token": 11,
+      "type": "command",
+      "category": "screen",
+      "syntax": "CHAR x, y, string$",
+      "description": "Print text at column x, row y on screen",
+      "example": "CHAR 10,12,\"HELLO\""
+    },
+    {
+      "keyword": "HI COL",
+      "prefix": 100,
+      "token": 12,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "HI COL x, color",
+      "description": "Set hi-res color for character cell column x"
+    },
+    {
+      "keyword": "INV",
+      "prefix": 100,
+      "token": 13,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "INV",
+      "description": "Invert the hi-res screen"
+    },
+    {
+      "keyword": "FRAC",
+      "prefix": 100,
+      "token": 14,
+      "type": "function",
+      "category": "math",
+      "syntax": "FRAC(x)",
+      "description": "Return the fractional part of x",
+      "example": "PRINT FRAC(3.75)"
+    },
+    {
+      "keyword": "MOVE",
+      "prefix": 100,
+      "token": 15,
+      "type": "command",
+      "category": "memory",
+      "syntax": "MOVE source, dest, length",
+      "description": "Copy a block of memory",
+      "example": "MOVE 1024, 2048, 1000"
+    },
+    {
+      "keyword": "PLACE",
+      "prefix": 100,
+      "token": 16,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "PLACE shape, x, y",
+      "description": "Place a predefined shape at x,y on screen"
+    },
+    {
+      "keyword": "UPB",
+      "prefix": 100,
+      "token": 17,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "UPB n",
+      "description": "Move graphics cursor up by n bytes"
+    },
+    {
+      "keyword": "UPW",
+      "prefix": 100,
+      "token": 18,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "UPW n",
+      "description": "Move graphics cursor up by n words"
+    },
+    {
+      "keyword": "LEFTW",
+      "prefix": 100,
+      "token": 19,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "LEFTW n",
+      "description": "Move graphics cursor left by n words"
+    },
+    {
+      "keyword": "LEFTB",
+      "prefix": 100,
+      "token": 20,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "LEFTB n",
+      "description": "Move graphics cursor left by n bytes"
+    },
+    {
+      "keyword": "DOWNB",
+      "prefix": 100,
+      "token": 21,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "DOWNB n",
+      "description": "Move graphics cursor down by n bytes"
+    },
+    {
+      "keyword": "DOWNW",
+      "prefix": 100,
+      "token": 22,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "DOWNW n",
+      "description": "Move graphics cursor down by n words"
+    },
+    {
+      "keyword": "RIGHTB",
+      "prefix": 100,
+      "token": 23,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "RIGHTB n",
+      "description": "Move graphics cursor right by n bytes"
+    },
+    {
+      "keyword": "RIGHTW",
+      "prefix": 100,
+      "token": 24,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "RIGHTW n",
+      "description": "Move graphics cursor right by n words"
+    },
+    {
+      "keyword": "MULTI",
+      "prefix": 100,
+      "token": 25,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "MULTI mode",
+      "description": "Enable/disable multicolor hi-res mode"
+    },
+    {
+      "keyword": "COLOUR",
+      "prefix": 100,
+      "token": 26,
+      "type": "command",
+      "category": "screen",
+      "syntax": "COLOUR foreground, background",
+      "description": "Set text foreground and background colors",
+      "example": "COLOUR 1,6"
+    },
+    {
+      "keyword": "MMOB",
+      "prefix": 100,
+      "token": 27,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "MMOB sprite, x, y",
+      "description": "Move a sprite (MOB) to absolute position x,y",
+      "parameters": [
+        {
+          "name": "sprite",
+          "type": "integer",
+          "range": "0-7"
+        },
+        {
+          "name": "x",
+          "type": "integer",
+          "range": "0-511"
+        },
+        {
+          "name": "y",
+          "type": "integer",
+          "range": "0-255"
+        }
+      ]
+    },
+    {
+      "keyword": "BFLASH",
+      "prefix": 100,
+      "token": 28,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "BFLASH sprite, mode",
+      "description": "Enable/disable sprite flashing"
+    },
+    {
+      "keyword": "MOB SET",
+      "prefix": 100,
+      "token": 29,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "MOB SET sprite, shape, color, x, y, priority, mode",
+      "description": "Configure all sprite (MOB) parameters at once",
+      "example": "MOB SET 0,1,1,160,100,0,1"
+    },
+    {
+      "keyword": "MUSIC",
+      "prefix": 100,
+      "token": 30,
+      "type": "command",
+      "category": "sound",
+      "syntax": "MUSIC note$",
+      "description": "Play a music string"
+    },
+    {
+      "keyword": "FLASH",
+      "prefix": 100,
+      "token": 31,
+      "type": "command",
+      "category": "screen",
+      "syntax": "FLASH color1, color2, speed",
+      "description": "Flash the border between two colors"
+    },
+    {
+      "keyword": "REPEAT",
+      "prefix": 100,
+      "token": 32,
+      "type": "loop",
+      "category": "flow",
+      "syntax": "REPEAT",
+      "description": "Begin a REPEAT/UNTIL loop",
+      "example": "REPEAT\n  X=X+1\nUNTIL X>10"
+    },
+    {
+      "keyword": "PLAY",
+      "prefix": 100,
+      "token": 33,
+      "type": "command",
+      "category": "sound",
+      "syntax": "PLAY voice, note, octave, duration",
+      "description": "Play a note on a SID voice",
+      "parameters": [
+        {
+          "name": "voice",
+          "type": "integer",
+          "range": "1-3"
+        },
+        {
+          "name": "note",
+          "type": "integer",
+          "range": "0-11",
+          "description": "0=C, 1=C#...11=B"
+        },
+        {
+          "name": "octave",
+          "type": "integer",
+          "range": "0-7"
+        },
+        {
+          "name": "duration",
+          "type": "integer",
+          "range": "0-255"
+        }
+      ],
+      "example": "PLAY 1,0,4,20"
+    },
+    {
+      "keyword": "CENTRE",
+      "prefix": 100,
+      "token": 35,
+      "type": "command",
+      "category": "screen",
+      "syntax": "CENTRE string$",
+      "description": "Print a string centered on the current line",
+      "example": "CENTRE \"HELLO WORLD\""
+    },
+    {
+      "keyword": "ENVELOPE",
+      "prefix": 100,
+      "token": 36,
+      "type": "command",
+      "category": "sound",
+      "syntax": "ENVELOPE voice, attack, decay, sustain, release, waveform",
+      "description": "Set the SID ADSR envelope and waveform for a voice",
+      "parameters": [
+        {
+          "name": "voice",
+          "type": "integer",
+          "range": "1-3"
+        },
+        {
+          "name": "attack",
+          "type": "integer",
+          "range": "0-15"
+        },
+        {
+          "name": "decay",
+          "type": "integer",
+          "range": "0-15"
+        },
+        {
+          "name": "sustain",
+          "type": "integer",
+          "range": "0-15"
+        },
+        {
+          "name": "release",
+          "type": "integer",
+          "range": "0-15"
+        },
+        {
+          "name": "waveform",
+          "type": "integer",
+          "description": "16=tri, 32=saw, 64=pulse, 128=noise"
+        }
+      ],
+      "example": "ENVELOPE 1,0,9,0,0,33"
+    },
+    {
+      "keyword": "CGOTO",
+      "prefix": 100,
+      "token": 37,
+      "type": "command",
+      "category": "flow",
+      "syntax": "CGOTO condition, line",
+      "description": "Conditional GOTO — branch to line if condition is non-zero",
+      "example": "CGOTO X>10, 100"
+    },
+    {
+      "keyword": "WAVE",
+      "prefix": 100,
+      "token": 38,
+      "type": "command",
+      "category": "sound",
+      "syntax": "WAVE voice, waveform",
+      "description": "Set the waveform for a SID voice",
+      "parameters": [
+        {
+          "name": "voice",
+          "type": "integer",
+          "range": "1-3"
+        },
+        {
+          "name": "waveform",
+          "type": "integer",
+          "description": "16=tri, 32=saw, 64=pulse, 128=noise"
+        }
+      ]
+    },
+    {
+      "keyword": "FETCH",
+      "prefix": 100,
+      "token": 39,
+      "type": "command",
+      "category": "memory",
+      "syntax": "FETCH address, variable",
+      "description": "Read a byte from memory into a variable"
+    },
+    {
+      "keyword": "AT(",
+      "prefix": 100,
+      "token": 40,
+      "type": "function",
+      "category": "screen",
+      "syntax": "AT(x, y)",
+      "description": "Return the character code at screen position x,y",
+      "example": "PRINT AT(10,5)"
+    },
+    {
+      "keyword": "UNTIL",
+      "prefix": 100,
+      "token": 41,
+      "type": "loop",
+      "category": "flow",
+      "syntax": "UNTIL condition",
+      "description": "End a REPEAT/UNTIL loop — loops until condition is true",
+      "example": "UNTIL X > 100"
+    },
+    {
+      "keyword": "USE",
+      "prefix": 100,
+      "token": 44,
+      "type": "command",
+      "category": "system",
+      "syntax": "USE n",
+      "description": "Select character set"
+    },
+    {
+      "keyword": "GLOBAL",
+      "prefix": 100,
+      "token": 46,
+      "type": "command",
+      "category": "flow",
+      "syntax": "GLOBAL variable",
+      "description": "Declare a variable as global within a PROC"
+    },
+    {
+      "keyword": "RESET",
+      "prefix": 100,
+      "token": 48,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "RESET",
+      "description": "Reset hi-res graphics screen (clear)"
+    },
+    {
+      "keyword": "PROC",
+      "prefix": 100,
+      "token": 49,
+      "type": "command",
+      "category": "flow",
+      "syntax": "PROC name",
+      "description": "Define a named procedure",
+      "example": "PROC MYPROC\n  PRINT \"IN PROC\"\nEND PROC"
+    },
+    {
+      "keyword": "CALL",
+      "prefix": 100,
+      "token": 50,
+      "type": "command",
+      "category": "flow",
+      "syntax": "CALL name",
+      "description": "Call a named procedure",
+      "example": "CALL MYPROC"
+    },
+    {
+      "keyword": "EXEC",
+      "prefix": 100,
+      "token": 51,
+      "type": "command",
+      "category": "flow",
+      "syntax": "EXEC name",
+      "description": "Execute a named procedure (alias for CALL)"
+    },
+    {
+      "keyword": "END PROC",
+      "prefix": 100,
+      "token": 52,
+      "type": "command",
+      "category": "flow",
+      "syntax": "END PROC",
+      "description": "End a PROC definition and return to caller"
+    },
+    {
+      "keyword": "EXIT",
+      "prefix": 100,
+      "token": 53,
+      "type": "command",
+      "category": "flow",
+      "syntax": "EXIT",
+      "description": "Exit the current PROC, LOOP, or REPEAT block"
+    },
+    {
+      "keyword": "END LOOP",
+      "prefix": 100,
+      "token": 54,
+      "type": "loop",
+      "category": "flow",
+      "syntax": "END LOOP",
+      "description": "End a LOOP block"
+    },
+    {
+      "keyword": "ON KEY",
+      "prefix": 100,
+      "token": 55,
+      "type": "command",
+      "category": "io",
+      "syntax": "ON KEY string$, line",
+      "description": "Set a key handler — when key is pressed, GOTO line",
+      "example": "ON KEY \"Q\", 9000"
+    },
+    {
+      "keyword": "DISABLE",
+      "prefix": 100,
+      "token": 56,
+      "type": "command",
+      "category": "io",
+      "syntax": "DISABLE",
+      "description": "Disable ON KEY handler"
+    },
+    {
+      "keyword": "RESUME",
+      "prefix": 100,
+      "token": 57,
+      "type": "command",
+      "category": "flow",
+      "syntax": "RESUME [line]",
+      "description": "Resume execution after ON ERROR — optionally at a specific line"
+    },
+    {
+      "keyword": "LOOP",
+      "prefix": 100,
+      "token": 58,
+      "type": "loop",
+      "category": "flow",
+      "syntax": "LOOP",
+      "description": "Begin an infinite loop block (terminate with END LOOP or EXIT)"
+    },
+    {
+      "keyword": "DELAY",
+      "prefix": 100,
+      "token": 59,
+      "type": "command",
+      "category": "system",
+      "syntax": "DELAY n",
+      "description": "Pause execution for n jiffies (1/60 second each)",
+      "example": "DELAY 60 : REM WAIT ONE SECOND"
+    },
+    {
+      "keyword": "SECURE",
+      "prefix": 100,
+      "token": 64,
+      "type": "command",
+      "category": "system",
+      "syntax": "SECURE",
+      "description": "Protect program from LISTing"
+    },
+    {
+      "keyword": "DISAPA",
+      "prefix": 100,
+      "token": 65,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "DISAPA sprite",
+      "description": "Make a sprite disappear (disable it)"
+    },
+    {
+      "keyword": "CIRCLE",
+      "prefix": 100,
+      "token": 66,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "CIRCLE x, y, rx, ry, mode",
+      "description": "Draw a circle or ellipse in hi-res mode",
+      "parameters": [
+        {
+          "name": "x",
+          "type": "integer",
+          "description": "Centre X"
+        },
+        {
+          "name": "y",
+          "type": "integer",
+          "description": "Centre Y"
+        },
+        {
+          "name": "rx",
+          "type": "integer",
+          "description": "Horizontal radius"
+        },
+        {
+          "name": "ry",
+          "type": "integer",
+          "description": "Vertical radius"
+        },
+        {
+          "name": "mode",
+          "type": "integer",
+          "range": "0-1"
+        }
+      ],
+      "example": "CIRCLE 160,100,80,50,1"
+    },
+    {
+      "keyword": "ON ERROR",
+      "prefix": 100,
+      "token": 67,
+      "type": "command",
+      "category": "flow",
+      "syntax": "ON ERROR line",
+      "description": "Set error trap — on error, GOTO line",
+      "example": "ON ERROR 9000"
+    },
+    {
+      "keyword": "NO ERROR",
+      "prefix": 100,
+      "token": 68,
+      "type": "command",
+      "category": "flow",
+      "syntax": "NO ERROR",
+      "description": "Disable the ON ERROR trap"
+    },
+    {
+      "keyword": "LOCAL",
+      "prefix": 100,
+      "token": 69,
+      "type": "command",
+      "category": "flow",
+      "syntax": "LOCAL variable",
+      "description": "Declare a local variable within a PROC"
+    },
+    {
+      "keyword": "RCOMP",
+      "prefix": 100,
+      "token": 70,
+      "type": "function",
+      "category": "system",
+      "syntax": "RCOMP",
+      "description": "Read compare register (used with collision detection)"
+    },
+    {
+      "keyword": "ELSE",
+      "prefix": 100,
+      "token": 71,
+      "type": "conditional",
+      "category": "flow",
+      "syntax": "IF condition THEN action ELSE alternative",
+      "description": "Alternative branch in an IF/THEN statement"
+    },
+    {
+      "keyword": "RETRACE",
+      "prefix": 100,
+      "token": 72,
+      "type": "command",
+      "category": "system",
+      "syntax": "RETRACE",
+      "description": "Wait for vertical retrace (raster sync)"
+    },
+    {
+      "keyword": "TRACE",
+      "prefix": 100,
+      "token": 73,
+      "type": "command",
+      "category": "system",
+      "syntax": "TRACE mode",
+      "description": "Enable/disable program trace (prints line numbers as executed)"
+    },
+    {
+      "keyword": "DIR",
+      "prefix": 100,
+      "token": 74,
+      "type": "command",
+      "category": "io",
+      "syntax": "DIR [pattern]",
+      "description": "List disk directory",
+      "example": "DIR \"*.BAS\""
+    },
+    {
+      "keyword": "PAGE",
+      "prefix": 100,
+      "token": 75,
+      "type": "command",
+      "category": "screen",
+      "syntax": "PAGE start, end",
+      "description": "Set the scrolling page boundaries"
+    },
+    {
+      "keyword": "DUMP",
+      "prefix": 100,
+      "token": 76,
+      "type": "command",
+      "category": "system",
+      "syntax": "DUMP",
+      "description": "Display all current variable values"
+    },
+    {
+      "keyword": "FIND",
+      "prefix": 100,
+      "token": 77,
+      "type": "command",
+      "category": "editor",
+      "syntax": "FIND string$",
+      "description": "Search the program listing for a string",
+      "example": "FIND \"PRINT\""
+    },
+    {
+      "keyword": "OPTION",
+      "prefix": 100,
+      "token": 78,
+      "type": "command",
+      "category": "system",
+      "syntax": "OPTION mode",
+      "description": "Set various Simons' BASIC options"
+    },
+    {
+      "keyword": "AUTO",
+      "prefix": 100,
+      "token": 79,
+      "type": "command",
+      "category": "editor",
+      "syntax": "AUTO [start [,step]]",
+      "description": "Enable automatic line numbering",
+      "example": "AUTO 100,10"
+    },
+    {
+      "keyword": "OLD",
+      "prefix": 100,
+      "token": 80,
+      "type": "command",
+      "category": "system",
+      "syntax": "OLD",
+      "description": "Recover a program deleted with NEW"
+    },
+    {
+      "keyword": "JOY",
+      "prefix": 100,
+      "token": 81,
+      "type": "function",
+      "category": "io",
+      "syntax": "JOY(port)",
+      "description": "Read joystick state for port 1 or 2",
+      "parameters": [
+        {
+          "name": "port",
+          "type": "integer",
+          "range": "1-2"
+        }
+      ],
+      "example": "IF JOY(1) AND 16 THEN PRINT \"FIRE!\""
+    },
+    {
+      "keyword": "MOD",
+      "prefix": 100,
+      "token": 82,
+      "type": "function",
+      "category": "math",
+      "syntax": "MOD(a, b)",
+      "description": "Return the modulo (remainder) of a divided by b",
+      "example": "PRINT MOD(10,3)"
+    },
+    {
+      "keyword": "DIV",
+      "prefix": 100,
+      "token": 83,
+      "type": "function",
+      "category": "math",
+      "syntax": "DIV(a, b)",
+      "description": "Return the integer quotient of a divided by b",
+      "example": "PRINT DIV(10,3)"
+    },
+    {
+      "keyword": "DUP",
+      "prefix": 100,
+      "token": 85,
+      "type": "command",
+      "category": "screen",
+      "syntax": "DUP",
+      "description": "Duplicate the current screen line"
+    },
+    {
+      "keyword": "INKEY",
+      "prefix": 100,
+      "token": 86,
+      "type": "function",
+      "category": "io",
+      "syntax": "INKEY",
+      "description": "Read a key from the keyboard buffer (non-blocking, returns empty string if no key)",
+      "example": "K$ = INKEY : IF K$ <> \"\" THEN ..."
+    },
+    {
+      "keyword": "INST",
+      "prefix": 100,
+      "token": 87,
+      "type": "function",
+      "category": "string",
+      "syntax": "INST(string$, search$)",
+      "description": "Return the position of search$ in string$ (1-based), or 0 if not found",
+      "example": "PRINT INST(\"HELLO\",\"LL\")"
+    },
+    {
+      "keyword": "TEST",
+      "prefix": 100,
+      "token": 88,
+      "type": "function",
+      "category": "graphics",
+      "syntax": "TEST(x, y)",
+      "description": "Return the pixel state at hi-res position x,y (0=off, 1=on)",
+      "example": "IF TEST(160,100) THEN PRINT \"PIXEL SET\""
+    },
+    {
+      "keyword": "LIN",
+      "prefix": 100,
+      "token": 89,
+      "type": "function",
+      "category": "screen",
+      "syntax": "LIN(n)",
+      "description": "Return a string of n newline characters"
+    },
+    {
+      "keyword": "EXOR",
+      "prefix": 100,
+      "token": 90,
+      "type": "function",
+      "category": "math",
+      "syntax": "EXOR(a, b)",
+      "description": "Bitwise exclusive OR of a and b",
+      "example": "PRINT EXOR(255, 15)"
+    },
+    {
+      "keyword": "INSERT",
+      "prefix": 100,
+      "token": 91,
+      "type": "command",
+      "category": "string",
+      "syntax": "INSERT string$, pos, insert$",
+      "description": "Insert insert$ into string$ at position pos"
+    },
+    {
+      "keyword": "POT",
+      "prefix": 100,
+      "token": 92,
+      "type": "function",
+      "category": "io",
+      "syntax": "POT(n)",
+      "description": "Read paddle/potentiometer value for port n",
+      "parameters": [
+        {
+          "name": "n",
+          "type": "integer",
+          "range": "1-4"
+        }
+      ]
+    },
+    {
+      "keyword": "PENX",
+      "prefix": 100,
+      "token": 93,
+      "type": "function",
+      "category": "io",
+      "syntax": "PENX",
+      "description": "Return the lightpen X position"
+    },
+    {
+      "keyword": "PENY",
+      "prefix": 100,
+      "token": 95,
+      "type": "function",
+      "category": "io",
+      "syntax": "PENY",
+      "description": "Return the lightpen Y position"
+    },
+    {
+      "keyword": "SOUND",
+      "prefix": 100,
+      "token": 96,
+      "type": "command",
+      "category": "sound",
+      "syntax": "SOUND voice, frequency, duration",
+      "description": "Generate a sound on a SID voice",
+      "parameters": [
+        {
+          "name": "voice",
+          "type": "integer",
+          "range": "1-3"
+        },
+        {
+          "name": "frequency",
+          "type": "integer",
+          "range": "0-65535"
+        },
+        {
+          "name": "duration",
+          "type": "integer",
+          "range": "0-255"
+        }
+      ],
+      "example": "SOUND 1,2000,30"
+    },
+    {
+      "keyword": "GRAPHICS",
+      "prefix": 100,
+      "token": 97,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "GRAPHICS mode",
+      "description": "Set graphics mode (0=text, 1=hi-res, 2=multicolor)"
+    },
+    {
+      "keyword": "DESIGN",
+      "prefix": 100,
+      "token": 98,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "DESIGN sprite, row, data",
+      "description": "Define sprite shape data"
+    },
+    {
+      "keyword": "RLOCMOB",
+      "prefix": 100,
+      "token": 99,
+      "type": "function",
+      "category": "graphics",
+      "syntax": "RLOCMOB(sprite, axis)",
+      "description": "Read sprite location. Axis: 0=X, 1=Y",
+      "parameters": [
+        {
+          "name": "sprite",
+          "type": "integer",
+          "range": "0-7"
+        },
+        {
+          "name": "axis",
+          "type": "integer",
+          "range": "0-1",
+          "description": "0=X, 1=Y"
+        }
+      ]
+    },
+    {
+      "keyword": "CMOB",
+      "prefix": 100,
+      "token": 100,
+      "type": "function",
+      "category": "graphics",
+      "syntax": "CMOB(sprite)",
+      "description": "Check sprite collision — returns bitmask of colliding sprites"
+    },
+    {
+      "keyword": "BCKGNDS",
+      "prefix": 100,
+      "token": 101,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "BCKGNDS color",
+      "description": "Set the background color for hi-res graphics"
+    },
+    {
+      "keyword": "PAUSE",
+      "prefix": 100,
+      "token": 102,
+      "type": "command",
+      "category": "system",
+      "syntax": "PAUSE n",
+      "description": "Wait for n jiffies or until a key is pressed"
+    },
+    {
+      "keyword": "NRM",
+      "prefix": 100,
+      "token": 103,
+      "type": "command",
+      "category": "system",
+      "syntax": "NRM",
+      "description": "Restore normal screen mode (exit hi-res)"
+    },
+    {
+      "keyword": "MOB OFF",
+      "prefix": 100,
+      "token": 104,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "MOB OFF sprite",
+      "description": "Disable a sprite (make it invisible)"
+    },
+    {
+      "keyword": "OFF",
+      "prefix": 100,
+      "token": 105,
+      "type": "command",
+      "category": "system",
+      "syntax": "OFF",
+      "description": "Disable all sprites"
+    },
+    {
+      "keyword": "ANGL",
+      "prefix": 100,
+      "token": 106,
+      "type": "function",
+      "category": "math",
+      "syntax": "ANGL(x1, y1, x2, y2)",
+      "description": "Return the angle in degrees between two points"
+    },
+    {
+      "keyword": "ARC",
+      "prefix": 100,
+      "token": 107,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "ARC x, y, r, start, end, mode",
+      "description": "Draw an arc in hi-res mode"
+    },
+    {
+      "keyword": "COLD",
+      "prefix": 100,
+      "token": 108,
+      "type": "command",
+      "category": "system",
+      "syntax": "COLD",
+      "description": "Cold restart — full reset of Simons' BASIC"
+    },
+    {
+      "keyword": "SCRSV",
+      "prefix": 100,
+      "token": 109,
+      "type": "command",
+      "category": "screen",
+      "syntax": "SCRSV",
+      "description": "Save the current screen contents to memory"
+    },
+    {
+      "keyword": "SCRLD",
+      "prefix": 100,
+      "token": 110,
+      "type": "command",
+      "category": "screen",
+      "syntax": "SCRLD",
+      "description": "Restore a previously saved screen"
+    },
+    {
+      "keyword": "TEXT",
+      "prefix": 100,
+      "token": 111,
+      "type": "command",
+      "category": "screen",
+      "syntax": "TEXT",
+      "description": "Switch to text mode from hi-res"
+    },
+    {
+      "keyword": "CSET",
+      "prefix": 100,
+      "token": 112,
+      "type": "command",
+      "category": "screen",
+      "syntax": "CSET n",
+      "description": "Select character set (0=uppercase/graphics, 1=lower/upper)"
+    },
+    {
+      "keyword": "VOL",
+      "prefix": 100,
+      "token": 113,
+      "type": "command",
+      "category": "sound",
+      "syntax": "VOL n",
+      "description": "Set SID master volume (0-15)",
+      "parameters": [
+        {
+          "name": "n",
+          "type": "integer",
+          "range": "0-15"
+        }
+      ]
+    },
+    {
+      "keyword": "DISK",
+      "prefix": 100,
+      "token": 114,
+      "type": "command",
+      "category": "io",
+      "syntax": "DISK command$",
+      "description": "Send a command string directly to the disk drive",
+      "example": "DISK \"I0\""
+    },
+    {
+      "keyword": "HRDCPY",
+      "prefix": 100,
+      "token": 115,
+      "type": "command",
+      "category": "io",
+      "syntax": "HRDCPY",
+      "description": "Print a hardcopy of the screen to a printer"
+    },
+    {
+      "keyword": "KEY",
+      "prefix": 100,
+      "token": 116,
+      "type": "command",
+      "category": "system",
+      "syntax": "KEY n, string$",
+      "description": "Assign a string to a function key",
+      "example": "KEY 1,\"RUN\""
+    },
+    {
+      "keyword": "PAINT",
+      "prefix": 100,
+      "token": 117,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "PAINT x, y, mode",
+      "description": "Flood fill an area in hi-res mode starting at x,y"
+    },
+    {
+      "keyword": "LOW COL",
+      "prefix": 100,
+      "token": 118,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "LOW COL color",
+      "description": "Set lo-resolution color"
+    },
+    {
+      "keyword": "COPY",
+      "prefix": 100,
+      "token": 119,
+      "type": "command",
+      "category": "io",
+      "syntax": "COPY \"source\" TO \"dest\"",
+      "description": "Copy a file on disk"
+    },
+    {
+      "keyword": "MERGE",
+      "prefix": 100,
+      "token": 120,
+      "type": "command",
+      "category": "io",
+      "syntax": "MERGE \"filename\"",
+      "description": "Merge a BASIC program from disk with the current program",
+      "example": "MERGE \"LIBRARY\""
+    },
+    {
+      "keyword": "RENUMBER",
+      "prefix": 100,
+      "token": 121,
+      "type": "command",
+      "category": "editor",
+      "syntax": "RENUMBER [start [,step]]",
+      "description": "Renumber program lines",
+      "example": "RENUMBER 100,10"
+    },
+    {
+      "keyword": "MEM",
+      "prefix": 100,
+      "token": 122,
+      "type": "function",
+      "category": "system",
+      "syntax": "MEM",
+      "description": "Return the amount of free BASIC memory"
+    },
+    {
+      "keyword": "DETECT",
+      "prefix": 100,
+      "token": 123,
+      "type": "function",
+      "category": "graphics",
+      "syntax": "DETECT(sprite)",
+      "description": "Detect sprite-to-background collision for given sprite"
+    },
+    {
+      "keyword": "CHECK",
+      "prefix": 100,
+      "token": 124,
+      "type": "function",
+      "category": "graphics",
+      "syntax": "CHECK(sprite1, sprite2)",
+      "description": "Check if two sprites are colliding"
+    },
+    {
+      "keyword": "DISPLAY",
+      "prefix": 100,
+      "token": 125,
+      "type": "command",
+      "category": "screen",
+      "syntax": "DISPLAY mode",
+      "description": "Enable or disable the screen display"
+    },
+    {
+      "keyword": "ERR",
+      "prefix": 100,
+      "token": 126,
+      "type": "function",
+      "category": "system",
+      "syntax": "ERR",
+      "description": "Return the last error number (used with ON ERROR)"
+    },
+    {
+      "keyword": "OUT",
+      "prefix": 100,
+      "token": 127,
+      "type": "command",
+      "category": "io",
+      "syntax": "OUT port, value",
+      "description": "Write a value to a hardware I/O port"
+    }
+  ]
+}

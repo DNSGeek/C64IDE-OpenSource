@@ -1,0 +1,3422 @@
+{
+  "name": "MEGA65 BASIC 65",
+  "version": "920413",
+  "author": "Thomas Knox",
+  "description": "BASIC 65 for the MEGA65 personal computer. Extends Commodore BASIC 10 (C65) with additional commands for the MEGA65 hardware. Includes all BASIC 10 keywords inherited from the C128's BASIC 7.",
+  "url": "https://mega65.org",
+  "extendsBasicV2": true,
+  "loadAddress": 8193,
+  "requiresSYSStub": false,
+  "tokenPrefixes": [
+    {
+      "byte": 206,
+      "description": "CE-prefix: BASIC 10 extended commands (first group)"
+    },
+    {
+      "byte": 254,
+      "description": "FE-prefix: BASIC 10 extended commands (second group)"
+    },
+    {
+      "byte": 224,
+      "description": "E0-prefix: BASIC 10 extended commands (third group)"
+    }
+  ],
+  "keywords": [
+    {
+      "keyword": "<<",
+      "prefix": 254,
+      "token": 82,
+      "type": "operator",
+      "category": "system",
+      "description": "Arithmetic shift left"
+    },
+    {
+      "keyword": ">>",
+      "prefix": 254,
+      "token": 83,
+      "type": "operator",
+      "category": "system",
+      "description": "Arithmetic shift right"
+    },
+    {
+      "keyword": "APPEND",
+      "prefix": 254,
+      "token": 14,
+      "type": "command",
+      "category": "io",
+      "syntax": "APPEND#channel, \"filename\" [,D drive] [,U unit]",
+      "description": "Open a disk file for appending data. The file must already exist.",
+      "parameters": [
+        {
+          "name": "#channel",
+          "type": "integer",
+          "range": "1-255",
+          "description": "If channel between 1 and 127, line terminator is CR, otherwise it is CR LF"
+        },
+        {
+          "name": "filename",
+          "type": "string"
+        },
+        {
+          "name": "drive",
+          "type": "integer",
+          "range": "0-15",
+          "optional": true
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "keyword": "AUTO",
+      "token": 220,
+      "type": "command",
+      "category": "editor",
+      "syntax": "AUTO [step]",
+      "description": "Enables or disables automatic line numbering during BASIC program entry. After submitting a new program line to the BASIC editor with RETURN, the AUTO function generates a new BASIC line number for the entry of the next line. The new number is computed by adding step to the current line number.",
+      "example": "AUTO 10",
+      "parameters": [
+        {
+          "name": "step",
+          "type": "integer",
+          "range": "0-255",
+          "optional": true,
+          "description": "The number to add between line numbers"
+        }
+      ]
+    },
+    {
+      "keyword": "BACKGROUND",
+      "prefix": 254,
+      "token": 59,
+      "type": "command",
+      "category": "system",
+      "description": "Sets the background colour of the screen.",
+      "syntax": "BACKGROUND color",
+      "example": "BACKGROUND 3",
+      "parameters": [
+        {
+          "name": "color",
+          "type": "integer",
+          "range": "0-255",
+          "description": "The color palette number"
+        }
+      ]
+    },
+    {
+      "keyword": "BACKUP",
+      "token": 246,
+      "type": "command",
+      "category": "io",
+      "syntax": "BACKUP U source TO U target [, U unit]",
+      "description": "Copies one disk to another",
+      "example": "BACKUP U0 TO U9\n\nBACKUP D0 TO D1, U10",
+      "parameters": [
+        {
+          "name": "source",
+          "type": "integer",
+          "range": "0-15",
+          "description": "The disk or drive number"
+        },
+        {
+          "name": "target",
+          "type": "integer",
+          "range": "0-15",
+          "description": "The disk or drive number"
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "optional": true,
+          "range": "8-11",
+          "description": "The disk number"
+        }
+      ]
+    },
+    {
+      "keyword": "BANK",
+      "prefix": 254,
+      "token": 2,
+      "type": "command",
+      "category": "memory",
+      "syntax": "BANK n",
+      "description": "Set memory bank for PEEK/POKE operations (0-255). BANK 128 = current system config.",
+      "parameters": [
+        {
+          "name": "n",
+          "type": "integer",
+          "range": "0-255"
+        }
+      ],
+      "example": "BANK 0 : POKE 1024, 65"
+    },
+    {
+      "keyword": "BEGIN",
+      "prefix": 254,
+      "token": 24,
+      "type": "command",
+      "category": "flow",
+      "description": "The beginning of a compound statement to be executed after THEN or ELSE. This overcomes the single line limitation of the standard IF ... THEN ... ELSE clause."
+    },
+    {
+      "keyword": "BEND",
+      "prefix": 254,
+      "token": 25,
+      "type": "command",
+      "category": "flow",
+      "description": "The end of a compound statement to be executed after THEN or ELSE.  This overcomes the single line limitation of the standard IF ... THEN ...  ELSE clause."
+    },
+    {
+      "keyword": "BIT",
+      "prefix": 254,
+      "token": 78,
+      "type": "command",
+      "category": "system",
+      "description": "The 'BIT' token used as the second half of compound keywords such as SETBIT and CLRBIT."
+    },
+    {
+      "keyword": "BLOAD",
+      "prefix": 254,
+      "token": 17,
+      "type": "command",
+      "category": "io",
+      "syntax": "BLOAD \"filename\" [,U unit] [,D drive]",
+      "description": "Load a binary file to its original address",
+      "example": "BLOAD \"SPRITES.BIN\"",
+      "parameters": [
+        {
+          "name": "filename",
+          "type": "string"
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "optional": true
+        },
+        {
+          "name": "drive",
+          "type": "integer",
+          "range": "0-15",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "keyword": "BOOT",
+      "prefix": 254,
+      "token": 27,
+      "type": "command",
+      "category": "system",
+      "syntax": "BOOT [filename] [,B bank] [,P address] [,D drive] [,U unit]",
+      "description": "Loads and runs a program or boot sector from a disk.",
+      "example": "BOOT\n\nBOOT SYS\n\nBOOT (FI$) B(BA%), P(PA), U(UN%)",
+      "parameters": [
+        {
+          "name": "filename",
+          "type": "string",
+          "optional": true
+        },
+        {
+          "name": "bank",
+          "type": "integer",
+          "range": "0-255",
+          "optional": true
+        },
+        {
+          "name": "address",
+          "type": "integer",
+          "range": "0-65535",
+          "optional": true
+        },
+        {
+          "name": "drive",
+          "type": "integer",
+          "range": "0-15",
+          "optional": true
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "keyword": "BORDER",
+      "prefix": 254,
+      "token": 60,
+      "type": "command",
+      "category": "screen",
+      "description": "Sets the border colour of the screen.",
+      "syntax": "BORDER color",
+      "parameters": [
+        {
+          "name": "color",
+          "type": "integer",
+          "range": "0-255"
+        }
+      ],
+      "example": "BORDER 4"
+    },
+    {
+      "keyword": "BOX",
+      "token": 225,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "BOX x0,y0, x1,y1 [, x2,y2] [, x3,y3] [, solid]",
+      "description": "Bitmap graphics: draws a box.",
+      "example": "BOX 0, 0, 160, 0, 160, 80, 0, 80",
+      "parameters": [
+        {
+          "name": "x0",
+          "type": "integer"
+        },
+        {
+          "name": "y0",
+          "type": "integer"
+        },
+        {
+          "name": "x1",
+          "type": "integer"
+        },
+        {
+          "name": "y1",
+          "type": "integer"
+        },
+        {
+          "name": "x2",
+          "type": "integer",
+          "optional": true
+        },
+        {
+          "name": "y2",
+          "type": "integer",
+          "optional": true
+        },
+        {
+          "name": "x3",
+          "type": "integer",
+          "optional": true
+        },
+        {
+          "name": "y3",
+          "type": "integer",
+          "optional": true
+        },
+        {
+          "name": "solid",
+          "type": "integer",
+          "range": "0-1",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "keyword": "BSAVE",
+      "prefix": 254,
+      "token": 16,
+      "type": "command",
+      "category": "io",
+      "syntax": "BSAVE \"filename\", P start TO P end [,B bank] [,R] [,D drive] [,U unit]",
+      "description": "Save a block of memory to disk as a binary file",
+      "example": "BSAVE \"SCREEN\", 2048, 3047",
+      "parameters": [
+        {
+          "name": "filename",
+          "type": "string"
+        },
+        {
+          "name": "start",
+          "type": "integer",
+          "range": "0-65535"
+        },
+        {
+          "name": "end",
+          "type": "integer",
+          "range": "0-65535"
+        },
+        {
+          "name": "bank",
+          "type": "integer",
+          "range": "0-255",
+          "optional": true
+        },
+        {
+          "name": "drive",
+          "type": "integer",
+          "range": "0-15",
+          "optional": true
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "keyword": "BUMP",
+      "prefix": 206,
+      "token": 3,
+      "type": "function",
+      "category": "graphics",
+      "syntax": "BUMP(type)",
+      "description": "A bitfield of sprites currently colliding with other sprites or screen data.",
+      "example": "10 S% = BUMP(1) : REM SPRITE <-> SPRITE COLLISION\n20 IF (S% AND 6) = 6 THEN PRINT \"SPRITE 1 & 2 COLLISION\"",
+      "parameters": [
+        {
+          "name": "type",
+          "type": "integer",
+          "range": "1-2"
+        }
+      ]
+    },
+    {
+      "keyword": "BVERIFY",
+      "prefix": 254,
+      "token": 40,
+      "type": "command",
+      "category": "io",
+      "syntax": "BVERIFY filename [,P address] [,B bank] [,D drive] [,U unit]",
+      "description": "Compares a memory range to a file of type PRG.",
+      "example": "BVERIFY \"ML DATA\", P 32768, B0, U9",
+      "parameters": [
+        {
+          "name": "filename",
+          "type": "string"
+        },
+        {
+          "name": "address",
+          "type": "integer",
+          "range": "0-65535",
+          "optional": true
+        },
+        {
+          "name": "bank",
+          "type": "integer",
+          "range": "0-255",
+          "optional": true
+        },
+        {
+          "name": "drive",
+          "type": "integer",
+          "range": "0-15",
+          "optional": true
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "keyword": "CATALOG",
+      "prefix": 254,
+      "token": 12,
+      "type": "command",
+      "category": "io",
+      "syntax": "CATALOG [filepattern] [,W] [,R] [,D drive] [,U unit]",
+      "description": "Prints a file catalog/directory of the specified disk.",
+      "parameters": [
+        {
+          "name": "filepattern",
+          "type": "string",
+          "optional": true
+        },
+        {
+          "name": "drive",
+          "type": "integer",
+          "range": "0-15",
+          "optional": true
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "keyword": "CHANGE",
+      "prefix": 254,
+      "token": 44,
+      "type": "command",
+      "category": "editor",
+      "syntax": "CHANGE oldstr TO newstr [, line_range]",
+      "description": "Search and replace a string in the program listing",
+      "example": "CHANGE \"XX$\" TO \"UU$\", 2000-2700",
+      "parameters": [
+        {
+          "name": "oldstr",
+          "type": "string"
+        },
+        {
+          "name": "newstr",
+          "type": "string"
+        },
+        {
+          "name": "line_range",
+          "type": "string",
+          "description": "Line range to search, e.g. 10-50"
+        }
+      ]
+    },
+    {
+      "keyword": "CHAR",
+      "token": 224,
+      "category": "system",
+      "type": "command",
+      "syntax": "CHAR column, row, height, width, direction, string [, address]",
+      "description": "displays text on a graphic screen.",
+      "parameters": [
+        {
+          "name": "column",
+          "type": "integer",
+          "range": "0-39 or 0-79",
+          "description": "Horizontal start position of the output"
+        },
+        {
+          "name": "row",
+          "type": "integer",
+          "range": "0-24",
+          "description": "Vertical start position of the output"
+        },
+        {
+          "name": "height",
+          "type": "integer",
+          "description": "Vertical scaling factor for the text"
+        },
+        {
+          "name": "width",
+          "type": "integer",
+          "description": "Horizontal scaling factor for the text"
+        },
+        {
+          "name": "direction",
+          "type": "integer",
+          "range": "1,2,4,8",
+          "description": "The printing direction: 1=up, 2=right, 4=down, 8=left"
+        },
+        {
+          "name": "string",
+          "type": "string",
+          "description": "The text to display"
+        },
+        {
+          "name": "address",
+          "type": "integer",
+          "range": "0-65535",
+          "optional": true,
+          "description": "The address of the character set to use"
+        }
+      ]
+    },
+    {
+      "keyword": "CHARDEF",
+      "prefix": 224,
+      "token": 150,
+      "type": "command",
+      "category": "screen",
+      "syntax": "CHARDEF index, bit-matrix",
+      "description": "Changes the appearance of a character.",
+      "example": "CHARDEF 1, $FF, $81, $81, $81, $81, $81, $81, $81, $FF : REM CHANGE 'A' TO A RECTANGLE",
+      "parameters": [
+        {
+          "name": "index",
+          "type": "integer",
+          "range": "0-511"
+        },
+        {
+          "name": "bit-matrix",
+          "type": "string",
+          "description": "A set of 8 byte values"
+        }
+      ]
+    },
+    {
+      "keyword": "CHDIR",
+      "prefix": 254,
+      "token": 75,
+      "type": "command",
+      "category": "io",
+      "description": "Changes the current working directory.",
+      "syntax": "CHDIR dirname [,U unit]",
+      "parameters": [
+        {
+          "name": "dirname",
+          "type": "string"
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11"
+        }
+      ]
+    },
+    {
+      "keyword": "CIRCLE",
+      "token": 226,
+      "type": "function",
+      "category": "graphics",
+      "syntax": "CIRCLE xc, yc, radius [, flags, start, stop]",
+      "description": "Bitmap graphics: draws a circle. This is a special case of ELLIPSE, using the same value for horizontal and vertical radius.",
+      "parameters": [
+        {
+          "name": "xc",
+          "type": "integer"
+        },
+        {
+          "name": "yc",
+          "type": "integer"
+        },
+        {
+          "name": "radius",
+          "type": "integer"
+        },
+        {
+          "name": "flags",
+          "type": "integer",
+          "range": "0-7",
+          "optional": true
+        },
+        {
+          "name": "start",
+          "type": "integer",
+          "range": "0-360",
+          "optional": true
+        },
+        {
+          "name": "stop",
+          "type": "integer",
+          "range": "0-360",
+          "optional": true,
+          "description": "The end angle for partial circle drawing"
+        }
+      ]
+    },
+    {
+      "keyword": "COLLECT",
+      "token": 243,
+      "type": "command",
+      "category": "io",
+      "syntax": "COLLECT [,D drive] [,U unit]",
+      "description": "Rebuilds the Block Availability Map (BAM) of a disk, deleting splat files (files which have been opened, but not properly closed) and marking unused blocks as free.",
+      "parameters": [
+        {
+          "name": "drive",
+          "type": "integer",
+          "range": "0-15",
+          "optional": true
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "keyword": "COLLISION",
+      "prefix": 254,
+      "token": 23,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "COLLISION type [, line_number]",
+      "description": "Enables or disables a user-programmed interrupt handler for sprite collision.",
+      "parameters": [
+        {
+          "name": "type",
+          "type": "integer",
+          "range": "0-7"
+        },
+        {
+          "name": "line_number",
+          "type": "integer",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "keyword": "COLOR",
+      "token": 231,
+      "type": "command",
+      "category": "screen",
+      "syntax": "COLOR color",
+      "description": "Sets the foreground text colour for subsequent PRINT commands.",
+      "parameters": [
+        {
+          "name": "color",
+          "type": "integer",
+          "range": "0-255"
+        }
+      ]
+    },
+    {
+      "keyword": "CONCAT",
+      "prefix": 254,
+      "token": 19,
+      "type": "command",
+      "category": "io",
+      "syntax": "CONCAT appendfile [,D drive] TO targetfile [,D drive] [,U unit]",
+      "description": "Appends (concatenates) the contents of the appendfile to the target-file. Afterwards, targetfile contains the contents of both files, while appendfile remains unchanged.",
+      "example": "CONCAT \"NEW DATA\" TO \"ARCHIVE\", U9\n\nCONCAT \"ADDRESS\", D0 TO \"ADDRESS BOOK\", D1",
+      "parameters": [
+        {
+          "name": "appendfile",
+          "type": "string"
+        },
+        {
+          "name": "targetfile",
+          "type": "string"
+        },
+        {
+          "name": "drive",
+          "type": "integer",
+          "range": "0-15",
+          "optional": true
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "keyword": "COPY",
+      "token": 244,
+      "category": "io",
+      "type": "command",
+      "syntax": "COPY source [,D drive] [,U unit] TO [target] [,D drive] [,U unit]",
+      "description": "Copies a file to another file, or one or more files from one disk to another.",
+      "example": "COPY \"CODES\" TO \"BACKUP\"",
+      "parameters": [
+        {
+          "name": "source",
+          "type": "string"
+        },
+        {
+          "name": "drive",
+          "type": "integer",
+          "range": "0-15",
+          "optional": true
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "optional": true
+        },
+        {
+          "name": "target",
+          "type": "string",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "keyword": "CURSOR",
+      "prefix": 254,
+      "token": 65,
+      "type": "command",
+      "category": "screen",
+      "syntax": "CURSOR column, row",
+      "description": "Moves the text cursor to the specified position on the current text screen.",
+      "example": "CURSOR 1,2\nCURSOR OFF\nCURSOR ,5\nCURSOR ON",
+      "parameters": [
+        {
+          "name": "column",
+          "type": "integer"
+        },
+        {
+          "name": "row",
+          "type": "integer"
+        }
+      ]
+    },
+    {
+      "keyword": "CUT",
+      "token": 228,
+      "type": "function",
+      "category": "graphics",
+      "syntax": "CUT x, y, width, height",
+      "description": "Bitmap graphics: copies the content of the specified rectangle with upper left position x, y and the width and height to a buffer, and fills the region afterwards with the colour of the currently selected pen.",
+      "example": "CUT 140, 80, 40, 40",
+      "parameters": [
+        {
+          "name": "x",
+          "type": "integer"
+        },
+        {
+          "name": "y",
+          "type": "integer"
+        },
+        {
+          "name": "width",
+          "type": "integer"
+        },
+        {
+          "name": "height",
+          "type": "integer"
+        }
+      ]
+    },
+    {
+      "keyword": "DCLEAR",
+      "prefix": 254,
+      "token": 21,
+      "type": "command",
+      "category": "io",
+      "syntax": "DCLEAR [,D drive] [,U unit]",
+      "description": "Initialize disk drive — clears all channels and rereads the BAM",
+      "example": "DCLEAR\nDCLEAR U9\nDCLEAR D0, U9",
+      "parameters": [
+        {
+          "name": "drive",
+          "type": "integer",
+          "range": "0-15",
+          "optional": true
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "keyword": "DCLOSE",
+      "prefix": 254,
+      "token": 15,
+      "type": "command",
+      "category": "io",
+      "syntax": "DCLOSE [,D drive] [,U unit]",
+      "description": "Closes a single file or all files for the specified unit.",
+      "example": "DCLOSE#2\nDCLOSE U9",
+      "parameters": [
+        {
+          "name": "drive",
+          "type": "integer",
+          "range": "0-15",
+          "optional": true
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "keyword": "DEC",
+      "token": 209,
+      "type": "function",
+      "category": "system",
+      "syntax": "DEC(string)",
+      "description": "The decimal value of a hexadecimal string.",
+      "example": "PRINT DEC(\"D000\")\n53248"
+    },
+    {
+      "keyword": "DECBIN",
+      "prefix": 206,
+      "token": 17,
+      "type": "function",
+      "category": "system",
+      "description": "The decimal value of a binary string.",
+      "syntax": "DECBIN(string_expression)",
+      "example": "PRINT DECBIN(\"1101000000000000\")\n53248",
+      "parameters": [
+        {
+          "name": "string_expression",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "keyword": "DELETE",
+      "token": 247,
+      "type": "function",
+      "category": "editor",
+      "syntax": "DELETE [line_range]\nDELETE filename [,D drive] [,U unit] [,R]",
+      "description": "The first form deletes a range of lines from the BASIC program. The second form deletes one or more files from a disk.",
+      "example": "DELETE 100\nDELETE 240-350\nDELETE \"DRM\", U9",
+      "parameters": [
+        {
+          "name": "line_range",
+          "description": "A single line number or a range of line numbers",
+          "optional": true
+        },
+        {
+          "name": "filename",
+          "type": "string"
+        },
+        {
+          "name": "drive",
+          "type": "integer",
+          "range": "0-15",
+          "optional": true
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "keyword": "DIR",
+      "token": 238,
+      "type": "command",
+      "category": "io",
+      "syntax": "DIR [filepattern] [,W] [,P] [,R] [,D drive] [,U unit]",
+      "description": "Prints a file directory/catalog of the specified disk.",
+      "parameters": [
+        {
+          "name": "filepattern",
+          "type": "string"
+        },
+        {
+          "name": "W",
+          "description": "Wide, prints in 3 columns",
+          "optional": true
+        },
+        {
+          "name": "P",
+          "description": "Pagination, pauses after every screen",
+          "optional": true
+        },
+        {
+          "name": "R",
+          "description": "Include files flagged as recoverable",
+          "optional": true
+        },
+        {
+          "name": "drive",
+          "type": "integer",
+          "range": "0-15",
+          "optional": true
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "keyword": "DISK",
+      "prefix": 254,
+      "token": 64,
+      "type": "command",
+      "category": "io",
+      "syntax": "DISK command [,U unit]",
+      "example": "DISK \"I0\" : REM INITIALISE DISK IN DRIVE 0",
+      "description": "Sends a command string to the specified disk unit.",
+      "parameters": [
+        {
+          "name": "command",
+          "type": "string"
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "keyword": "DLOAD",
+      "token": 240,
+      "type": "command",
+      "category": "io",
+      "syntax": "DLOAD filename [,D drive] [,U unit]",
+      "description": "Loads a file of type PRG into memory",
+      "parameters": [
+        {
+          "name": "filename",
+          "type": "string"
+        },
+        {
+          "name": "drive",
+          "type": "integer",
+          "range": "0-15",
+          "optional": true
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "keyword": "DMA",
+      "prefix": 254,
+      "token": 31,
+      "type": "command",
+      "category": "system",
+      "syntax": "DMA command [, length, source_address, source_bank, target_address, target_bank[, sub]]",
+      "description": "DMA (”Direct Memory Access”) is obsolete, and has been replaced by EDMA.",
+      "parameters": [
+        {
+          "name": "command",
+          "type": "integer",
+          "range": "0-3"
+        },
+        {
+          "name": "length",
+          "type": "integer",
+          "range": "0-65535",
+          "optional": true
+        },
+        {
+          "name": "source_address",
+          "type": "integer",
+          "range": "0-65535",
+          "optional": true
+        },
+        {
+          "name": "source_bank",
+          "type": "integer",
+          "optional": true
+        },
+        {
+          "name": "target_address",
+          "type": "integer",
+          "range": "0-65535",
+          "optional": true
+        },
+        {
+          "name": "target_bank",
+          "type": "integer",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "keyword": "DMODE",
+      "prefix": 254,
+      "token": 53,
+      "type": "command",
+      "category": "system",
+      "syntax": "DMODE jam, complement, stencil, style, thick",
+      "description": "Bitmap graphics: sets “display mode” parameters of the graphics context, used by drawing commands.",
+      "parameters": [
+        {
+          "name": "jam",
+          "type": "integer",
+          "range": "0-1"
+        },
+        {
+          "name": "complement",
+          "type": "integer",
+          "range": "0-1"
+        },
+        {
+          "name": "stencil",
+          "description": "Not implemented, has no effect"
+        },
+        {
+          "name": "style",
+          "type": "integer",
+          "range": "0-1"
+        },
+        {
+          "name": "thick",
+          "description": "Not implemented, has no effect"
+        }
+      ]
+    },
+    {
+      "keyword": "DO",
+      "token": 235,
+      "type": "command",
+      "category": "flow",
+      "description": "Define the start of a DO ... LOOP block",
+      "example": "10 DO\n20 GET A$\n30 LOOP UNTIL A$ = \"Y\" or A$ = \"N\""
+    },
+    {
+      "keyword": "DOPEN",
+      "prefix": 254,
+      "token": 13,
+      "type": "command",
+      "category": "io",
+      "syntax": "DOPEN #channel, \"filename\" [,D drive] [,U unit] [,W]",
+      "description": "Open a disk file for reading or writing",
+      "parameters": [
+        {
+          "name": "channel",
+          "type": "integer",
+          "range": "1-15"
+        },
+        {
+          "name": "filename",
+          "type": "string"
+        },
+        {
+          "name": "drive",
+          "type": "integer",
+          "range": "0-15",
+          "description": "Drive number",
+          "optional": true
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "description": "Unit number",
+          "range": "8-11",
+          "optional": true
+        },
+        {
+          "name": "W",
+          "description": "Open for writing",
+          "optional": true
+        }
+      ],
+      "example": "DOPEN #1, \"MYDATA\",W"
+    },
+    {
+      "keyword": "DOT",
+      "prefix": 254,
+      "token": 76,
+      "type": "function",
+      "category": "graphics",
+      "description": "Bitmap graphics: draws a pixel at screen coordinates (x, y).",
+      "syntax": "DOT x, y [, color]",
+      "parameters": [
+        {
+          "name": "x",
+          "type": "integer"
+        },
+        {
+          "name": "y",
+          "type": "integer"
+        },
+        {
+          "name": "color",
+          "type": "integer",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "keyword": "DPAT",
+      "prefix": 254,
+      "token": 54,
+      "type": "function",
+      "category": "graphics",
+      "description": "Bitmap graphics: sets the drawing pattern of the graphics context for drawing commands.",
+      "syntax": "DPAT type [, number, pattern]",
+      "parameters": [
+        {
+          "name": "type",
+          "type": "integer",
+          "range": "0-4"
+        },
+        {
+          "name": "number",
+          "type": "integer",
+          "description": "Number of following pattern bytes",
+          "optional": true
+        },
+        {
+          "name": "pattern",
+          "description": "1 or more bytes for the pattern to draw",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "keyword": "DSAVE",
+      "token": 239,
+      "type": "command",
+      "category": "io",
+      "syntax": "DSAVE filename [,D drive] [,U unit]",
+      "description": "Saves the BASIC program in memory to a file of type PRG.",
+      "parameters": [
+        {
+          "name": "filename",
+          "type": "string"
+        },
+        {
+          "name": "drive",
+          "type": "integer",
+          "range": "0-15",
+          "optional": true
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "keyword": "DVERIFY",
+      "prefix": 254,
+      "token": 20,
+      "type": "command",
+      "category": "io",
+      "syntax": "DVERIFY filename [,D drive] [,U unit]",
+      "description": "Verifies that the BASIC program in memory is equivalent to a file of type PRG",
+      "parameters": [
+        {
+          "name": "filename",
+          "type": "string"
+        },
+        {
+          "name": "drive",
+          "type": "integer",
+          "range": "0-15",
+          "optional": true
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "keyword": "ECTORY",
+      "prefix": 254,
+      "token": 41,
+      "type": "command",
+      "category": "io",
+      "description": "The 'ECTORY' token used as the second half of the compound keyword DIRECTORY (DIR + ECTORY)."
+    },
+    {
+      "keyword": "EDIT",
+      "prefix": 254,
+      "token": 69,
+      "type": "command",
+      "category": "editor",
+      "syntax": "EDIT <ON | OFF>",
+      "description": "Enables or disables the text editing mode of the screen editor."
+    },
+    {
+      "keyword": "EDMA",
+      "prefix": 254,
+      "token": 33,
+      "type": "function",
+      "category": "system",
+      "syntax": "EDMA command, length, source, target",
+      "description": "Copies or updates a large amount of memory quickly.",
+      "parameters": [
+        {
+          "name": "command",
+          "type": "integer",
+          "range": "0,3",
+          "description": "0: copy, or 3: fill."
+        },
+        {
+          "name": "length",
+          "type": "integer",
+          "range": "0-65535"
+        },
+        {
+          "name": "source",
+          "type": "integer"
+        },
+        {
+          "name": "target",
+          "type": "integer"
+        }
+      ]
+    },
+    {
+      "keyword": "ELLIPSE",
+      "prefix": 254,
+      "token": 48,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "ELLIPSE x, y, rx, ry [,color]",
+      "description": "Draw an ellipse",
+      "parameters": [
+        {
+          "name": "x",
+          "type": "integer",
+          "description": "Centre X"
+        },
+        {
+          "name": "y",
+          "type": "integer",
+          "description": "Centre Y"
+        },
+        {
+          "name": "rx",
+          "type": "integer",
+          "description": "Horizontal radius"
+        },
+        {
+          "name": "ry",
+          "type": "integer",
+          "description": "Vertical radius"
+        },
+        {
+          "name": "color",
+          "type": "integer",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "keyword": "ELSE",
+      "type": "command",
+      "category": "flow",
+      "token": 213,
+      "description": "Optional part of an IF ... THEN statement"
+    },
+    {
+      "keyword": "ENVELOPE",
+      "prefix": 254,
+      "token": 10,
+      "type": "command",
+      "category": "sound",
+      "syntax": "ENVELOPE n [{, attack, decay, sustain, release, waveform, pw}]",
+      "description": "Sets the parameters for the synthesis of a musical instrument for use with PLAY",
+      "parameters": [
+        {
+          "name": "n",
+          "type": "integer",
+          "range": "0-9",
+          "description": "envelope slot"
+        },
+        {
+          "name": "attack",
+          "type": "integer",
+          "range": "0-15",
+          "description": "attack rate",
+          "optional": true
+        },
+        {
+          "name": "decay",
+          "type": "integer",
+          "range": "0-15",
+          "description": "decay rate",
+          "optional": true
+        },
+        {
+          "name": "sustain",
+          "type": "integer",
+          "range": "0-15",
+          "description": "sustain rate",
+          "optional": true
+        },
+        {
+          "name": "release",
+          "type": "integer",
+          "range": "0-15",
+          "description": "release rate",
+          "optional": true
+        },
+        {
+          "name": "waveform",
+          "type": "integer",
+          "range": "0-4",
+          "description": "0: triangle, 1: sawtooth, 2: square/pulse, 3: noise, or 4: ring modulation",
+          "optional": true
+        },
+        {
+          "name": "pw",
+          "type": "integer",
+          "range": "0-4095",
+          "description": "pulse width",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "keyword": "ERASE",
+      "prefix": 254,
+      "token": 42,
+      "type": "command",
+      "category": "io",
+      "syntax": "ERASE filename [,D drive] [,U unit] [,R]",
+      "description": "Erases (deletes) a disk file.",
+      "parameters": [
+        {
+          "name": "filename",
+          "type": "string"
+        },
+        {
+          "name": "drive",
+          "type": "integer",
+          "range": "0-15",
+          "optional": true
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "keyword": "ERR$",
+      "token": 211,
+      "type": "function",
+      "category": "system",
+      "syntax": "ERR$(number)",
+      "description": "Returns the string description of a given BASIC error number. Typically used in a TRAP routine, where the error number is taken from the reserved variable ER. A BASIC error number out of range (1-44) will produce an OK.",
+      "parameters": [
+        {
+          "name": "number",
+          "type": "integer",
+          "range": "1-44",
+          "description": "BASIC error number"
+        }
+      ],
+      "example": "10 TRAP 100\n20 PRINT SQR(-1) : REM PROVOKE ERROR\n30 PRINT \"AT LINE 30\" : REM HERE TO RESUME\n40 END\n100 IF ER > 0 THEN PRINT ERR$(ER); \" ERROR\";\n110 PRINT \" IN LINE\"; EL\n120 RESUME NEXT : REM RESUME AFTER ERROR"
+    },
+    {
+      "keyword": "EXIT",
+      "token": 237,
+      "type": "command",
+      "category": "loop",
+      "description": "Exits the current DO ... LOOP"
+    },
+    {
+      "keyword": "FAST",
+      "prefix": 254,
+      "token": 37,
+      "type": "command",
+      "category": "system",
+      "syntax": "FAST [speed]",
+      "description": "Sets CPU clock speed to 1 MHz, 3.5 MHz or 40 MHz.",
+      "example": "FAST : REM ENABLE FULL SPEED",
+      "parameters": [
+        {
+          "name": "speed",
+          "type": "integer",
+          "range": "1,3",
+          "optional": true,
+          "description": "1: Sets CPU to 1 MHz.\n3: Sets CPU to 3.5 MHz.\nAnything other than 1 or 3 sets the CPU to 40 MHz."
+        }
+      ]
+    },
+    {
+      "keyword": "FGOSUB",
+      "prefix": 254,
+      "token": 72,
+      "type": "command",
+      "category": "flow",
+      "syntax": "FGOSUB numeric_expression",
+      "description": "Evaluates the given numeric expression, then call GOSUBs the subroutine at the resulting line number.",
+      "parameters": [
+        {
+          "name": "numeric_expression",
+          "type": "integer"
+        }
+      ]
+    },
+    {
+      "keyword": "FGOTO",
+      "prefix": 254,
+      "token": 71,
+      "type": "command",
+      "category": "flow",
+      "description": "Evaluates the given numeric expression, then GOTOs to the resulting line number",
+      "syntax": "FGOTO numeric_expression",
+      "parameters": [
+        {
+          "name": "numeric_expression",
+          "type": "integer"
+        }
+      ]
+    },
+    {
+      "keyword": "FILTER",
+      "prefix": 254,
+      "token": 3,
+      "type": "command",
+      "category": "sound",
+      "syntax": "FILTER sid [{, freq, lp, bp, hp, res}]",
+      "description": "Configure the SID filter",
+      "parameters": [
+        {
+          "name": "sid",
+          "type": "integer",
+          "range": "1,2",
+          "description": "1: right SID, 2: left SID."
+        },
+        {
+          "name": "freq",
+          "type": "integer",
+          "range": "0-2047",
+          "description": "filter cut off frequency",
+          "optional": true
+        },
+        {
+          "name": "lp",
+          "type": "integer",
+          "range": "0,1",
+          "optional": true,
+          "description": "low pass filter (0: off, 1: on)."
+        },
+        {
+          "name": "bp",
+          "type": "integer",
+          "range": "0,1",
+          "optional": true,
+          "description": "band pass filter (0: off, 1: on)."
+        },
+        {
+          "name": "hp",
+          "type": "integer",
+          "range": "0,1",
+          "optional": true,
+          "description": "high pass filter (0: off, 1: on)."
+        },
+        {
+          "name": "res",
+          "type": "integer",
+          "range": "0-15",
+          "optional": true,
+          "description": "resonance"
+        }
+      ]
+    },
+    {
+      "keyword": "FIND",
+      "prefix": 254,
+      "token": 43,
+      "type": "command",
+      "category": "editor",
+      "syntax": "FIND string [, line_range]",
+      "description": "Search program listing for a string",
+      "parameters": [
+        {
+          "name": "string",
+          "type": "string"
+        },
+        {
+          "name": "line_range",
+          "description": "Searches a given line range, otherwise the entire BASIC program is searched.",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "keyword": "FONT",
+      "prefix": 254,
+      "token": 70,
+      "type": "command",
+      "category": "system",
+      "description": "Updates all characters to the given built-in font.",
+      "syntax": "FONT <A | B | C>"
+    },
+    {
+      "keyword": "FOREGROUND",
+      "prefix": 254,
+      "token": 57,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "FOREGROUND color",
+      "description": "Sets the foreground text colour for subsequent PRINT commands.",
+      "parameters": [
+        {
+          "name": "color",
+          "type": "integer",
+          "range": "0-31"
+        }
+      ]
+    },
+    {
+      "keyword": "FORMAT",
+      "prefix": 254,
+      "token": 55,
+      "type": "command",
+      "category": "io",
+      "syntax": "FORMAT diskname [,I id] [,D drive] [,U unit]",
+      "description": "Formats a disk. NOTE: This erases all data on the disk.",
+      "parameters": [
+        {
+          "name": "diskname",
+          "type": "string",
+          "description": "The name to give the disk. Maximum length is 16 characters"
+        },
+        {
+          "name": "id",
+          "type": "string",
+          "description": "The disk ID. Maximum 2 characters",
+          "optional": true
+        },
+        {
+          "name": "drive",
+          "type": "integer",
+          "range": "0-15",
+          "optional": true
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "keyword": "FREAD#",
+      "prefix": 254,
+      "token": 28,
+      "type": "command",
+      "category": "io",
+      "syntax": "FREAD# channel, pointer, size",
+      "description": "Reads size bytes from channel to memory starting at the 32-bit address pointer",
+      "parameters": [
+        {
+          "name": "channel",
+          "description": "The channel number from a previous DOPEN or OPEN command"
+        },
+        {
+          "name": "pointer",
+          "type": "integer",
+          "description": "A 32-bit pointer to memory where the data will be stored."
+        },
+        {
+          "name": "size",
+          "type": "integer",
+          "description": "The total number of bytes to read"
+        }
+      ]
+    },
+    {
+      "keyword": "FREEZER",
+      "prefix": 254,
+      "token": 74,
+      "type": "command",
+      "category": "system",
+      "description": "Invoke the Freezer menu"
+    },
+    {
+      "keyword": "FWRITE#",
+      "prefix": 254,
+      "token": 30,
+      "type": "command",
+      "category": "io",
+      "description": "Writes size bytes to channel from memory starting at the 32-bit address pointer",
+      "syntax": "FWRITE# channel, pointer, size",
+      "parameters": [
+        {
+          "name": "channel",
+          "description": "The channel number from a previous DOPEN or OPEN command"
+        },
+        {
+          "name": "pointer",
+          "type": "integer",
+          "description": "A 32-bit pointer to memory where the data will be read."
+        },
+        {
+          "name": "size",
+          "type": "integer",
+          "description": "The total number of bytes to write"
+        }
+      ]
+    },
+    {
+      "keyword": "GCOPY",
+      "prefix": 254,
+      "token": 50,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "GCOPY x, y, width, height",
+      "description": "Copy a rectangular region of the graphics display",
+      "parameters": [
+        {
+          "name": "x",
+          "type": "integer",
+          "description": "Upper left X coordinate"
+        },
+        {
+          "name": "y",
+          "type": "integer",
+          "description": "Upper left Y coordinate"
+        },
+        {
+          "name": "width",
+          "type": "integer",
+          "description": "The width of the rectangle to copy, in pixels"
+        },
+        {
+          "name": "height",
+          "type": "integer",
+          "description": "The length of the rectangle to copy, in pixels"
+        }
+      ]
+    },
+    {
+      "keyword": "GRAPHIC",
+      "token": 222,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "GRAPHIC CLR",
+      "description": "initialises the BASIC bitmap graphics system."
+    },
+    {
+      "keyword": "HASBIT",
+      "prefix": 206,
+      "token": 19,
+      "type": "function",
+      "category": "memory",
+      "syntax": "HASBIT(address, bit_number)",
+      "description": "True (-1) if the value stored in the address has the given bit set, otherwise false (0)",
+      "parameters": [
+        {
+          "name": "address",
+          "type": "integer",
+          "range": "0-65535",
+          "description": "The address to check"
+        },
+        {
+          "name": "bit_number",
+          "type": "integer",
+          "range": "0-7",
+          "description": "The bit to check"
+        }
+      ]
+    },
+    {
+      "keyword": "HEADER",
+      "token": 241,
+      "type": "command",
+      "category": "io",
+      "syntax": "HEADER diskname [,I id] [,D drive] [,U unit]",
+      "description": "Formats a disk. NOTE: This erases all data on the disk.",
+      "parameters": [
+        {
+          "name": "diskname",
+          "type": "string",
+          "description": "The name to give the disk. Maximum length is 16 characters"
+        },
+        {
+          "name": "id",
+          "type": "string",
+          "description": "The disk ID. Maximum 2 characters",
+          "optional": true
+        },
+        {
+          "name": "drive",
+          "type": "integer",
+          "range": "0-15",
+          "optional": true
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "keyword": "HELP",
+      "token": 234,
+      "type": "command",
+      "category": "system",
+      "syntax": "HELP",
+      "description": "Displays information about where an error occurred in a BASIC program."
+    },
+    {
+      "keyword": "HEX$",
+      "token": 210,
+      "type": "function",
+      "category": "system",
+      "syntax": "HEX$(numeric_expression)",
+      "description": "Returns a four or eight character hexadecimal representation of the argument.",
+      "example": "PRINT HEX$(10), HEX$(100), HEX$(1000.9)\n000A\t0064\t03E8",
+      "parameters": [
+        {
+          "name": "numeric_expression",
+          "type": "integer",
+          "range": "0-4294967295"
+        }
+      ]
+    },
+    {
+      "keyword": "HIGHLIGHT",
+      "prefix": 254,
+      "token": 61,
+      "type": "command",
+      "category": "editor",
+      "description": "Sets the colours used for code highlighting.",
+      "syntax": "HIGHLIGHT colour [, mode]",
+      "parameters": [
+        {
+          "name": "color",
+          "type": "integer",
+          "range": "0-15"
+        },
+        {
+          "name": "mode",
+          "type": "integer",
+          "range": "0-2",
+          "description": "0: System messages\n1: REM statements.\n2: BASIC keywords.",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "keyword": "IMPORT",
+      "token": 221,
+      "type": "command",
+      "category": "io",
+      "syntax": "IMPORT filename [,D drive] [,U unit]",
+      "description": "Loads BASIC code in text format from a file of type SEQ into memory reserved for BASIC programs. The program is loaded and converted from text to the tokenised form of PRG files. This enables loading of BASIC programs that were saved as plain text files. After loading, the program is re-linked and ready to be RUN or edited. Can also be used to merge a program text file from disk into a program already in memory. IMPORT can only be used in direct mode.",
+      "parameters": [
+        {
+          "name": "filename",
+          "type": "string",
+          "description": "The name of a file. Either a quoted string such as \"DATA\", or a string expression in brackets such as (FI$)"
+        },
+        {
+          "name": "drive",
+          "type": "integer",
+          "range": "0-15",
+          "optional": true,
+          "description": "Drive # in dual drive disk units. Defaults to 0 and can be omitted on single drive units such as the 1541, 1571, or 1581."
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "optional": true,
+          "description": "Device number on the IEC bus. Defaults to 8. If a variable is used, it must be placed in brackets."
+        }
+      ],
+      "example": "IMPORT \"APOCALYPSE\"\n\nIMPORT \"MEGA TOOLS\", U9\n\nIMPORT (FI$), U(UN%)"
+    },
+    {
+      "keyword": "INFO",
+      "prefix": 254,
+      "token": 77,
+      "type": "command",
+      "category": "system",
+      "description": "Displays information about the runtime environment."
+    },
+    {
+      "keyword": "INSTR",
+      "token": 212,
+      "type": "command",
+      "category": "system",
+      "syntax": "INSTR(haystack, needle [, start])",
+      "description": "Locates the position of the string expression needle in the string expression haystack, and returns the index of the first occurrence, or zero if there is no match.",
+      "parameters": [
+        {
+          "name": "haystack",
+          "type": "string",
+          "description": "The string to search"
+        },
+        {
+          "name": "needle",
+          "type": "string",
+          "description": "The string to find in the haystack"
+        },
+        {
+          "name": "start",
+          "type": "integer",
+          "description": "The position in haystack to start searching from",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "keyword": "JOY",
+      "token": 207,
+      "type": "function",
+      "category": "system",
+      "syntax": "JOY(port)",
+      "description": "The state of the joystick for the selected controller port (1 or 2).",
+      "parameters": [
+        {
+          "name": "port",
+          "type": "integer",
+          "range": "0-3",
+          "description": "A port value of 3 will return the merged state of both joystick ports"
+        }
+      ]
+    },
+    {
+      "keyword": "KEY",
+      "token": 249,
+      "type": "command",
+      "category": "system",
+      "description": "Manages the function key macros in the BASIC editor.",
+      "example": "KEY\nKEY <ON | OFF>\nKEY <LOAD | SAVE> filename\nKEY number, string\nKEY RESTORE"
+    },
+    {
+      "keyword": "LINE",
+      "token": 229,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "LINE xbeg, ybeg[, xnext1, ynext1 ...]",
+      "description": "Bitmap graphics: draws a line or series of lines.",
+      "parameters": [
+        {
+          "name": "xbeg",
+          "type": "integer",
+          "description": "The starting x coordinate"
+        },
+        {
+          "name": "ybeg",
+          "type": "integer",
+          "description": "The starting y coordinate"
+        },
+        {
+          "name": "xnext",
+          "type": "integer",
+          "description": "The next x coordinate to draw a line to",
+          "optional": true
+        },
+        {
+          "name": "ynext",
+          "type": "integer",
+          "description": "The next y coordinate to draw a line to",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "keyword": "LOADIFF",
+      "prefix": 254,
+      "token": 67,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "LOADIFF filename [,D drive] [,U unit]",
+      "description": "Bitmap graphics: loads an IFF file into graphics memory.",
+      "parameters": [
+        {
+          "name": "filename",
+          "type": "string"
+        },
+        {
+          "name": "drive",
+          "type": "integer",
+          "range": "0-15",
+          "optional": true
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "keyword": "LOCK",
+      "prefix": 254,
+      "token": 80,
+      "type": "command",
+      "category": "io",
+      "syntax": "LOCK <filename|pattern> [,D drive] [,U unit]",
+      "description": "Locks a file on disk, preventing it from being updated or deleted.",
+      "parameters": [
+        {
+          "name": "filename",
+          "type": "string"
+        },
+        {
+          "name": "drive",
+          "type": "integer",
+          "range": "0-15",
+          "optional": true
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "keyword": "LOG10",
+      "prefix": 206,
+      "token": 8,
+      "type": "function",
+      "category": "system",
+      "syntax": "LOG10(numeric_expression)",
+      "description": "The decimal logarithm of the numeric expression.",
+      "parameters": [
+        {
+          "name": "numeric_expression",
+          "type": "integer"
+        }
+      ]
+    },
+    {
+      "keyword": "LOG2",
+      "prefix": 206,
+      "token": 22,
+      "type": "function",
+      "category": "system",
+      "syntax": "LOG2(numeric_expression)",
+      "description": "The binary logarithm of the numeric expression.",
+      "parameters": [
+        {
+          "name": "numeric_expression",
+          "type": "integer"
+        }
+      ]
+    },
+    {
+      "keyword": "LOOP",
+      "token": 236,
+      "type": "command",
+      "category": "loop",
+      "description": "define the scope of a BASIC loop."
+    },
+    {
+      "keyword": "LPEN",
+      "prefix": 206,
+      "token": 4,
+      "type": "function",
+      "category": "io",
+      "syntax": "LPEN(n)",
+      "description": "Read lightpen register n (0=X, 1=Y)"
+    },
+    {
+      "keyword": "MEM",
+      "prefix": 254,
+      "token": 35,
+      "type": "command",
+      "category": "system",
+      "syntax": "MEM mask4, mask5",
+      "description": "Reserves memory in banks 4 or 5, such that the bitmap graphics system will not use it",
+      "parameters": [
+        {
+          "name": "mask4",
+          "type": "integer",
+          "range": "0-255",
+          "description": "A bitfield representing bank 4"
+        },
+        {
+          "name": "mask5",
+          "type": "integer",
+          "range": "0-255",
+          "description": "A bitfield representing bank 5"
+        }
+      ]
+    },
+    {
+      "keyword": "MERGE",
+      "token": 230,
+      "type": "command",
+      "category": "io",
+      "syntax": "MERGE filename [,D drive] [,U unit]",
+      "description": "Loads a BASIC program file from disk and appends it to the program in memory. The load address stored in the first two bytes of the file is ignored. The loaded program does not replace a program in memory (as DLOAD does), but is appended. After loading, the program is re-linked and ready to run or edit. It is the user's responsibility to ensure there are no line number conflicts — the first line number of the merged program must be greater than the last line number of the program in memory. MERGE can only be used in direct mode.",
+      "parameters": [
+        {
+          "name": "filename",
+          "type": "string",
+          "description": "The name of a file. Either a quoted string such as \"DATA\", or a string expression in brackets such as (FI$)"
+        },
+        {
+          "name": "drive",
+          "type": "integer",
+          "range": "0-15",
+          "optional": true,
+          "description": "Drive # in dual drive disk units. Defaults to 0 and can be omitted on single drive units such as the 1541, 1571, or 1581."
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "optional": true,
+          "description": "Device number on the IEC bus. Defaults to 8. If a variable is used, it must be placed in brackets."
+        }
+      ],
+      "example": "DLOAD \"MAIN PROGRAM\"\nMERGE \"LIBRARY\""
+    },
+    {
+      "keyword": "MKDIR",
+      "prefix": 254,
+      "token": 81,
+      "type": "command",
+      "category": "io",
+      "syntax": "MKDIR dirname ,L size [,U unit]",
+      "description": "Makes (creates) a subdirectory on a floppy or D81 disk image.",
+      "example": "MKDIR \"SUBDIR\", L5",
+      "parameters": [
+        {
+          "name": "dirname",
+          "type": "string"
+        },
+        {
+          "name": "size",
+          "type": "integer",
+          "range": "3-38",
+          "description": "specifies the number of tracks to be reserved for the subdirectory, with one track = 40 sectors at 256 bytes."
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "keyword": "MOD",
+      "prefix": 206,
+      "token": 11,
+      "type": "function",
+      "category": "system",
+      "syntax": "MOD(dividend, divisor)",
+      "description": "The remainder of a division operation.",
+      "example": "FOR I = 0 TO 8 : PRINT MOD(I, 4); : NEXT I\n0 1 2 3 0 1 2 3 0",
+      "parameters": [
+        {
+          "name": "dividend",
+          "type": "integer"
+        },
+        {
+          "name": "divisor",
+          "type": "integer"
+        }
+      ]
+    },
+    {
+      "keyword": "MONITOR",
+      "token": 250,
+      "type": "command",
+      "category": "system",
+      "description": "Starts the KERNAL machine language monitor"
+    },
+    {
+      "keyword": "MOUNT",
+      "prefix": 254,
+      "token": 73,
+      "type": "command",
+      "category": "io",
+      "syntax": "MOUNT filename [,U unit]",
+      "description": "Mounts a disk image file of type D81 or D64 from SD card to unit 8 (default) or unit 9 (U9).",
+      "parameters": [
+        {
+          "name": "filename",
+          "type": "string",
+          "description": "The name of the disk image to mount"
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-9"
+        }
+      ]
+    },
+    {
+      "keyword": "MOUSE",
+      "prefix": 254,
+      "token": 62,
+      "type": "command",
+      "category": "system",
+      "syntax": "MOUSE ON [{, port, sprite, hotspot, pos}]",
+      "description": "Enables the mouse driver and connects the mouse at the specified port with the mouse pointer sprite.",
+      "example": "MOUSE ON, 1\nMOUSE OFF",
+      "parameters": [
+        {
+          "name": "port",
+          "type": "integer",
+          "range": "1-2",
+          "description": "Selects mouse port 1 or 2",
+          "optional": true
+        },
+        {
+          "name": "sprite",
+          "type": "integer",
+          "description": "The sprite number for the mouse pointer",
+          "optional": true
+        },
+        {
+          "name": "hotspot",
+          "type": "integer",
+          "description": "A 2 integer value representing the x, y coordinate of the click point in the sprite, e.g. 2, 4",
+          "optional": true
+        },
+        {
+          "name": "pos",
+          "type": "integer",
+          "description": "A 2 integer value representing the current mouse position, use last position if not specified, e.g. 2,4",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "keyword": "MOVSPR",
+      "prefix": 254,
+      "token": 6,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "MOVSPR number, position [TO end-position, speed]",
+      "description": "Moves a sprite to a location on screen.",
+      "parameters": [
+        {
+          "name": "number",
+          "type": "integer",
+          "range": "0-7"
+        },
+        {
+          "name": "position",
+          "type": "integer",
+          "description": "Each position argument consists of two 16-bit values, which specify either an absolute coordinate, a relative coordinate, an angle, or a speed."
+        },
+        {
+          "name": "end-position",
+          "type": "integer",
+          "description": "Each position argument consists of two 16-bit values, which specify either an absolute coordinate, a relative coordinate, an angle, or a speed.",
+          "optional": true
+        },
+        {
+          "name": "speed",
+          "type": "float",
+          "range": "0.0-127.0",
+          "description": "The speed of movement. Non-optional if TO end-argument is used",
+          "optional": true
+        }
+      ],
+      "example": "MOVSPR 0, 160, 100"
+    },
+    {
+      "keyword": "OFF",
+      "prefix": 254,
+      "token": 36,
+      "type": "command",
+      "category": "system",
+      "syntax": "OFF",
+      "description": "Disable current interrupt or feature"
+    },
+    {
+      "keyword": "PAINT",
+      "token": 223,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "PAINT x, y, mode [, region_border_colour]",
+      "description": "Bitmap graphics: performs a flood fill of an enclosed graphics area using the current pen colour.",
+      "parameters": [
+        {
+          "name": "x",
+          "type": "integer",
+          "description": "The x coordinate inside the area to be painted"
+        },
+        {
+          "name": "y",
+          "type": "integer",
+          "description": "The y coordinate inside the area to be painted"
+        },
+        {
+          "name": "mode",
+          "type": "integer",
+          "range": "0-2",
+          "description": "0: The colour of pixel (x,y) defines the colour\n1: The region border colour defines the region to be painted with the pen colour.\n2: Paint the region connected to pixel (x, y)."
+        },
+        {
+          "name": "region_border_color",
+          "type": "integer",
+          "description": "the colour index for mode 1.",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "keyword": "PALETTE",
+      "prefix": 254,
+      "token": 52,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "PALETTE screen, colour, red, green, blue",
+      "description": "Set a palette entry to an RGB color",
+      "example": "PALETTE 1, 0, 0, 0, 0\nPALETTE RESTORE\nPALETTE COLOR 1, 1, 2, 8",
+      "parameters": [
+        {
+          "name": "screen",
+          "type": "integer",
+          "range": "0-3",
+          "description": "The screen number to change"
+        },
+        {
+          "name": "colour",
+          "type": "integer",
+          "range": "0-255",
+          "description": "index to palette entry"
+        },
+        {
+          "name": "red",
+          "type": "integer",
+          "range": "0-15"
+        },
+        {
+          "name": "green",
+          "type": "integer",
+          "range": "0-15"
+        },
+        {
+          "name": "blue",
+          "type": "integer",
+          "range": "0-15"
+        }
+      ]
+    },
+    {
+      "keyword": "PASTE",
+      "token": 227,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "PASTE x,y",
+      "description": "pastes the content of the CUT or GCOPY buffer onto the screen.",
+      "parameters": [
+        {
+          "name": "x",
+          "type": "integer",
+          "description": "The x coordinate of the upper left corner to paste"
+        },
+        {
+          "name": "y",
+          "type": "integer",
+          "description": "The y coordinate of the upper left corner to paste"
+        }
+      ]
+    },
+    {
+      "keyword": "PEN",
+      "prefix": 254,
+      "token": 51,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "PEN color",
+      "description": "Set the drawing pen color"
+    },
+    {
+      "keyword": "PIXEL",
+      "prefix": 206,
+      "token": 12,
+      "type": "function",
+      "category": "graphics",
+      "syntax": "PIXEL(x, y)",
+      "description": "Returns the colour of a pixel at the given position.",
+      "parameters": [
+        {
+          "name": "x",
+          "type": "integer",
+          "description": "The absolute x screen coordinate"
+        },
+        {
+          "name": "y",
+          "type": "integer",
+          "description": "The absolute y screen coordinate"
+        }
+      ]
+    },
+    {
+      "keyword": "PLAY",
+      "prefix": 254,
+      "token": 4,
+      "type": "command",
+      "category": "sound",
+      "syntax": "PLAY string$",
+      "description": "Play a music string (BASIC 7 style)",
+      "example": "PLAY \"T6O4CDEFGAB\""
+    },
+    {
+      "keyword": "POINTER",
+      "prefix": 206,
+      "token": 10,
+      "type": "function",
+      "category": "system",
+      "syntax": "POINTER(var$)",
+      "description": "Return address of a string variable"
+    },
+    {
+      "keyword": "POLYGON",
+      "prefix": 254,
+      "token": 47,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "POLYGON x, y, xrad, yrad, sides [{, drawsides, subtend, angle, solid}]",
+      "description": "Draw a filled polygon",
+      "parameters": [
+        {
+          "name": "x",
+          "type": "integer",
+          "description": "The x coordinate of the center of the polygon"
+        },
+        {
+          "name": "y",
+          "type": "integer",
+          "description": "The y coordinate of the center of the polygon"
+        },
+        {
+          "name": "xrad",
+          "type": "integer",
+          "description": "The x radius of the polygon"
+        },
+        {
+          "name": "yrad",
+          "type": "integer",
+          "description": "The y radius of the polygon"
+        },
+        {
+          "name": "sides",
+          "type": "integer",
+          "description": "The number of polygon sides"
+        },
+        {
+          "name": "drawsides",
+          "type": "integer",
+          "description": "The number of sides to draw",
+          "optional": true
+        },
+        {
+          "name": "subtend",
+          "type": "integer",
+          "range": "0-1",
+          "description": "Will draw a line from center to start if set to 1",
+          "optional": true
+        },
+        {
+          "name": "angle",
+          "type": "integer",
+          "description": "The starting angle",
+          "optional": true
+        },
+        {
+          "name": "solid",
+          "type": "integer",
+          "range": "0-1",
+          "description": "Fill (1) or outline (0) the polygon",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "keyword": "POT",
+      "prefix": 206,
+      "token": 2,
+      "type": "function",
+      "category": "io",
+      "syntax": "POT(n)",
+      "description": "Read potentiometer (paddle) value",
+      "parameters": [
+        {
+          "name": "n",
+          "type": "integer",
+          "range": "1-4",
+          "description": "The paddle number"
+        }
+      ]
+    },
+    {
+      "keyword": "RCOLOR",
+      "token": 205,
+      "type": "function",
+      "category": "system",
+      "syntax": "RCOLOR(colour_source)",
+      "description": "The current colour index for the selected colour source.",
+      "parameters": [
+        {
+          "name": "colour_source",
+          "type": "integer",
+          "range": "0-3",
+          "description": "0: Background colour\n1: Text colour\n2: Highlight colour\n3: Border colour"
+        }
+      ]
+    },
+    {
+      "keyword": "RCURSOR",
+      "prefix": 254,
+      "token": 66,
+      "type": "command",
+      "category": "system",
+      "syntax": "RCURSOR {colvar, rowvar}",
+      "description": "Reads the current cursor column and row into variables.",
+      "parameters": [
+        {
+          "name": "colvar",
+          "description": "The variable to put the column into"
+        },
+        {
+          "name": "rowvar",
+          "description": "The variable to put the row into"
+        }
+      ]
+    },
+    {
+      "keyword": "RDISK",
+      "prefix": 206,
+      "token": 21,
+      "type": "function",
+      "category": "io",
+      "syntax": "RDISK(property number)",
+      "description": "Returns the value of a property of the most recent disk action.\nProperties are\n0: The number of bytes read or written.\n1: The unit number.\n2: The drive number of a multi-drive IEC device, if applicable."
+    },
+    {
+      "keyword": "RECORD",
+      "prefix": 254,
+      "token": 18,
+      "type": "command",
+      "category": "io",
+      "syntax": "RECORD #channel, record [,byte]",
+      "description": "Position the read/write pointer in a relative file",
+      "parameters": [
+        {
+          "name": "#channel",
+          "type": "integer",
+          "description": "The channel number from a previous OPEN or DOPEN command"
+        },
+        {
+          "name": "record",
+          "type": "integer",
+          "range": "0-65535",
+          "description": "The target record to seek"
+        },
+        {
+          "name": "byte",
+          "type": "integer",
+          "description": "The byte position in the record to start",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "keyword": "RENAME",
+      "token": 245,
+      "type": "command",
+      "category": "io",
+      "syntax": "RENAME old TO new [,D drive] [,U unit]",
+      "description": "Renames a disk file.",
+      "parameters": [
+        {
+          "name": "old",
+          "type": "string",
+          "description": "The file to rename"
+        },
+        {
+          "name": "new",
+          "type": "string",
+          "description": "The new name for the file"
+        },
+        {
+          "name": "drive",
+          "type": "integer",
+          "range": "0-15",
+          "optional": true
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "keyword": "RENUMBER",
+      "token": 248,
+      "category": "editor",
+      "type": "command",
+      "syntax": "RENUMBER [C] [{new, inc, range}]",
+      "description": "Renumbers lines of a BASIC program.",
+      "parameters": [
+        {
+          "name": "C",
+          "description": "Given the C flag, RENUMBER will remove space characters that appear before line numbers.",
+          "optional": true
+        },
+        {
+          "name": "new",
+          "type": "integer",
+          "description": "new starting line of the line range to renumber. The default value is 10.",
+          "optional": true
+        },
+        {
+          "name": "inc",
+          "type": "integer",
+          "description": "Increment to be used. The default value is 10",
+          "optional": true
+        },
+        {
+          "name": "range",
+          "type": "integer",
+          "description": "Line range to renumber",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "keyword": "RESUME",
+      "token": 214,
+      "type": "command",
+      "category": "flow",
+      "syntax": "RESUME [line | NEXT]",
+      "description": "Resumes normal program execution in a TRAP routine, after handling an error",
+      "parameters": [
+        {
+          "name": "line",
+          "type": "integer",
+          "description": "The line number to resume executing",
+          "optional": true
+        },
+        {
+          "name": "NEXT",
+          "description": "NEXT resumes execution following the statement that caused the error.",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "keyword": "RGRAPHIC",
+      "token": 204,
+      "type": "function",
+      "category": "graphics",
+      "syntax": "RGRAPHIC(screen, parameter)",
+      "description": "Returns the graphics parameter from the specified screen",
+      "parameters": [
+        {
+          "name": "screen",
+          "type": "integer"
+        },
+        {
+          "name": "parameter",
+          "type": "integer",
+          "range": "0-10"
+        }
+      ]
+    },
+    {
+      "keyword": "RMOUSE",
+      "prefix": 254,
+      "token": 63,
+      "type": "command",
+      "category": "system",
+      "syntax": "RMOUSE xvar, yvar, buttonvar",
+      "description": "Reads mouse position and buttons.",
+      "parameters": [
+        {
+          "name": "xvar",
+          "description": "The variable where the x position will be stored"
+        },
+        {
+          "name": "yvar",
+          "description": "The variable where the y position will be stored"
+        },
+        {
+          "name": "buttonvar",
+          "description": "The variable where the button status will be stored. Bit 0 is right button, bit 7 is left button"
+        }
+      ]
+    },
+    {
+      "keyword": "RPALETTE",
+      "prefix": 206,
+      "token": 13,
+      "type": "function",
+      "category": "system",
+      "syntax": "RPALETTE(screen, index, rgb)",
+      "description": "Returns the red, green, or blue value of a palette colour index.",
+      "parameters": [
+        {
+          "name": "screen",
+          "type": "integer",
+          "range": "0-3",
+          "description": "The screen number to check"
+        },
+        {
+          "name": "index",
+          "type": "integer",
+          "description": "The palette color index"
+        },
+        {
+          "name": "rgb",
+          "type": "integer",
+          "range": "0-2",
+          "description": "0=red, 1=green, 2=blue"
+        }
+      ]
+    },
+    {
+      "keyword": "RPEN",
+      "token": 208,
+      "type": "function",
+      "category": "graphics",
+      "syntax": "RPEN(n)",
+      "description": "Returns the color index of pen n",
+      "parameters": [
+        {
+          "name": "n",
+          "type": "integer",
+          "range": "0-2",
+          "description": "0=draw, 1=erase, 2=outline"
+        }
+      ]
+    },
+    {
+      "keyword": "RPLAY",
+      "prefix": 206,
+      "token": 15,
+      "type": "function",
+      "category": "sound",
+      "syntax": "RPLAY(channel)",
+      "description": "Tests whether music is playing on the given channel.",
+      "parameters": [
+        {
+          "name": "channel",
+          "type": "integer",
+          "range": "1-6",
+          "description": "The voice channel to test"
+        }
+      ]
+    },
+    {
+      "keyword": "RPT$",
+      "prefix": 206,
+      "token": 20,
+      "category": "system",
+      "type": "function",
+      "syntax": "RPT$(string, count)",
+      "description": "Returns a new string equivalent to string repeated count times.",
+      "parameters": [
+        {
+          "name": "string",
+          "type": "string",
+          "description": "The string to repeat"
+        },
+        {
+          "name": "count",
+          "type": "integer",
+          "description": "The number of times to repeat the string"
+        }
+      ]
+    },
+    {
+      "keyword": "RREG",
+      "prefix": 254,
+      "token": 9,
+      "type": "command",
+      "category": "system",
+      "syntax": "RREG [{areg, xreg, yreg, zreg, sreg}]",
+      "description": "Reads the values that were in the CPU registers after a SYS call, into the specified variables",
+      "example": "10 POKE $1800, $18, $8A, $65, $06, $60\n20 REM CLC TXA ADC 06 RTS\n30 SYS $1800, 77, 11\n40 RREG AC, X, Y, Z, S\n50 PRINT \"REGISTER:\"; AC; X; Y; Z; S",
+      "parameters": [
+        {
+          "name": "areg",
+          "description": "The variable that the value of the a register will be placed into"
+        },
+        {
+          "name": "xreg",
+          "description": "The variable that the value of the x register will be placed into"
+        },
+        {
+          "name": "yreg",
+          "description": "The variable that the value of the y register will be placed into"
+        },
+        {
+          "name": "zreg",
+          "description": "The variable that the value of the z register will be placed into"
+        },
+        {
+          "name": "sreg",
+          "description": "The variable that the value of the s register will be placed into"
+        }
+      ]
+    },
+    {
+      "keyword": "RSPCOLOR",
+      "prefix": 206,
+      "token": 7,
+      "type": "function",
+      "category": "graphics",
+      "syntax": "RSPCOLOR(n)",
+      "description": "Returns the colour setting of a multi-colour sprite colour.",
+      "parameters": [
+        {
+          "name": "n",
+          "type": "integer",
+          "range": "1-2",
+          "description": "The sprite multi-color number to get"
+        }
+      ]
+    },
+    {
+      "keyword": "RSPEED",
+      "prefix": 206,
+      "token": 14,
+      "type": "function",
+      "category": "system",
+      "syntax": "RSPEED(0)",
+      "description": "Returns the current CPU clock in MHz. 1=1MHz, 3=3.5MHz, 40=40MHz"
+    },
+    {
+      "keyword": "RSPPOS",
+      "prefix": 206,
+      "token": 5,
+      "type": "function",
+      "category": "graphics",
+      "syntax": "RSPPOS(sprite,n)",
+      "description": "Read sprite position or speed",
+      "parameters": [
+        {
+          "name": "sprite",
+          "type": "integer",
+          "range": "0-7",
+          "description": "The sprite to read"
+        },
+        {
+          "name": "n",
+          "type": "integer",
+          "range": "0-2",
+          "description": "The parameter to get. 0=X, 1=Y, 2=Speed"
+        }
+      ]
+    },
+    {
+      "keyword": "RSPRITE",
+      "prefix": 206,
+      "token": 6,
+      "type": "function",
+      "category": "graphics",
+      "syntax": "RSPRITE(sprite,n)",
+      "description": "Read sprite parameters",
+      "parameters": [
+        {
+          "name": "sprite",
+          "type": "integer",
+          "range": "0-7",
+          "description": "The sprite to read"
+        },
+        {
+          "name": "n",
+          "type": "integer",
+          "range": "0-5",
+          "description": "The parameter to return: 0=on, 1=fg color, 2=bg priority, 3=x-expanded, 4=y-expanded, 5=multi-color"
+        }
+      ]
+    },
+    {
+      "keyword": "RSPRSYS",
+      "prefix": 206,
+      "token": 23,
+      "type": "function",
+      "category": "graphics",
+      "syntax": "RSPRSYS(0)",
+      "description": "Returns sprite high resolution mode, 0=disabled, 1=enabled"
+    },
+    {
+      "keyword": "RWINDOW",
+      "prefix": 206,
+      "token": 9,
+      "type": "function",
+      "category": "screen",
+      "syntax": "RWINDOW(n)",
+      "description": "Returns current window parameter n",
+      "parameters": [
+        {
+          "name": "n",
+          "type": "integer",
+          "range": "0-3",
+          "description": "0=width, 1=height, 2=columns, 3=rows"
+        }
+      ]
+    },
+    {
+      "keyword": "SAVEIFF",
+      "prefix": 254,
+      "token": 68,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "SAVEIFF filename [,D drive] [,U unit]",
+      "description": "Saves the current graphics screen to a disk file in IFF format.",
+      "parameters": [
+        {
+          "name": "filename",
+          "type": "string",
+          "description": "The name to save the IFF as"
+        },
+        {
+          "name": "drive",
+          "type": "integer",
+          "range": "0-15",
+          "optional": true
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "keyword": "SCNCLR",
+      "token": 232,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "SCNCLR [colour]",
+      "description": "Clears a text window or bitmap graphics screen.",
+      "parameters": [
+        {
+          "name": "colour",
+          "type": "integer",
+          "description": "The color to fill the screen with",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "keyword": "SCRATCH",
+      "token": 242,
+      "type": "command",
+      "category": "io",
+      "syntax": "SCRATCH filename [,D drive] [,U unit] [,R]",
+      "description": "Erases (\"scratches\") a disk file.",
+      "parameters": [
+        {
+          "name": "filename",
+          "type": "string",
+          "description": "The file to delete"
+        },
+        {
+          "name": "drive",
+          "type": "integer",
+          "range": "0-15",
+          "optional": true
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "optional": true
+        },
+        {
+          "name": "R",
+          "description": "Will recover a previously erased file",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "keyword": "SCREEN",
+      "prefix": 254,
+      "token": 46,
+      "type": "command",
+      "category": "screen",
+      "syntax": "SCREEN [screen,] width, height, depth",
+      "description": "Manages a graphics screen",
+      "example": "SCREEN 320, 200, 2\nSCREEN CLR\nSCREEN OPEN [screen]\nSCREEN CLOSE [screen]",
+      "parameters": [
+        {
+          "name": "screen",
+          "type": "integer",
+          "range": "0-3",
+          "optional": true,
+          "description": "The screen to use"
+        },
+        {
+          "name": "width",
+          "type": "integer",
+          "range": "320,640",
+          "description": "The screen width to use"
+        },
+        {
+          "name": "height",
+          "type": "integer",
+          "range": "200,400",
+          "description": "The screen height to use"
+        },
+        {
+          "name": "depth",
+          "type": "integer",
+          "range": "0-8",
+          "description": "The color bit depth to use"
+        }
+      ]
+    },
+    {
+      "keyword": "SET",
+      "prefix": 254,
+      "token": 45,
+      "type": "command",
+      "category": "io",
+      "syntax": "SET parameter value",
+      "description": "Redefines the default unit for disk access",
+      "example": "SET DEF unit\nSET DISK old TO new\nSET VERIFY <ON | OFF"
+    },
+    {
+      "keyword": "SLEEP",
+      "prefix": 254,
+      "token": 11,
+      "type": "command",
+      "category": "system",
+      "syntax": "SLEEP seconds",
+      "description": "Pauses program execution for the given duration",
+      "example": "SLEEP 0.0005\nSLEEP 10\nSLEEP 0.01",
+      "parameters": [
+        {
+          "name": "seconds",
+          "type": "float",
+          "description": "The number of seconds to wait"
+        }
+      ]
+    },
+    {
+      "keyword": "SOUND",
+      "token": 218,
+      "type": "command",
+      "category": "sound",
+      "syntax": "SOUND voice, freq, dur [{, dir, min, sweep, wave, pulse}]",
+      "description": "Plays a sound effect",
+      "example": "SOUND 3, 4000, 120, 2, 2000, 400, 1\nSOUND CLR",
+      "parameters": [
+        {
+          "name": "voice",
+          "type": "integer",
+          "range": "1-6",
+          "description": "The voice to use for the sound"
+        },
+        {
+          "name": "freq",
+          "type": "integer",
+          "range": "0-65535",
+          "description": "The frequency to play"
+        },
+        {
+          "name": "dur",
+          "type": "integer",
+          "range": "0-32767",
+          "description": "The duration to play the sound, in jiffies"
+        },
+        {
+          "name": "dir",
+          "type": "integer",
+          "range": "0-2",
+          "description": "direction 0=up, 1=down, 2=oscillate",
+          "optional": true
+        },
+        {
+          "name": "min",
+          "type": "integer",
+          "range": "0-65535",
+          "description": "The minimum freq to play",
+          "optional": true
+        },
+        {
+          "name": "sweep",
+          "type": "integer",
+          "range": "0-65535",
+          "description": "The sweep range",
+          "optional": true
+        },
+        {
+          "name": "wave",
+          "type": "integer",
+          "range": "0-3",
+          "description": "The waveform to use: 0=triangle, 1=sawtooth, 2=square, 3=noise",
+          "optional": true
+        },
+        {
+          "name": "pulse",
+          "type": "integer",
+          "range": "0-4095",
+          "description": "The pulse width to use",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "keyword": "SPEED",
+      "prefix": 254,
+      "token": 38,
+      "type": "command",
+      "category": "system",
+      "syntax": "SPEED [speed]",
+      "description": "Sets the CPU clock speed",
+      "parameters": [
+        {
+          "name": "speed",
+          "type": "integer",
+          "range": "1,3",
+          "description": "1=1MHz, 3=3.5MHz, no argument=40MHz",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "keyword": "SPRCOLOR",
+      "prefix": 254,
+      "token": 8,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "SPRCOLOR mc1, mc2",
+      "description": "Set the two shared multicolor sprite colors",
+      "parameters": [
+        {
+          "name": "mc1",
+          "type": "integer",
+          "description": "The first multicolor value"
+        },
+        {
+          "name": "mc2",
+          "type": "integer",
+          "description": "The second multicolor value"
+        }
+      ]
+    },
+    {
+      "keyword": "SPRITE",
+      "prefix": 254,
+      "token": 7,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "SPRITE n, enable, color, priority, multicolor, xexpand, yexpand",
+      "description": "Configure a hardware sprite",
+      "parameters": [
+        {
+          "name": "n",
+          "type": "integer",
+          "range": "0-7"
+        },
+        {
+          "name": "enable",
+          "type": "integer",
+          "range": "0-1"
+        },
+        {
+          "name": "color",
+          "type": "integer",
+          "range": "0-15"
+        },
+        {
+          "name": "priority",
+          "type": "integer",
+          "range": "0-1",
+          "description": "0=in front, 1=behind background"
+        },
+        {
+          "name": "multicolor",
+          "type": "integer",
+          "range": "0-1",
+          "optional": true
+        },
+        {
+          "name": "xexpand",
+          "type": "integer",
+          "range": "0-1",
+          "optional": true
+        },
+        {
+          "name": "yexpand",
+          "type": "integer",
+          "range": "0-1",
+          "optional": true
+        }
+      ],
+      "example": "SPRITE 0,1,1,0\nSPRITE CLR\nSPRITE LOAD filename\nSPRITE SAVE filename\nSPRITE SYS R hires-mode"
+    },
+    {
+      "keyword": "SPRSAV",
+      "prefix": 254,
+      "token": 22,
+      "type": "command",
+      "category": "system",
+      "syntax": "SPRSAV source, destination",
+      "description": "Copies sprite data from sprite source to sprite destination. Source and destination can be string variables."
+    },
+    {
+      "keyword": "STRBIN$",
+      "prefix": 206,
+      "token": 18,
+      "type": "function",
+      "category": "system",
+      "syntax": "STRBIN$(numeric_expression)",
+      "description": "The number value as a string of its binary representation",
+      "example": "PRINT STRBIN$(245)\n11110101"
+    },
+    {
+      "keyword": "TEMPO",
+      "prefix": 254,
+      "token": 5,
+      "type": "command",
+      "category": "sound",
+      "syntax": "TEMPO n",
+      "description": "Set music playback tempo",
+      "parameters": [
+        {
+          "name": "n",
+          "type": "integer",
+          "range": "1-255",
+          "description": "The duration in seconds of a whole note is computed as duration=24/n"
+        }
+      ]
+    },
+    {
+      "keyword": "TRAP",
+      "token": 215,
+      "type": "command",
+      "category": "flow",
+      "syntax": "TRAP [line]",
+      "description": "Registers or clears a BASIC error handler subroutine",
+      "parameters": [
+        {
+          "name": "line",
+          "type": "integer",
+          "description": "The line number to GOSUB to when an error occurs. Omit to clear the error handler.",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "keyword": "TROFF",
+      "token": 217,
+      "type": "command",
+      "category": "system",
+      "description": "Disable trace mode"
+    },
+    {
+      "keyword": "TRON",
+      "token": 216,
+      "type": "command",
+      "category": "system",
+      "description": "Enable trace mode"
+    },
+    {
+      "keyword": "TURBO",
+      "prefix": 254,
+      "token": 56,
+      "type": "command",
+      "category": "system",
+      "syntax": "TURBO speed",
+      "description": "Sets the CPU clock speed on MEGA65. Refer to the MEGA65 User's Guide for the supported speed values on your hardware revision.",
+      "parameters": [
+        {
+          "name": "speed",
+          "type": "integer",
+          "description": "CPU speed selector — see MEGA65 User's Guide for valid values."
+        }
+      ]
+    },
+    {
+      "keyword": "TYPE",
+      "prefix": 254,
+      "token": 39,
+      "type": "command",
+      "category": "io",
+      "syntax": "TYPE [P] filename [,D drive] [,U unit]",
+      "description": "Display contents of a text file on screen",
+      "parameters": [
+        {
+          "name": "P",
+          "description": "If P is specified, the listing will pause after every screen",
+          "optional": true
+        },
+        {
+          "name": "filename",
+          "type": "string",
+          "description": "The file to display"
+        },
+        {
+          "name": "drive",
+          "type": "integer",
+          "range": "0-15",
+          "optional": true
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "keyword": "UNLOCK",
+      "prefix": 254,
+      "token": 79,
+      "type": "command",
+      "category": "io",
+      "syntax": "UNLOCK filename/pattern [,D drive] [,U unit]",
+      "description": "Unlocks a file on disk previously locked using LOCK.",
+      "parameters": [
+        {
+          "name": "filename/pattern",
+          "type": "string",
+          "description": "The filename or pattern of filenames to unlock"
+        },
+        {
+          "name": "drive",
+          "type": "integer",
+          "range": "0-15",
+          "optional": true
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "keyword": "UNTIL",
+      "token": 252,
+      "type": "command",
+      "category": "flow",
+      "description": "Set the exit criteria for a DO ... LOOP",
+      "example": "10 DO\n20 GET A$\n30 LOOP UNTIL A$= \"Y\" OR A$ = \"N\""
+    },
+    {
+      "keyword": "USING",
+      "token": 251,
+      "type": "command",
+      "category": "system",
+      "description": "Adds ability to print with a format.",
+      "example": "PRINT[# channel,] USING format; argument"
+    },
+    {
+      "keyword": "VIEWPORT",
+      "prefix": 254,
+      "token": 49,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "VIEWPORT x, y, width, height",
+      "description": "Define or clear a clipping region",
+      "example": "VIEWPORT DEF 20, 30, 100, 120\nVIEWPORT CLR",
+      "parameters": [
+        {
+          "name": "x",
+          "type": "integer",
+          "description": "The upper left x coordinate"
+        },
+        {
+          "name": "y",
+          "type": "integer",
+          "description": "The upper left y coordinate"
+        },
+        {
+          "name": "width",
+          "type": "integer",
+          "description": "The width of the clipping region"
+        },
+        {
+          "name": "height",
+          "type": "integer",
+          "description": "The height of the clipping region"
+        }
+      ]
+    },
+    {
+      "keyword": "VOL",
+      "token": 219,
+      "type": "command",
+      "category": "sound",
+      "syntax": "VOL right, left",
+      "description": "Set the sound volume"
+    },
+    {
+      "keyword": "VSYNC",
+      "prefix": 254,
+      "token": 84,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "VSYNC raster_line",
+      "description": "Waits until the raster_line is active"
+    },
+    {
+      "keyword": "WHILE",
+      "token": 253,
+      "category": "flow",
+      "type": "command",
+      "description": "Define the exit of a DO ... LOOP",
+      "example": "10 I% = 0\n20 DO I% = I% + 1\n30 LOOP WHILE I% < 101"
+    },
+    {
+      "keyword": "WINDOW",
+      "prefix": 254,
+      "token": 26,
+      "type": "command",
+      "category": "screen",
+      "syntax": "WINDOW left, top, right, bottom[, clear]",
+      "description": "Define a text window",
+      "example": "WINDOW 5,5,35,20,1",
+      "parameters": [
+        {
+          "name": "left",
+          "type": "integer",
+          "description": "The left column",
+          "range": "0-39 or 0-79"
+        },
+        {
+          "name": "top",
+          "type": "integer",
+          "range": "0-24",
+          "description": "The top row"
+        },
+        {
+          "name": "right",
+          "type": "integer",
+          "range": "0-39 or 0-79",
+          "description": "The right column"
+        },
+        {
+          "name": "bottom",
+          "type": "integer",
+          "range": "0-24",
+          "description": "The bottom row"
+        },
+        {
+          "name": "clear",
+          "type": "integer",
+          "range": "0-1",
+          "description": "Flag to clear the screen, 1=clear",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "keyword": "WPEEK",
+      "prefix": 206,
+      "token": 16,
+      "type": "function",
+      "category": "system",
+      "syntax": "WPEEK(address)",
+      "description": "Returns the 16-bit word at the given address"
+    },
+    {
+      "keyword": "WPOKE",
+      "prefix": 254,
+      "token": 29,
+      "type": "command",
+      "category": "system",
+      "syntax": "WPOKE address, word[, word ....]",
+      "description": "Writes one or more 16-bit words starting at the given address"
+    },
+    {
+      "keyword": "XOR",
+      "token": 233,
+      "type": "operator",
+      "category": "system",
+      "syntax": "operand XOR operand",
+      "description": "Performs a bit-wise logical Exclusive OR operation on two 16-bit values. Integer operands are used as they are. Real operands are converted to a signed 16-bit integer (losing precision). Logical operands are converted to 16-bit integer using $FFFF (decimal -1) for TRUE, and $0000 (decimal 0) for FALSE. The result is of type integer. If the result is used in a logical context, the value of 0 is regarded as FALSE, and all other non-zero values are regarded as TRUE.",
+      "example": "FOR I = 0 TO 8 : PRINT I XOR 5; : NEXT I\n5 4 7 6 1 0 3 2 13"
+    }
+  ]
+}

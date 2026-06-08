@@ -1,0 +1,38 @@
+{
+  "buildOptions" : {
+    "basicStripWhitespace" : false,
+    "defines" : {
+
+    },
+    "generateDebugInfo" : false,
+    "generateListing" : false,
+    "includePaths" : [
+
+    ],
+    "outputDirectory" : "build",
+    "targetPlatform" : "c64",
+    "viceAutoRun" : true,
+    "viceBasicROM" : "",
+    "viceC64Model" : "",
+    "viceChargenROM" : "",
+    "viceExtraArgs" : [
+
+    ],
+    "viceKernalROM" : "",
+    "viceSIDModel" : 0,
+    "viceVideoStandard" : "pal"
+  },
+  "dialect" : null,
+  "mainFile" : "game.bas",
+  "name" : "Simple Game Starter (BASIC)",
+  "session" : {
+    "breakpoints" : {
+
+    },
+    "openFiles" : [
+      "game.bas"
+    ],
+    "selectedTab" : 0
+  },
+  "version" : 1
+}

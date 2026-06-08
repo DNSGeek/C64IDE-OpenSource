@@ -1,0 +1,6 @@
+{
+  "name": "Simple Game Starter",
+  "summary": "A BASIC V2 game skeleton with title screen, joystick reading (port 2), score and lives display, main game loop, and game over screen. Add your own game logic in the UPDATE GAME and DRAW SCREEN sections.",
+  "category": "BASIC",
+  "projectFileName": "basic-game-starter.c64proj"
+}
