@@ -624,7 +624,14 @@ class CharEditorViewController: NSViewController, NSMenuItemValidation {
         panel.message = "Select a 2048-byte (or larger) character set file."
         panel.begin { [weak self] response in
             guard response == .OK, let url = panel.url, let self = self else { return }
-            guard let data = try? Data(contentsOf: url), data.count >= 2048 else {
+            guard var bytes = try? Data(contentsOf: url) else { return }
+
+            // Strip 2-byte PRG load address header if present
+            if bytes.count == 2050 || bytes.count == 4098 {
+                bytes = bytes.dropFirst(2)
+            }
+
+            guard bytes.count >= 2048 else {
                 let alert = NSAlert()
                 alert.messageText = "Invalid Character Set"
                 alert.informativeText = "Expected at least 2048 bytes (256 chars × 8 bytes)."
@@ -632,8 +639,9 @@ class CharEditorViewController: NSViewController, NSMenuItemValidation {
                 alert.runModal()
                 return
             }
+
             self.pushUndo("Import Charset")
-            self.charData.loadFromBytes(Array(data.prefix(2048)))
+            self.charData.loadFromBytes(Array(bytes.prefix(2048)))
             self.gridView.needsDisplay = true
             self.charMapView.needsDisplay = true
             self.updateExport()
@@ -762,18 +770,17 @@ class CharGridView: NSView {
             }
         }
 
-        // Grid lines
+        // CharGridView grid lines
         NSColor(white: AppTheme.current.isDark ? 0.30 : 0.65, alpha: 1.0).setStroke()
+        let gridPath = NSBezierPath()
         for i in 0...8 {
             let pos = CGFloat(i) * cell
-            NSBezierPath().move(to: NSPoint(x: pos, y: 0))
-            NSBezierPath().line(to: NSPoint(x: pos, y: 8 * cell))
-            NSBezierPath().stroke()
-            
-            NSBezierPath().move(to: NSPoint(x: 0, y: pos))
-            NSBezierPath().line(to: NSPoint(x: 8 * cell, y: pos))
-            NSBezierPath().stroke()
+            gridPath.move(to: NSPoint(x: pos, y: 0))
+            gridPath.line(to: NSPoint(x: pos, y: 8 * cell))
+            gridPath.move(to: NSPoint(x: 0, y: pos))
+            gridPath.line(to: NSPoint(x: 8 * cell, y: pos))
         }
+        gridPath.stroke()
 
         // Border
         AppTheme.current.editorSelectionHighlight.withAlphaComponent(0.5).setStroke()
@@ -857,19 +864,18 @@ class CharMapView: NSView {
             }
         }
 
-        // Grid lines
+        // CharMapView grid lines
         NSColor(white: AppTheme.current.isDark ? 0.20 : 0.60, alpha: 0.5).setStroke()
+        let gridPath = NSBezierPath()
         for i in 0...16 {
             let x = CGFloat(i) * cell.width
             let y = CGFloat(i) * cell.height
-            NSBezierPath().move(to: NSPoint(x: x, y: 0))
-            NSBezierPath().line(to: NSPoint(x: x, y: bounds.height))
-            NSBezierPath().stroke()
-            
-            NSBezierPath().move(to: NSPoint(x: 0, y: y))
-            NSBezierPath().line(to: NSPoint(x: bounds.width, y: y))
-            NSBezierPath().stroke()
+            gridPath.move(to: NSPoint(x: x, y: 0))
+            gridPath.line(to: NSPoint(x: x, y: bounds.height))
+            gridPath.move(to: NSPoint(x: 0, y: y))
+            gridPath.line(to: NSPoint(x: bounds.width, y: y))
         }
+        gridPath.stroke()
 
         // Highlight selected char
         let selCol = selectedChar % 16
