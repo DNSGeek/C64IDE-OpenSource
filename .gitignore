@@ -37,6 +37,7 @@ xcuserdata/
 .build/
 Packages/
 Package.resolved
+*.plist
 
 # C64 IDE build output
 build/

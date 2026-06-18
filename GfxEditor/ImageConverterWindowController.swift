@@ -53,6 +53,8 @@ class ImageConverterViewController: NSViewController {
     private var sectionLabels: [NSTextField] = []
     private var dimLabels:     [NSTextField] = []
 
+    private var conversionWorkItem: DispatchWorkItem?
+
     override func loadView() {
         self.view = NSView(frame: NSRect(x: 0, y: 0, width: 750, height: 560))
         view.wantsLayer = true
@@ -228,15 +230,23 @@ class ImageConverterViewController: NSViewController {
             }
             self?.sourceImage = image
             self?.sourceImageView.image = image
-            self?.statusLabel.stringValue = "Loaded: \(url.lastPathComponent) (\(Int(image.size.width))×\(Int(image.size.height)))"
+
+            if let cgImg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) {
+                self?.statusLabel.stringValue = "Loaded: \(url.lastPathComponent) (\(cgImg.width)×\(cgImg.height) px)"
+            } else {
+                self?.statusLabel.stringValue = "Loaded: \(url.lastPathComponent)"
+            }
         }
     }
 
     // MARK: - Convert
 
     @objc private func settingsChanged(_ sender: Any?) {
-        // Auto-convert if we have a source image
-        if sourceImage != nil { convertImage(sender) }
+        guard sourceImage != nil else { return }
+        conversionWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.runConversion() }
+        conversionWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: work)
     }
 
     @objc private func resetSliders(_ sender: Any?) {
@@ -246,58 +256,122 @@ class ImageConverterViewController: NSViewController {
     }
 
     @objc private func convertImage(_ sender: Any?) {
-        guard let source = sourceImage else {
+        guard sourceImage != nil else {
             statusLabel.stringValue = "Load an image first."
             return
         }
+        // Cancel any pending debounced work and convert immediately.
+        conversionWorkItem?.cancel()
+        conversionWorkItem = nil
+        runConversion()
+    }
+
+    // Shared conversion entry point called by both convertImage and the
+    // debounced settingsChanged path.  Always called on the main thread;
+    // pixel extraction and heavy lifting happen on a background thread.
+    private func runConversion() {
+        guard let source = sourceImage else { return }
 
         let isMultiColor = modeSelector.indexOfSelectedItem == 1
-        let ditherMode = ditherSelector.indexOfSelectedItem
-        let brightness = brightnessSlider.doubleValue
-        let contrast = contrastSlider.doubleValue
+        let ditherMode   = ditherSelector.indexOfSelectedItem
+        let brightness   = brightnessSlider.doubleValue
+        let contrast     = contrastSlider.doubleValue
 
         statusLabel.stringValue = "Converting..."
 
+        guard let cgImage = source.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+            statusLabel.stringValue = "Failed to read image data."
+            return
+        }
+
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let bitmap = self?.performConversion(
-                source: source,
+            guard let self else { return }
+            let bitmap = self.performConversion(
+                cgImage:    cgImage,
                 multiColor: isMultiColor,
-                dither: ditherMode,
+                dither:     ditherMode,
                 brightness: brightness,
-                contrast: contrast
+                contrast:   contrast
             )
 
             DispatchQueue.main.async {
-                self?.resultBitmap = bitmap
-                if let bmp = bitmap {
-                    self?.resultImageView.image = self?.bitmapToNSImage(bmp)
-                    let mode = isMultiColor ? "multi-color" : "hi-res"
-                    self?.statusLabel.stringValue = "Converted to C64 \(mode) format."
-                }
+                self.resultBitmap = bitmap
+                self.resultImageView.image = self.bitmapToNSImage(bitmap)
+                let mode = isMultiColor ? "multi-color" : "hi-res"
+                self.statusLabel.stringValue = "Converted to C64 \(mode) format."
             }
         }
     }
 
     // MARK: - Conversion Engine
 
-    private func performConversion(source: NSImage, multiColor: Bool, dither: Int, brightness: Double, contrast: Double) -> C64Bitmap {
+    private func performConversion(cgImage: CGImage, multiColor: Bool, dither: Int, brightness: Double, contrast: Double) -> C64Bitmap {
         let targetW = multiColor ? 160 : 320
         let targetH = 200
 
-        // Get pixel data from source image, scaled to target size
-        let pixels = getScaledPixels(from: source, width: targetW, height: targetH, brightness: brightness, contrast: contrast)
+        let pixels = getScaledPixels(from: cgImage, width: targetW, height: targetH, brightness: brightness, contrast: contrast)
 
         let bitmap = C64Bitmap()
         bitmap.isMultiColor = multiColor
 
-        // Process each 8×8 cell (or 4×8 in multi-color)
         let cellPixelW = multiColor ? 4 : 8
-        let cellCols = targetW / cellPixelW
-        let cellRows = targetH / 8
+        let cellCols   = targetW / cellPixelW
+        let cellRows   = targetH / 8
+
+        // ── Multi-color global background pre-pass ────────────────────────────
+        var globalBg = 0
+        if multiColor {
+            var bestBgError = Double.infinity
+
+            for candidate in 0..<16 {
+                var totalError = 0.0
+
+                for cellRow in 0..<cellRows {
+                    for cellCol in 0..<cellCols {
+                        // Collect cell pixels
+                        var cellPixels: [(r: Double, g: Double, b: Double)] = []
+                        for py in 0..<8 {
+                            for px in 0..<cellPixelW {
+                                let x = cellCol * cellPixelW + px
+                                let y = cellRow * 8 + py
+                                if x < targetW && y < targetH {
+                                    cellPixels.append(pixels[y][x])
+                                }
+                            }
+                        }
+                        // Best 3 per-cell colours excluding the candidate background
+                        let cellColors = findBestColors(cellPixels, count: 3, excluding: candidate)
+                        let palette    = [candidate] + cellColors
+
+                        // Sum error for each pixel against this 4-entry palette
+                        for pixel in cellPixels {
+                            var minDist = Double.infinity
+                            for c in palette {
+                                let d = colorDistance(pixel, c64Color: c)
+                                if d < minDist { minDist = d }
+                            }
+                            totalError += minDist
+                        }
+                    }
+                }
+
+                if totalError < bestBgError {
+                    bestBgError = totalError
+                    globalBg    = candidate
+                }
+            }
+            bitmap.backgroundColor = UInt8(globalBg)
+        }
+
+        var fsError = Array(
+            repeating: Array(repeating: (r: 0.0, g: 0.0, b: 0.0), count: targetW + 1),
+            count: 2
+        )
 
         for cellRow in 0..<cellRows {
             for cellCol in 0..<cellCols {
-                // Collect all pixels in this cell
+
+                // Collect pixels for this cell
                 var cellPixels: [(r: Double, g: Double, b: Double)] = []
                 for py in 0..<8 {
                     for px in 0..<cellPixelW {
@@ -310,29 +384,87 @@ class ImageConverterViewController: NSViewController {
                 }
 
                 if multiColor {
-                    // Multi-color: find best 3 colors for cell (+ background)
-                    let bestColors = findBestColors(cellPixels, count: 3)
-                    let bgIdx = 0  // Black background
+                    let cellColors = findBestColors(cellPixels, count: 3, excluding: globalBg)
+                    if cellColors.count > 0 { bitmap.cellForeground[cellRow][cellCol] = UInt8(cellColors[0]) }
+                    if cellColors.count > 1 { bitmap.cellBackground[cellRow][cellCol] = UInt8(cellColors[1]) }
+                    if cellColors.count > 2 { bitmap.cellColorRAM[cellRow][cellCol]   = UInt8(cellColors[2]) }
 
-                    bitmap.backgroundColor = UInt8(bgIdx)
-                    if bestColors.count > 0 { bitmap.cellForeground[cellRow][cellCol] = UInt8(bestColors[0]) }
-                    if bestColors.count > 1 { bitmap.cellBackground[cellRow][cellCol] = UInt8(bestColors[1]) }
-                    if bestColors.count > 2 { bitmap.cellColorRAM[cellRow][cellCol] = UInt8(bestColors[2]) }
-
-                    let palette = [bgIdx] + bestColors
+                    // palette[0] = background ($D021), slots 1–3 = cell registers
+                    let padding = Array(repeating: globalBg, count: max(0, 3 - cellColors.count))
+                    let palette = [globalBg] + cellColors + padding
 
                     for py in 0..<8 {
+                        let absY = cellRow * 8 + py
+
                         for px in 0..<cellPixelW {
                             let x = cellCol * cellPixelW + px
-                            let y = cellRow * 8 + py
+                            let y = absY
                             guard x < targetW, y < targetH else { continue }
-                            let rgb = pixels[y][x]
-                            let bestIdx = closestPaletteIndex(rgb, from: palette)
-                            bitmap.pixels[y][x] = UInt8(bestIdx)
+
+                            var rgb = pixels[y][x]
+
+                            if dither == 1 {
+                                // Floyd-Steinberg: apply accumulated error
+                                rgb.r = max(0, min(255, rgb.r + fsError[0][x].r))
+                                rgb.g = max(0, min(255, rgb.g + fsError[0][x].g))
+                                rgb.b = max(0, min(255, rgb.b + fsError[0][x].b))
+                            } else if dither == 2 {
+                                // Bayer 4×4 ordered dithering (scale ×16)
+                                let bayerMatrix: [[Double]] = [
+                                    [-0.5,    0.0,    -0.375,  0.125 ],
+                                    [ 0.25,  -0.25,   0.375, -0.125 ],
+                                    [-0.3125, 0.1875, -0.4375, 0.0625],
+                                    [ 0.4375,-0.0625,  0.3125,-0.1875],
+                                ]
+                                let threshold = bayerMatrix[y % 4][x % 4] * 16
+                                rgb.r = max(0, min(255, rgb.r + threshold))
+                                rgb.g = max(0, min(255, rgb.g + threshold))
+                                rgb.b = max(0, min(255, rgb.b + threshold))
+                            }
+
+                            let chosenIdx = closestPaletteIndex(rgb, from: palette)
+                            bitmap.pixels[y][x] = UInt8(chosenIdx)
+
+                            if dither == 1 {
+                                // Distribute Floyd-Steinberg error
+                                let chosenC   = palette[chosenIdx]
+                                let chosenRGB = c64PaletteRGB[chosenC]
+                                let errR = rgb.r - Double(chosenRGB.r)
+                                let errG = rgb.g - Double(chosenRGB.g)
+                                let errB = rgb.b - Double(chosenRGB.b)
+
+                                if x + 1 < targetW {
+                                    fsError[0][x + 1].r += errR * 7 / 16
+                                    fsError[0][x + 1].g += errG * 7 / 16
+                                    fsError[0][x + 1].b += errB * 7 / 16
+                                }
+                                if y + 1 < targetH {
+                                    if x > 0 {
+                                        fsError[1][x - 1].r += errR * 3 / 16
+                                        fsError[1][x - 1].g += errG * 3 / 16
+                                        fsError[1][x - 1].b += errB * 3 / 16
+                                    }
+                                    fsError[1][x].r += errR * 5 / 16
+                                    fsError[1][x].g += errG * 5 / 16
+                                    fsError[1][x].b += errB * 5 / 16
+                                    if x + 1 < targetW {
+                                        fsError[1][x + 1].r += errR * 1 / 16
+                                        fsError[1][x + 1].g += errG * 1 / 16
+                                        fsError[1][x + 1].b += errB * 1 / 16
+                                    }
+                                }
+                            }
+                        }
+
+                        // Advance FS rolling buffer at end of each image scanline.
+                        if dither == 1 {
+                            fsError[0] = fsError[1]
+                            fsError[1] = Array(repeating: (r: 0.0, g: 0.0, b: 0.0), count: targetW + 1)
                         }
                     }
+
                 } else {
-                    // Hi-res: find best 2 colors for cell
+                    // Hi-res: 2 colors per cell, dithering supported
                     let bestColors = findBestColors(cellPixels, count: 2)
                     let bg = bestColors.count > 0 ? bestColors[0] : 0
                     let fg = bestColors.count > 1 ? bestColors[1] : 1
@@ -340,73 +472,72 @@ class ImageConverterViewController: NSViewController {
                     bitmap.cellBackground[cellRow][cellCol] = UInt8(bg)
                     bitmap.cellForeground[cellRow][cellCol] = UInt8(fg)
 
-                    // Apply dithering
-                    var errorBuf = Array(repeating: Array(repeating: (r: 0.0, g: 0.0, b: 0.0), count: cellPixelW + 2), count: 8 + 1)
-
                     for py in 0..<8 {
+                        let absY = cellRow * 8 + py
+
                         for px in 0..<cellPixelW {
                             let x = cellCol * cellPixelW + px
-                            let y = cellRow * 8 + py
+                            let y = absY
                             guard x < targetW, y < targetH else { continue }
 
                             var rgb = pixels[y][x]
 
                             if dither == 1 {
-                                // Floyd-Steinberg: add accumulated error
-                                rgb.r += errorBuf[py][px].r
-                                rgb.g += errorBuf[py][px].g
-                                rgb.b += errorBuf[py][px].b
-                                rgb.r = max(0, min(255, rgb.r))
-                                rgb.g = max(0, min(255, rgb.g))
-                                rgb.b = max(0, min(255, rgb.b))
+                                // Floyd-Steinberg: apply accumulated error
+                                rgb.r = max(0, min(255, rgb.r + fsError[0][x].r))
+                                rgb.g = max(0, min(255, rgb.g + fsError[0][x].g))
+                                rgb.b = max(0, min(255, rgb.b + fsError[0][x].b))
                             } else if dither == 2 {
-                                // Ordered dithering (Bayer 4×4)
                                 let bayerMatrix: [[Double]] = [
-                                    [-0.5, 0.0, -0.375, 0.125],
-                                    [0.25, -0.25, 0.375, -0.125],
+                                    [-0.5,    0.0,    -0.375,  0.125 ],
+                                    [ 0.25,  -0.25,   0.375, -0.125 ],
                                     [-0.3125, 0.1875, -0.4375, 0.0625],
-                                    [0.4375, -0.0625, 0.3125, -0.1875],
+                                    [ 0.4375,-0.0625,  0.3125,-0.1875],
                                 ]
-                                let threshold = bayerMatrix[py % 4][px % 4] * 64
-                                rgb.r += threshold
-                                rgb.g += threshold
-                                rgb.b += threshold
+                                let threshold = bayerMatrix[y % 4][x % 4] * 16
+                                rgb.r = max(0, min(255, rgb.r + threshold))
+                                rgb.g = max(0, min(255, rgb.g + threshold))
+                                rgb.b = max(0, min(255, rgb.b + threshold))
                             }
 
-                            // Find closest of the two cell colors
                             let bgDist = colorDistance(rgb, c64Color: bg)
                             let fgDist = colorDistance(rgb, c64Color: fg)
                             let chosen = bgDist < fgDist ? bg : fg
                             bitmap.pixels[y][x] = chosen == bg ? 0 : 1
 
                             if dither == 1 {
-                                // Distribute error (Floyd-Steinberg weights)
                                 let chosenRGB = c64PaletteRGB[chosen]
                                 let errR = rgb.r - Double(chosenRGB.r)
                                 let errG = rgb.g - Double(chosenRGB.g)
                                 let errB = rgb.b - Double(chosenRGB.b)
 
-                                if px + 1 < cellPixelW {
-                                    errorBuf[py][px + 1].r += errR * 7 / 16
-                                    errorBuf[py][px + 1].g += errG * 7 / 16
-                                    errorBuf[py][px + 1].b += errB * 7 / 16
+                                if x + 1 < targetW {
+                                    fsError[0][x + 1].r += errR * 7 / 16
+                                    fsError[0][x + 1].g += errG * 7 / 16
+                                    fsError[0][x + 1].b += errB * 7 / 16
                                 }
-                                if py + 1 < 8 {
-                                    if px > 0 {
-                                        errorBuf[py + 1][px - 1].r += errR * 3 / 16
-                                        errorBuf[py + 1][px - 1].g += errG * 3 / 16
-                                        errorBuf[py + 1][px - 1].b += errB * 3 / 16
+                                if y + 1 < targetH {
+                                    if x > 0 {
+                                        fsError[1][x - 1].r += errR * 3 / 16
+                                        fsError[1][x - 1].g += errG * 3 / 16
+                                        fsError[1][x - 1].b += errB * 3 / 16
                                     }
-                                    errorBuf[py + 1][px].r += errR * 5 / 16
-                                    errorBuf[py + 1][px].g += errG * 5 / 16
-                                    errorBuf[py + 1][px].b += errB * 5 / 16
-                                    if px + 1 < cellPixelW {
-                                        errorBuf[py + 1][px + 1].r += errR * 1 / 16
-                                        errorBuf[py + 1][px + 1].g += errG * 1 / 16
-                                        errorBuf[py + 1][px + 1].b += errB * 1 / 16
+                                    fsError[1][x].r += errR * 5 / 16
+                                    fsError[1][x].g += errG * 5 / 16
+                                    fsError[1][x].b += errB * 5 / 16
+                                    if x + 1 < targetW {
+                                        fsError[1][x + 1].r += errR * 1 / 16
+                                        fsError[1][x + 1].g += errG * 1 / 16
+                                        fsError[1][x + 1].b += errB * 1 / 16
                                     }
                                 }
                             }
+                        }
+
+                        // Advance FS rolling buffer at the end of each image scanline.
+                        if dither == 1 {
+                            fsError[0] = fsError[1]
+                            fsError[1] = Array(repeating: (r: 0.0, g: 0.0, b: 0.0), count: targetW + 1)
                         }
                     }
                 }
@@ -418,37 +549,47 @@ class ImageConverterViewController: NSViewController {
 
     // MARK: - Pixel Extraction
 
-    private func getScaledPixels(from image: NSImage, width: Int, height: Int, brightness: Double, contrast: Double) -> [[(r: Double, g: Double, b: Double)]] {
-        // Render the NSImage into a bitmap context at the target size
-        let rep = NSBitmapImageRep(
-            bitmapDataPlanes: nil,
-            pixelsWide: width,
-            pixelsHigh: height,
-            bitsPerSample: 8,
-            samplesPerPixel: 4,
-            hasAlpha: true,
-            isPlanar: false,
-            colorSpaceName: .deviceRGB,
-            bytesPerRow: width * 4,
-            bitsPerPixel: 32
-        )!
+    // Renders `image` (a CGImage) into a CGContext at `width`×`height` pixels,
+    // then reads back raw RGBA bytes and applies brightness/contrast.
+    private func getScaledPixels(from cgImage: CGImage, width: Int, height: Int, brightness: Double, contrast: Double) -> [[(r: Double, g: Double, b: Double)]] {
 
-        NSGraphicsContext.saveGraphicsState()
-        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
-        image.draw(in: NSRect(x: 0, y: 0, width: width, height: height),
-                   from: .zero, operation: .copy, fraction: 1.0)
-        NSGraphicsContext.restoreGraphicsState()
+        let bytesPerPixel = 4
+        let bytesPerRow   = width * bytesPerPixel
+        var rawBytes      = [UInt8](repeating: 0, count: height * bytesPerRow)
 
-        var pixels: [[(r: Double, g: Double, b: Double)]] = []
+        guard let ctx = CGContext(
+            data:             &rawBytes,
+            width:            width,
+            height:           height,
+            bitsPerComponent: 8,
+            bytesPerRow:      bytesPerRow,
+            space:            CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo:       CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else {
+            // Return a black pixel grid rather than crashing if context creation fails.
+            return Array(repeating: Array(repeating: (0.0, 0.0, 0.0), count: width), count: height)
+        }
+
+        ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+
         let contrastFactor = (259.0 * (contrast + 255.0)) / (255.0 * (259.0 - contrast))
 
+        var pixels = Array(repeating: Array(repeating: (r: 0.0, g: 0.0, b: 0.0), count: width), count: height)
+
         for y in 0..<height {
-            var row: [(r: Double, g: Double, b: Double)] = []
             for x in 0..<width {
-                let offset = (y * width + x) * 4
-                var r = Double(rep.bitmapData![offset])
-                var g = Double(rep.bitmapData![offset + 1])
-                var b = Double(rep.bitmapData![offset + 2])
+                let offset = (y * width + x) * bytesPerPixel
+                var r = Double(rawBytes[offset])
+                var g = Double(rawBytes[offset + 1])
+                var b = Double(rawBytes[offset + 2])
+                let a = Double(rawBytes[offset + 3])
+
+                // Un-premultiply alpha so brightness/contrast operate on
+                // the true colour values rather than pre-blended ones.
+                if a > 0 {
+                    let invA = 255.0 / a
+                    r *= invA; g *= invA; b *= invA
+                }
 
                 // Apply brightness
                 r += brightness; g += brightness; b += brightness
@@ -458,9 +599,8 @@ class ImageConverterViewController: NSViewController {
                 g = contrastFactor * (g - 128) + 128
                 b = contrastFactor * (b - 128) + 128
 
-                row.append((max(0, min(255, r)), max(0, min(255, g)), max(0, min(255, b))))
+                pixels[y][x] = (max(0, min(255, r)), max(0, min(255, g)), max(0, min(255, b)))
             }
-            pixels.append(row)
         }
 
         return pixels
@@ -468,44 +608,87 @@ class ImageConverterViewController: NSViewController {
 
     // MARK: - Color Matching
 
-    /// Euclidean distance weighted by human perceptual sensitivity (ITU-R BT.601/709)
+    /// Euclidean distance weighted by human perceptual sensitivity (ITU-R BT.601)
     private func colorDistance(_ pixel: (r: Double, g: Double, b: Double), c64Color: Int) -> Double {
-        let c = c64PaletteRGB[c64Color]
+        let c  = c64PaletteRGB[c64Color]
         let dr = pixel.r - Double(c.r)
         let dg = pixel.g - Double(c.g)
         let db = pixel.b - Double(c.b)
-        // Weighted distance (human eye is more sensitive to green)
+        // Weighted distance (human eye is most sensitive to green)
         return dr * dr * 0.299 + dg * dg * 0.587 + db * db * 0.114
     }
 
     private func closestPaletteIndex(_ pixel: (r: Double, g: Double, b: Double), from palette: [Int]) -> Int {
-        var bestIdx = 0
+        var bestIdx  = 0
         var bestDist = Double.infinity
         for (i, colorIdx) in palette.enumerated() {
             let dist = colorDistance(pixel, c64Color: colorIdx)
-            if dist < bestDist {
-                bestDist = dist
-                bestIdx = i
-            }
+            if dist < bestDist { bestDist = dist; bestIdx = i }
         }
         return bestIdx
     }
 
-    /// Find the best N C64 colors to represent a set of pixels
-    /// Uses greedy scoring: sums perceptual distance for each palette color across all pixels
-    private func findBestColors(_ pixels: [(r: Double, g: Double, b: Double)], count: Int) -> [Int] {
-        var scores: [(Int, Double)] = []
+    // Find the best N C64 palette entries to represent a set of pixels.
+    private func findBestColors(_ pixels: [(r: Double, g: Double, b: Double)], count: Int, excluding: Int? = nil) -> [Int] {
+        guard !pixels.isEmpty else { return Array(0..<min(count, 16)) }
 
-        for c in 0..<16 {
-            var totalDist = 0.0
-            for pixel in pixels {
-                totalDist += colorDistance(pixel, c64Color: c)
+        let candidates = (0..<16).filter { $0 != excluding }
+        guard !candidates.isEmpty else { return [] }
+
+        var covered:   [Int]                                = excluding.map { [$0] } ?? []
+        var chosen:    [Int]                                = []
+        var remaining: [(r: Double, g: Double, b: Double)] = pixels
+
+        while chosen.count < count {
+            guard !remaining.isEmpty else { break }
+
+            let nextC: Int
+
+            if chosen.isEmpty {
+                let n   = Double(remaining.count)
+                let avgR = remaining.reduce(0.0) { $0 + $1.r } / n
+                let avgG = remaining.reduce(0.0) { $0 + $1.g } / n
+                let avgB = remaining.reduce(0.0) { $0 + $1.b } / n
+                let centroid = (r: avgR, g: avgG, b: avgB)
+
+                var bestC    = candidates.first!
+                var bestDist = Double.infinity
+                for c in candidates where !chosen.contains(c) {
+                    let d = colorDistance(centroid, c64Color: c)
+                    if d < bestDist { bestDist = d; bestC = c }
+                }
+                nextC = bestC
+            } else {
+                var votes = [Int: Int]()
+                for pixel in remaining {
+                    var bestC    = candidates.first!
+                    var bestDist = Double.infinity
+                    for c in candidates where !chosen.contains(c) {
+                        let d = colorDistance(pixel, c64Color: c)
+                        if d < bestDist { bestDist = d; bestC = c }
+                    }
+                    votes[bestC, default: 0] += 1
+                }
+                guard let winner = votes.max(by: { $0.value < $1.value })?.key else { break }
+                nextC = winner
             }
-            scores.append((c, totalDist))
+
+            chosen.append(nextC)
+            covered.append(nextC)
+
+            // Remove pixels now well-served by the full covered set.
+            remaining = remaining.filter { pixel in
+                var nearestDist = Double.infinity
+                var nearestC    = nextC
+                for c in covered {
+                    let d = colorDistance(pixel, c64Color: c)
+                    if d < nearestDist { nearestDist = d; nearestC = c }
+                }
+                return nearestC != nextC
+            }
         }
 
-        scores.sort { $0.1 < $1.1 }
-        return Array(scores.prefix(count).map { $0.0 })
+        return chosen
     }
 
     // MARK: - Bitmap → NSImage
@@ -530,9 +713,9 @@ class ImageConverterViewController: NSViewController {
         for y in 0..<h {
             for x in 0..<w {
                 let colorIdx = Int(bitmap.displayColor(x: x, y: y))
-                let c = c64PaletteRGB[min(colorIdx, 15)]
-                let offset = (y * w + x) * 3
-                rep.bitmapData![offset] = UInt8(c.r)
+                let c        = c64PaletteRGB[min(colorIdx, 15)]
+                let offset   = (y * w + x) * 3
+                rep.bitmapData![offset]     = UInt8(c.r)
                 rep.bitmapData![offset + 1] = UInt8(c.g)
                 rep.bitmapData![offset + 2] = UInt8(c.b)
             }
@@ -551,15 +734,15 @@ class ImageConverterViewController: NSViewController {
             return
         }
 
-        let panel = NSSavePanel()
+        let panel    = NSSavePanel()
         let accessory = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 250, height: 24))
         if bitmap.isMultiColor {
             accessory.addItems(withTitles: ["Koala Painter (.kla)", "Assembly (.asm)", "BASIC DATA (.bas)", "PRG (.prg)"])
         } else {
             accessory.addItems(withTitles: ["Art Studio (.art)", "Assembly (.asm)", "BASIC DATA (.bas)", "PRG (.prg)"])
         }
-        panel.accessoryView = accessory
-        panel.nameFieldStringValue = bitmap.isMultiColor ? "converted.kla" : "converted.art"
+        panel.accessoryView          = accessory
+        panel.nameFieldStringValue   = bitmap.isMultiColor ? "converted.kla" : "converted.art"
 
         panel.begin { [weak self] response in
             guard response == .OK, let url = panel.url else { return }
@@ -600,7 +783,7 @@ class ImageConverterViewController: NSViewController {
 
         if response == .alertFirstButtonReturn {
             let panel = NSSavePanel()
-            panel.allowedContentTypes = [.init(filenameExtension: "d64")!]
+            panel.allowedContentTypes  = [.init(filenameExtension: "d64")!]
             panel.nameFieldStringValue = "converted.d64"
             panel.begin { saveResponse in
                 guard saveResponse == .OK, let url = panel.url else { return }
@@ -621,4 +804,3 @@ class ImageConverterViewController: NSViewController {
         }
     }
 }
-
