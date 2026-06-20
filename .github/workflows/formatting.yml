@@ -37,178 +37,231 @@ on:
 jobs:
   format:
     runs-on: ubuntu-latest
-    
+
     permissions:
       contents: write
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
-      
-      - name: Install shellcheck
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y shellcheck
-      
-      - name: Install shfmt
-        run: |
-          curl -sS https://webi.sh/shfmt | sh
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
-      
+
+      # ── Shell ────────────────────────────────────────────────────────────────
+
       - name: Find shell scripts
         id: find_shell
         run: |
-          # Find all .sh files and files with shell shebangs
-          SHELL_FILES=$(find . -type f \( -name "*.sh" -o -exec sh -c 'head -n1 "$1" | grep -q "^#!.*sh"' _ {} \; \) -print | grep -v ".git" || true)
-          if [ -n "$SHELL_FILES" ]; then
-            echo "found=true" >> $GITHUB_OUTPUT
-            echo "$SHELL_FILES" > /tmp/shell_files.txt
+          # .sh files plus files with a shell shebang (space-safe via NUL separation)
+          {
+            find . -type f -name "*.sh" -not -path "./.git/*" -print0
+            find . -type f -not -name "*.sh" -not -path "./.git/*" \
+              -exec sh -c 'head -n1 "$1" 2>/dev/null | grep -qE "^#!.*\bsh\b"' _ {} \; -print0
+          } | sort -zu | tr '\0' '\n' > /tmp/shell_files.txt
+
+          if [ -s /tmp/shell_files.txt ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
           else
-            echo "found=false" >> $GITHUB_OUTPUT
+            echo "found=false" >> "$GITHUB_OUTPUT"
           fi
-      
+
+      - name: Install shellcheck and shfmt
+        if: steps.find_shell.outputs.found == 'true'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y shellcheck
+          curl -sS https://webi.sh/shfmt | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
       - name: Run shellcheck (BLOCKING)
         if: steps.find_shell.outputs.found == 'true'
         run: |
           echo "Running shellcheck on all shell scripts..."
-          cat /tmp/shell_files.txt | xargs shellcheck
-      
+          xargs shellcheck < /tmp/shell_files.txt
+
       - name: Run shfmt
         if: steps.find_shell.outputs.found == 'true'
         run: |
           echo "Formatting shell scripts with shfmt..."
-          cat /tmp/shell_files.txt | xargs shfmt -w -i 2 -ci -bn
-      
-      - name: Install C tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y clang-tidy clang-format
-      
+          xargs shfmt -w -i 2 -ci -bn < /tmp/shell_files.txt
+
+      # ── C / C++ ──────────────────────────────────────────────────────────────
+
       - name: Find C files
         id: find_c
         run: |
-          C_FILES=$(find . -type f \( -name "*.c" -o -name "*.h" \) -not -path "./.git/*" || true)
-          if [ -n "$C_FILES" ]; then
-            echo "found=true" >> $GITHUB_OUTPUT
-            echo "$C_FILES" > /tmp/c_files.txt
+          find . -type f \( -name "*.c" -o -name "*.h" \) -not -path "./.git/*" \
+            > /tmp/c_files.txt || true
+
+          if [ -s /tmp/c_files.txt ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
           else
-            echo "found=false" >> $GITHUB_OUTPUT
+            echo "found=false" >> "$GITHUB_OUTPUT"
           fi
-      
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      
-      - name: Install TypeScript and Markdown tools
+
+      - name: Install C tools
+        if: steps.find_c.outputs.found == 'true'
         run: |
-          npm install -g eslint prettier @typescript-eslint/parser @typescript-eslint/eslint-plugin eslint-plugin-markdown markdownlint-cli
-      
-      - name: Find TypeScript files
+          sudo apt-get update -qq
+          sudo apt-get install -y clang-tidy clang-format
+
+      - name: Run clang-tidy (BLOCKING)
+        if: steps.find_c.outputs.found == 'true'
+        run: |
+          echo "Running clang-tidy on all C files..."
+          xargs clang-tidy --warnings-as-errors='*' < /tmp/c_files.txt
+
+      - name: Run clang-format
+        if: steps.find_c.outputs.found == 'true'
+        run: |
+          echo "Formatting C code with clang-format..."
+          xargs clang-format -i --style=LLVM < /tmp/c_files.txt
+
+      # ── TypeScript / JavaScript / Markdown ───────────────────────────────────
+
+      - name: Find TypeScript/JavaScript files
         id: find_ts
         run: |
-          TS_FILES=$(find . -type f \( -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" \) -not -path "./node_modules/*" -not -path "./.git/*" || true)
-          if [ -n "$TS_FILES" ]; then
-            echo "found=true" >> $GITHUB_OUTPUT
+          find . -type f \( -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" \) \
+            -not -path "./node_modules/*" -not -path "./.git/*" \
+            > /tmp/ts_files.txt || true
+
+          if [ -s /tmp/ts_files.txt ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
           else
-            echo "found=false" >> $GITHUB_OUTPUT
+            echo "found=false" >> "$GITHUB_OUTPUT"
           fi
-      
+
       - name: Find Markdown files
         id: find_md
         run: |
-          MD_FILES=$(find . -type f -name "*.md" -not -path "./node_modules/*" -not -path "./.git/*" || true)
-          if [ -n "$MD_FILES" ]; then
-            echo "found=true" >> $GITHUB_OUTPUT
+          find . -type f -name "*.md" \
+            -not -path "./node_modules/*" -not -path "./.git/*" \
+            > /tmp/md_files.txt || true
+
+          if [ -s /tmp/md_files.txt ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
           else
-            echo "found=false" >> $GITHUB_OUTPUT
+            echo "found=false" >> "$GITHUB_OUTPUT"
           fi
-      
+
+      - name: Set up Node.js
+        if: steps.find_ts.outputs.found == 'true' || steps.find_md.outputs.found == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install TypeScript and Markdown tools
+        if: steps.find_ts.outputs.found == 'true' || steps.find_md.outputs.found == 'true'
+        run: |
+          npm install -g eslint prettier \
+            @typescript-eslint/parser @typescript-eslint/eslint-plugin \
+            eslint-plugin-markdown markdownlint-cli
+
       - name: Run ESLint (BLOCKING)
         if: steps.find_ts.outputs.found == 'true'
         run: |
           echo "Running ESLint on TypeScript/JavaScript files..."
           npx eslint . --ext .ts,.tsx,.js,.jsx || echo "No ESLint config found, skipping..."
         continue-on-error: true
-      
-      - name: Run markdownlint (BLOCKING)
-        if: steps.find_md.outputs.found == 'true'
-        run: |
-          echo "Running markdownlint on Markdown files..."
-          npx markdownlint '**/*.md' --ignore node_modules --ignore .git || echo "No markdownlint config found, using defaults..."
-        continue-on-error: true
-      
+
       - name: Run Prettier on TypeScript/JavaScript
         if: steps.find_ts.outputs.found == 'true'
         run: |
           echo "Formatting TypeScript/JavaScript with Prettier..."
           npx prettier --write "**/*.{ts,tsx,js,jsx,json}"
-      
+
+      - name: Run markdownlint (BLOCKING)
+        if: steps.find_md.outputs.found == 'true'
+        run: |
+          echo "Running markdownlint on Markdown files..."
+          npx markdownlint '**/*.md' --ignore node_modules --ignore .git \
+            || echo "No markdownlint config found, using defaults..."
+        continue-on-error: true
+
       - name: Run Prettier on Markdown
         if: steps.find_md.outputs.found == 'true'
         run: |
           echo "Formatting Markdown with Prettier..."
           npx prettier --write "**/*.md"
-      
-      - name: Install Vimscript tools
-        run: |
-          pip install vim-vint --break-system-packages
-      
+
+      # ── Vimscript ────────────────────────────────────────────────────────────
+
       - name: Find Vimscript files
         id: find_vim
         run: |
-          VIM_FILES=$(find . -type f \( -name "*.vim" -o -name ".vimrc" -o -name "vimrc" \) -not -path "./.git/*" || true)
-          if [ -n "$VIM_FILES" ]; then
-            echo "found=true" >> $GITHUB_OUTPUT
-            echo "$VIM_FILES" > /tmp/vim_files.txt
+          find . -type f \( -name "*.vim" -o -name ".vimrc" -o -name "vimrc" \) \
+            -not -path "./.git/*" \
+            > /tmp/vim_files.txt || true
+
+          if [ -s /tmp/vim_files.txt ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
           else
-            echo "found=false" >> $GITHUB_OUTPUT
+            echo "found=false" >> "$GITHUB_OUTPUT"
           fi
-      
+
+      - name: Install vint
+        if: steps.find_vim.outputs.found == 'true'
+        run: pip install vim-vint --break-system-packages
+
       - name: Run vint (BLOCKING)
         if: steps.find_vim.outputs.found == 'true'
         run: |
           echo "Running vint on Vimscript files..."
-          cat /tmp/vim_files.txt | xargs vint
-      
+          xargs vint < /tmp/vim_files.txt
+
+      # ── Python ───────────────────────────────────────────────────────────────
+
+      - name: Find Python files
+        id: find_py
+        run: |
+          find . -type f -name "*.py" -not -path "./.git/*" \
+            > /tmp/py_files.txt || true
+
+          if [ -s /tmp/py_files.txt ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Set up Python
+        if: steps.find_py.outputs.found == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      
+
       - name: Install Python formatting tools
+        if: steps.find_py.outputs.found == 'true'
         run: |
           python -m pip install --upgrade pip
           pip install black isort ssort ruff
-      
+
       - name: Run ruff check (BLOCKING)
+        if: steps.find_py.outputs.found == 'true'
         run: |
           echo "Running ruff linter on all Python files..."
           ruff check .
-      
+
       - name: Run ssort
-        run: |
-          ssort **/*.py || true
-        continue-on-error: false
-      
+        if: steps.find_py.outputs.found == 'true'
+        run: ssort **/*.py || true
+
       - name: Run isort
-        run: |
-          isort .
-        continue-on-error: false
-      
+        if: steps.find_py.outputs.found == 'true'
+        run: isort .
+
       - name: Run black
-        run: |
-          black .
-        continue-on-error: false
-      
+        if: steps.find_py.outputs.found == 'true'
+        run: black .
+
+      # ── Commit ───────────────────────────────────────────────────────────────
+
       - name: Check for changes
         id: verify_diff
         run: |
-          git diff --quiet . || echo "changed=true" >> $GITHUB_OUTPUT
-      
+          git diff --quiet . || echo "changed=true" >> "$GITHUB_OUTPUT"
+
       - name: Commit and push changes
         if: steps.verify_diff.outputs.changed == 'true'
         run: |
