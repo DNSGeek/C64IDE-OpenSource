@@ -150,7 +150,7 @@ jobs:
         if: steps.find_ts.outputs.found == 'true' || steps.find_md.outputs.found == 'true'
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
 
       - name: Install TypeScript and Markdown tools
         if: steps.find_ts.outputs.found == 'true' || steps.find_md.outputs.found == 'true'
