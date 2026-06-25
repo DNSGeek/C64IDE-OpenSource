@@ -1,15 +1,16 @@
 {
   "name": "Commander X16 BASIC",
   "version": "R49",
-  "author": "Commander X16 Community",
-  "description": "BASIC V2 extensions for the Commander X16. All token values verified against the R49 ROM binary dispatch tables. Single-byte tokens ($CC-$F7) for the main command set; $CE-prefixed two-byte tokens for later commands (CE $AC-$B7) and all expression functions (CE $C2-$D0).",
+  "author": "Thomas Knox",
+  "description": "BASIC V2 extensions for the Commander X16 (ROM R49). Token values verified against the R49 ROM binary dispatch tables. Single-byte tokens $CC-$F7 cover the main command set; $CE-prefixed two-byte tokens cover late commands (CE $AC-$B7) and expression functions (CE $C2-$D0). KNOWN LIMITATION: OLD uses single-byte token $CE, which is also the prefix byte. Tokenization (source to PRG) works correctly for both OLD and CE-prefix commands. Detokenization (loading a saved PRG) will misread OLD tokens because $CE is always treated as a prefix. This is an architectural constraint of the dialect, not a plugin error.",
   "url": "https://commanderx16.com",
   "extendsBasicV2": true,
   "loadAddress": 2049,
+  "requiresSYSStub": true,
   "tokenPrefixes": [
     {
       "byte": 206,
-      "description": "$CE prefix for late commands (REBOOT-BANNER) and all expression functions (VPEEK-MOD)"
+      "description": "$CE prefix: late commands (REBOOT-BANNER, CE $AC-$B7) and expression functions (VPEEK-MOD, CE $C2-$D0)"
     }
   ],
   "keywords": [
@@ -19,7 +20,8 @@
       "type": "command",
       "category": "system",
       "syntax": "MON",
-      "description": "Enter the machine code monitor"
+      "description": "Enter the X16 built-in machine language monitor. Type X at the monitor prompt to return to BASIC.",
+      "example": "MON"
     },
     {
       "keyword": "DOS",
@@ -27,8 +29,16 @@
       "type": "command",
       "category": "io",
       "syntax": "DOS [command$]",
-      "description": "Send a DOS command or display disk status",
-      "example": "DOS\"$\""
+      "description": "Send a command string to the SD card DOS, or display the current disk status if no argument is given.",
+      "parameters": [
+        {
+          "name": "command$",
+          "type": "string",
+          "description": "DOS command string (e.g. \"$\" for directory, \"I\" to initialize). Omit to display disk status.",
+          "optional": true
+        }
+      ],
+      "example": "DOS\"$\" : REM SHOW DIRECTORY\nDOS\"S:OLDFILE\" : REM SCRATCH A FILE\nDOS : REM SHOW STATUS"
     },
     {
       "keyword": "OLD",
@@ -36,7 +46,9 @@
       "type": "command",
       "category": "system",
       "syntax": "OLD",
-      "description": "Recover a program deleted with NEW"
+      "description": "Attempts to recover a BASIC program that was erased with the NEW command by restoring the end-of-program pointer. Only works if no new data has been written to BASIC memory since NEW was issued.",
+      "notes": "Token is $CE, which is also the prefix byte. Tokenization of OLD in source code is correct. However, loading a saved PRG containing OLD back into the IDE will misread the $CE byte as a prefix token. This is a known architectural limitation.",
+      "example": "NEW : REM ERASE PROGRAM\nOLD : REM ATTEMPT RECOVERY"
     },
     {
       "keyword": "GEOS",
@@ -44,7 +56,8 @@
       "type": "command",
       "category": "system",
       "syntax": "GEOS",
-      "description": "Launch the GEOS graphical environment"
+      "description": "Launch the GEOS graphical operating environment from ROM bank 4.",
+      "example": "GEOS"
     },
     {
       "keyword": "VPOKE",
@@ -52,25 +65,28 @@
       "type": "command",
       "category": "graphics",
       "syntax": "VPOKE bank, address, value",
-      "description": "Write a byte to VERA video RAM",
+      "description": "Write a single byte directly to VERA video RAM. VERA has 128KB of VRAM divided into two 64KB banks.",
       "parameters": [
         {
           "name": "bank",
           "type": "integer",
-          "range": "0-1"
+          "range": "0-1",
+          "description": "VRAM bank (0 = $00000-$0FFFF, 1 = $10000-$1FFFF)"
         },
         {
           "name": "address",
           "type": "integer",
-          "range": "0-65535"
+          "range": "0-65535",
+          "description": "Byte offset within the selected bank"
         },
         {
           "name": "value",
           "type": "integer",
-          "range": "0-255"
+          "range": "0-255",
+          "description": "Byte value to write"
         }
       ],
-      "example": "VPOKE 0,0,65"
+      "example": "VPOKE 0, 0, 65 : REM WRITE 'A' TO VRAM\nVPOKE 1, 0, 255 : REM WRITE TO SECOND BANK"
     },
     {
       "keyword": "VLOAD",
@@ -78,8 +94,33 @@
       "type": "command",
       "category": "io",
       "syntax": "VLOAD \"filename\", device, bank, address",
-      "description": "Load a file directly into VERA video RAM",
-      "example": "VLOAD \"SPRITES.BIN\",8,0,0"
+      "description": "Load a file from disk directly into VERA video RAM, bypassing main RAM. Useful for loading tile sets, sprite data, and bitmap graphics.",
+      "parameters": [
+        {
+          "name": "filename",
+          "type": "string",
+          "description": "Name of the file to load"
+        },
+        {
+          "name": "device",
+          "type": "integer",
+          "range": "8-11",
+          "description": "IEC device number (usually 8 for SD card)"
+        },
+        {
+          "name": "bank",
+          "type": "integer",
+          "range": "0-1",
+          "description": "Destination VRAM bank"
+        },
+        {
+          "name": "address",
+          "type": "integer",
+          "range": "0-65535",
+          "description": "Destination byte offset within the VRAM bank"
+        }
+      ],
+      "example": "VLOAD \"TILES.BIN\", 8, 0, 4096 : REM LOAD TILES AT VRAM $1000"
     },
     {
       "keyword": "SCREEN",
@@ -87,8 +128,15 @@
       "type": "command",
       "category": "graphics",
       "syntax": "SCREEN mode",
-      "description": "Set screen display mode. 0=40x30 text, 2=80x60 text, 128=320x240 bitmap",
-      "example": "SCREEN 128"
+      "description": "Sets the VERA display mode. Text modes change column/row counts; bitmap modes enable pixel-addressable graphics. Common modes: 0=40x30 text (default), 1=20x15 text, 2=80x60 text, 3=80x30 text, 128=320x240 8bpp bitmap.",
+      "parameters": [
+        {
+          "name": "mode",
+          "type": "integer",
+          "description": "Display mode: 0=40x30 text, 1=20x15 text, 2=80x60 text, 3=80x30 text, 128=320x240 8bpp, 129=640x480 1bpp, 130=320x240 2bpp, 255=disable display"
+        }
+      ],
+      "example": "SCREEN 128 : REM 320x240 BITMAP MODE\nSCREEN 0 : REM RETURN TO 40x30 TEXT"
     },
     {
       "keyword": "PSET",
@@ -96,8 +144,28 @@
       "type": "command",
       "category": "graphics",
       "syntax": "PSET x, y, color",
-      "description": "Plot a pixel at x,y with palette color index",
-      "example": "PSET 160,120,7"
+      "description": "Plot a single pixel in the current bitmap screen mode. Color is a palette index (0-255 in 8bpp mode).",
+      "parameters": [
+        {
+          "name": "x",
+          "type": "integer",
+          "range": "0-319",
+          "description": "Horizontal pixel coordinate"
+        },
+        {
+          "name": "y",
+          "type": "integer",
+          "range": "0-239",
+          "description": "Vertical pixel coordinate"
+        },
+        {
+          "name": "color",
+          "type": "integer",
+          "range": "0-255",
+          "description": "Palette color index"
+        }
+      ],
+      "example": "SCREEN 128\nPSET 160, 120, 7 : REM PLOT YELLOW PIXEL AT CENTER"
     },
     {
       "keyword": "LINE",
@@ -105,8 +173,36 @@
       "type": "command",
       "category": "graphics",
       "syntax": "LINE x1, y1, x2, y2, color",
-      "description": "Draw a line between two points",
-      "example": "LINE 0,0,319,239,7"
+      "description": "Draw a straight line between two pixel coordinates in the current bitmap screen mode.",
+      "parameters": [
+        {
+          "name": "x1",
+          "type": "integer",
+          "description": "Starting X coordinate"
+        },
+        {
+          "name": "y1",
+          "type": "integer",
+          "description": "Starting Y coordinate"
+        },
+        {
+          "name": "x2",
+          "type": "integer",
+          "description": "Ending X coordinate"
+        },
+        {
+          "name": "y2",
+          "type": "integer",
+          "description": "Ending Y coordinate"
+        },
+        {
+          "name": "color",
+          "type": "integer",
+          "range": "0-255",
+          "description": "Palette color index"
+        }
+      ],
+      "example": "SCREEN 128\nLINE 0, 0, 319, 239, 7 : REM DIAGONAL LINE"
     },
     {
       "keyword": "FRAME",
@@ -114,8 +210,36 @@
       "type": "command",
       "category": "graphics",
       "syntax": "FRAME x1, y1, x2, y2, color",
-      "description": "Draw a rectangle outline",
-      "example": "FRAME 10,10,100,80,7"
+      "description": "Draw a rectangle outline (four sides, not filled) in the current bitmap screen mode.",
+      "parameters": [
+        {
+          "name": "x1",
+          "type": "integer",
+          "description": "Left X coordinate"
+        },
+        {
+          "name": "y1",
+          "type": "integer",
+          "description": "Top Y coordinate"
+        },
+        {
+          "name": "x2",
+          "type": "integer",
+          "description": "Right X coordinate"
+        },
+        {
+          "name": "y2",
+          "type": "integer",
+          "description": "Bottom Y coordinate"
+        },
+        {
+          "name": "color",
+          "type": "integer",
+          "range": "0-255",
+          "description": "Palette color index"
+        }
+      ],
+      "example": "SCREEN 128\nFRAME 10, 10, 100, 80, 7"
     },
     {
       "keyword": "RECT",
@@ -123,8 +247,36 @@
       "type": "command",
       "category": "graphics",
       "syntax": "RECT x1, y1, x2, y2, color",
-      "description": "Draw a filled rectangle",
-      "example": "RECT 10,10,100,80,3"
+      "description": "Draw a filled rectangle in the current bitmap screen mode.",
+      "parameters": [
+        {
+          "name": "x1",
+          "type": "integer",
+          "description": "Left X coordinate"
+        },
+        {
+          "name": "y1",
+          "type": "integer",
+          "description": "Top Y coordinate"
+        },
+        {
+          "name": "x2",
+          "type": "integer",
+          "description": "Right X coordinate"
+        },
+        {
+          "name": "y2",
+          "type": "integer",
+          "description": "Bottom Y coordinate"
+        },
+        {
+          "name": "color",
+          "type": "integer",
+          "range": "0-255",
+          "description": "Palette color index"
+        }
+      ],
+      "example": "SCREEN 128\nRECT 10, 10, 100, 80, 3 : REM FILLED CYAN RECT"
     },
     {
       "keyword": "CHAR",
@@ -132,8 +284,33 @@
       "type": "command",
       "category": "screen",
       "syntax": "CHAR x, y, color, string$",
-      "description": "Print a string at character-cell position x,y with given color",
-      "example": "CHAR 10,5,7,\"HELLO X16\""
+      "description": "Print a string at character-cell position (x, y) with the given palette color. Coordinates are in character columns and rows, not pixels.",
+      "parameters": [
+        {
+          "name": "x",
+          "type": "integer",
+          "range": "0-39",
+          "description": "Column position"
+        },
+        {
+          "name": "y",
+          "type": "integer",
+          "range": "0-29",
+          "description": "Row position"
+        },
+        {
+          "name": "color",
+          "type": "integer",
+          "range": "0-255",
+          "description": "Foreground palette color index"
+        },
+        {
+          "name": "string$",
+          "type": "string",
+          "description": "Text to display"
+        }
+      ],
+      "example": "CHAR 10, 5, 7, \"HELLO X16!\""
     },
     {
       "keyword": "MOUSE",
@@ -141,17 +318,40 @@
       "type": "command",
       "category": "io",
       "syntax": "MOUSE mode",
-      "description": "Enable/disable mouse cursor. 0=off, 1=on",
-      "example": "MOUSE 1"
+      "description": "Enable or disable the mouse cursor. When enabled, the cursor is displayed as a VERA sprite and the MX, MY, MB functions can be read.",
+      "parameters": [
+        {
+          "name": "mode",
+          "type": "integer",
+          "range": "0-1",
+          "description": "0=disable mouse cursor, 1=enable mouse cursor"
+        }
+      ],
+      "example": "MOUSE 1 : REM ENABLE MOUSE\nX = MX : Y = MY : B = MB\nMOUSE 0 : REM DISABLE MOUSE"
     },
     {
       "keyword": "COLOR",
       "token": 217,
       "type": "command",
       "category": "screen",
-      "syntax": "COLOR foreground [,background]",
-      "description": "Set text foreground and background colors (0-15)",
-      "example": "COLOR 7,0"
+      "syntax": "COLOR foreground [, background]",
+      "description": "Set the text foreground and optional background color for subsequent PRINT output. Color values are palette indices 0-15 for the default palette.",
+      "parameters": [
+        {
+          "name": "foreground",
+          "type": "integer",
+          "range": "0-15",
+          "description": "Foreground (text) color index"
+        },
+        {
+          "name": "background",
+          "type": "integer",
+          "range": "0-15",
+          "description": "Background color index",
+          "optional": true
+        }
+      ],
+      "example": "COLOR 7, 0 : REM WHITE ON BLACK\nPRINT \"HELLO\""
     },
     {
       "keyword": "TEST",
@@ -159,7 +359,8 @@
       "type": "command",
       "category": "system",
       "syntax": "TEST",
-      "description": "Run built-in system self-test"
+      "description": "Run the built-in system self-test to verify hardware functionality.",
+      "example": "TEST"
     },
     {
       "keyword": "RESET",
@@ -167,7 +368,8 @@
       "type": "command",
       "category": "system",
       "syntax": "RESET",
-      "description": "Perform a soft reset of the X16"
+      "description": "Perform a soft reset of the X16, restarting the BASIC interpreter without reloading the ROM.",
+      "example": "RESET"
     },
     {
       "keyword": "CLS",
@@ -175,7 +377,8 @@
       "type": "command",
       "category": "screen",
       "syntax": "CLS",
-      "description": "Clear the screen"
+      "description": "Clear the screen and home the cursor. Equivalent to PRINT CHR$(147) in BASIC V2.",
+      "example": "CLS\nPRINT \"FRESH START\""
     },
     {
       "keyword": "CODEX",
@@ -183,7 +386,8 @@
       "type": "command",
       "category": "system",
       "syntax": "CODEX",
-      "description": "Launch the CODEX interactive development environment"
+      "description": "Launch the CODEX interactive development environment from ROM.",
+      "example": "CODEX"
     },
     {
       "keyword": "LOCATE",
@@ -191,8 +395,22 @@
       "type": "command",
       "category": "screen",
       "syntax": "LOCATE row, col",
-      "description": "Move text cursor to row, col (1-based)",
-      "example": "LOCATE 12,20 : PRINT \"HELLO\""
+      "description": "Move the text cursor to the specified row and column. Both parameters are 1-based.",
+      "parameters": [
+        {
+          "name": "row",
+          "type": "integer",
+          "range": "1-30",
+          "description": "Row number (1 = top of screen)"
+        },
+        {
+          "name": "col",
+          "type": "integer",
+          "range": "1-40",
+          "description": "Column number (1 = left edge)"
+        }
+      ],
+      "example": "LOCATE 12, 20\nPRINT \"CENTERED\""
     },
     {
       "keyword": "BOOT",
@@ -200,7 +418,8 @@
       "type": "command",
       "category": "system",
       "syntax": "BOOT",
-      "description": "Boot from SD card — load and run AUTOBOOT.X16"
+      "description": "Boot from the SD card by loading and running the file AUTOBOOT.X16 from the root directory.",
+      "example": "BOOT"
     },
     {
       "keyword": "KEYMAP",
@@ -208,8 +427,15 @@
       "type": "command",
       "category": "system",
       "syntax": "KEYMAP layout$",
-      "description": "Set keyboard layout (e.g. \"en-us\", \"de\", \"fr\")",
-      "example": "KEYMAP \"en-us\""
+      "description": "Set the keyboard layout. The layout name is a locale string. The corresponding keymap file must exist on the SD card.",
+      "parameters": [
+        {
+          "name": "layout$",
+          "type": "string",
+          "description": "Keyboard layout identifier (e.g. \"en-us\", \"de\", \"fr\", \"sv\")"
+        }
+      ],
+      "example": "KEYMAP \"en-us\"\nKEYMAP \"de\""
     },
     {
       "keyword": "BLOAD",
@@ -217,8 +443,33 @@
       "type": "command",
       "category": "io",
       "syntax": "BLOAD \"filename\", device, bank, address",
-      "description": "Load a file into banked RAM",
-      "example": "BLOAD \"DATA.BIN\",8,1,40960"
+      "description": "Load a binary file into banked RAM at the specified bank and address. RAM banks are mapped to $A000-$BFFF.",
+      "parameters": [
+        {
+          "name": "filename",
+          "type": "string",
+          "description": "Name of the file to load"
+        },
+        {
+          "name": "device",
+          "type": "integer",
+          "range": "8-11",
+          "description": "IEC device number (usually 8 for SD card)"
+        },
+        {
+          "name": "bank",
+          "type": "integer",
+          "range": "0-255",
+          "description": "Target RAM bank (banked RAM is at $A000-$BFFF)"
+        },
+        {
+          "name": "address",
+          "type": "integer",
+          "range": "40960-49151",
+          "description": "Target address within the banked RAM window ($A000-$BFFF)"
+        }
+      ],
+      "example": "BLOAD \"DATA.BIN\", 8, 1, 40960 : REM LOAD INTO BANK 1 AT $A000"
     },
     {
       "keyword": "BVLOAD",
@@ -226,7 +477,32 @@
       "type": "command",
       "category": "io",
       "syntax": "BVLOAD \"filename\", device, bank, address",
-      "description": "Load a file into banked VERA video RAM"
+      "description": "Load a binary file into banked VERA video RAM. Similar to VLOAD but with explicit bank and address.",
+      "parameters": [
+        {
+          "name": "filename",
+          "type": "string"
+        },
+        {
+          "name": "device",
+          "type": "integer",
+          "range": "8-11",
+          "description": "IEC device number"
+        },
+        {
+          "name": "bank",
+          "type": "integer",
+          "range": "0-1",
+          "description": "VRAM bank"
+        },
+        {
+          "name": "address",
+          "type": "integer",
+          "range": "0-65535",
+          "description": "Byte offset within the VRAM bank"
+        }
+      ],
+      "example": "BVLOAD \"SPRITES.BIN\", 8, 0, 8192"
     },
     {
       "keyword": "BVERIFY",
@@ -234,7 +510,32 @@
       "type": "command",
       "category": "io",
       "syntax": "BVERIFY \"filename\", device, bank, address",
-      "description": "Verify a saved binary file against memory"
+      "description": "Verify that a file on disk matches the contents of banked RAM at the specified location. Reports an error if they differ.",
+      "parameters": [
+        {
+          "name": "filename",
+          "type": "string"
+        },
+        {
+          "name": "device",
+          "type": "integer",
+          "range": "8-11",
+          "description": "IEC device number"
+        },
+        {
+          "name": "bank",
+          "type": "integer",
+          "range": "0-255",
+          "description": "RAM bank to verify against"
+        },
+        {
+          "name": "address",
+          "type": "integer",
+          "range": "40960-49151",
+          "description": "Starting address in the banked RAM window"
+        }
+      ],
+      "example": "BVERIFY \"DATA.BIN\", 8, 1, 40960"
     },
     {
       "keyword": "BANK",
@@ -242,20 +543,22 @@
       "type": "command",
       "category": "memory",
       "syntax": "BANK ram_bank, rom_bank",
-      "description": "Set active RAM bank ($A000-$BFFF) and ROM bank ($C000-$DFFF)",
+      "description": "Set the active RAM bank and ROM bank. RAM bank controls which 8KB page appears at $A000-$BFFF. ROM bank controls which 8KB page appears at $C000-$DFFF.",
       "parameters": [
         {
           "name": "ram_bank",
           "type": "integer",
-          "range": "0-255"
+          "range": "0-255",
+          "description": "RAM bank number mapped to $A000-$BFFF"
         },
         {
           "name": "rom_bank",
           "type": "integer",
-          "range": "0-31"
+          "range": "0-31",
+          "description": "ROM bank number mapped to $C000-$DFFF (bank 0=BASIC, 4=GEOS)"
         }
       ],
-      "example": "BANK 1,0"
+      "example": "BANK 1, 0 : REM SELECT RAM BANK 1, ROM BANK 0 (BASIC)\nPOKE 40960, 42 : REM WRITE TO $A000 IN BANK 1"
     },
     {
       "keyword": "FMINIT",
@@ -263,7 +566,8 @@
       "type": "command",
       "category": "sound",
       "syntax": "FMINIT",
-      "description": "Initialize the YM2151 FM sound chip"
+      "description": "Initialize the YM2151 FM synthesis chip, silencing all 8 channels and resetting registers to their default state. Call this before using any other FM commands.",
+      "example": "FMINIT\nFMINST 0, 1\nFMNOTE 0, 60"
     },
     {
       "keyword": "FMNOTE",
@@ -271,8 +575,22 @@
       "type": "command",
       "category": "sound",
       "syntax": "FMNOTE channel, note",
-      "description": "Play a MIDI note on an FM channel (0-7). Note 60=middle C",
-      "example": "FMNOTE 0,60"
+      "description": "Play a MIDI note on the specified YM2151 FM channel. Note 60 is middle C (C4). Sending note 0 silences the channel.",
+      "parameters": [
+        {
+          "name": "channel",
+          "type": "integer",
+          "range": "0-7",
+          "description": "YM2151 channel number (0-7)"
+        },
+        {
+          "name": "note",
+          "type": "integer",
+          "range": "0-127",
+          "description": "MIDI note number (60=middle C, 0=note off)"
+        }
+      ],
+      "example": "FMINIT : FMINST 0, 1\nFMNOTE 0, 60 : REM PLAY MIDDLE C\nFOR T=1 TO 3000:NEXT T\nFMNOTE 0, 0 : REM NOTE OFF"
     },
     {
       "keyword": "FMDRUM",
@@ -280,7 +598,22 @@
       "type": "command",
       "category": "sound",
       "syntax": "FMDRUM channel, drum",
-      "description": "Play a drum sound on the YM2151"
+      "description": "Trigger a percussion sound on the specified YM2151 channel using a General MIDI drum map.",
+      "parameters": [
+        {
+          "name": "channel",
+          "type": "integer",
+          "range": "0-7",
+          "description": "YM2151 channel number"
+        },
+        {
+          "name": "drum",
+          "type": "integer",
+          "range": "35-81",
+          "description": "General MIDI percussion note (35=bass drum, 38=snare, 42=hi-hat closed)"
+        }
+      ],
+      "example": "FMINIT\nFMDRUM 7, 35 : REM BASS DRUM ON CHANNEL 7\nFOR T=1 TO 2000:NEXT T\nFMDRUM 7, 38 : REM SNARE"
     },
     {
       "keyword": "FMINST",
@@ -288,8 +621,22 @@
       "type": "command",
       "category": "sound",
       "syntax": "FMINST channel, instrument",
-      "description": "Set FM instrument/patch for a channel",
-      "example": "FMINST 0,1"
+      "description": "Set the instrument (patch) for a YM2151 FM channel using a General MIDI instrument number.",
+      "parameters": [
+        {
+          "name": "channel",
+          "type": "integer",
+          "range": "0-7",
+          "description": "YM2151 channel number"
+        },
+        {
+          "name": "instrument",
+          "type": "integer",
+          "range": "1-128",
+          "description": "General MIDI instrument number (1=Acoustic Grand Piano, 25=Acoustic Guitar, 41=Violin, 57=Trumpet)"
+        }
+      ],
+      "example": "FMINIT\nFMINST 0, 1 : REM ACOUSTIC GRAND PIANO\nFMNOTE 0, 60"
     },
     {
       "keyword": "FMVIB",
@@ -297,7 +644,22 @@
       "type": "command",
       "category": "sound",
       "syntax": "FMVIB speed, depth",
-      "description": "Set YM2151 LFO vibrato parameters"
+      "description": "Set YM2151 LFO vibrato parameters that apply globally to all FM channels.",
+      "parameters": [
+        {
+          "name": "speed",
+          "type": "integer",
+          "range": "0-255",
+          "description": "LFO speed (higher = faster vibrato)"
+        },
+        {
+          "name": "depth",
+          "type": "integer",
+          "range": "0-127",
+          "description": "Vibrato depth (0=none)"
+        }
+      ],
+      "example": "FMINIT : FMINST 0, 41\nFMVIB 200, 20 : REM MODERATE VIBRATO\nFMNOTE 0, 64"
     },
     {
       "keyword": "FMFREQ",
@@ -305,7 +667,22 @@
       "type": "command",
       "category": "sound",
       "syntax": "FMFREQ channel, frequency",
-      "description": "Set raw frequency for an FM channel"
+      "description": "Set the raw frequency value for a YM2151 FM channel, bypassing the MIDI note lookup. Allows precise pitch control.",
+      "parameters": [
+        {
+          "name": "channel",
+          "type": "integer",
+          "range": "0-7",
+          "description": "YM2151 channel number"
+        },
+        {
+          "name": "frequency",
+          "type": "integer",
+          "range": "0-65535",
+          "description": "Raw YM2151 frequency register value"
+        }
+      ],
+      "example": "FMINIT : FMINST 0, 1\nFMFREQ 0, 1234 : REM CUSTOM PITCH"
     },
     {
       "keyword": "FMVOL",
@@ -313,8 +690,22 @@
       "type": "command",
       "category": "sound",
       "syntax": "FMVOL channel, volume",
-      "description": "Set FM channel volume (0-127)",
-      "example": "FMVOL 0,100"
+      "description": "Set the output volume for a YM2151 FM channel.",
+      "parameters": [
+        {
+          "name": "channel",
+          "type": "integer",
+          "range": "0-7",
+          "description": "YM2151 channel number"
+        },
+        {
+          "name": "volume",
+          "type": "integer",
+          "range": "0-127",
+          "description": "Channel volume (0=silent, 127=maximum)"
+        }
+      ],
+      "example": "FMINIT : FMINST 0, 1\nFMVOL 0, 100\nFMNOTE 0, 60"
     },
     {
       "keyword": "FMPAN",
@@ -322,7 +713,22 @@
       "type": "command",
       "category": "sound",
       "syntax": "FMPAN channel, pan",
-      "description": "Set FM channel stereo pan. 0=off, 1=right, 2=left, 3=both"
+      "description": "Set the stereo pan position for a YM2151 FM channel.",
+      "parameters": [
+        {
+          "name": "channel",
+          "type": "integer",
+          "range": "0-7",
+          "description": "YM2151 channel number"
+        },
+        {
+          "name": "pan",
+          "type": "integer",
+          "range": "0-3",
+          "description": "0=mute, 1=right only, 2=left only, 3=center (both)"
+        }
+      ],
+      "example": "FMPAN 0, 3 : REM CENTER\nFMPAN 1, 1 : REM RIGHT ONLY"
     },
     {
       "keyword": "FMPLAY",
@@ -330,8 +736,21 @@
       "type": "command",
       "category": "sound",
       "syntax": "FMPLAY channel, note$",
-      "description": "Play MML music string on FM channel",
-      "example": "FMPLAY 0,\"T6O4CDEFGAB\""
+      "description": "Play a Music Macro Language (MML) music string on a YM2151 FM channel. MML supports note letters (A-G), octave (Ox), tempo (Tx), duration (1-64), rest (R), and more.",
+      "parameters": [
+        {
+          "name": "channel",
+          "type": "integer",
+          "range": "0-7",
+          "description": "YM2151 channel number"
+        },
+        {
+          "name": "note$",
+          "type": "string",
+          "description": "MML music string (e.g. T6O4CDEFGAB)"
+        }
+      ],
+      "example": "FMINIT : FMINST 0, 1\nFMPLAY 0, \"T6O4CDEFGAB\""
     },
     {
       "keyword": "FMCHORD",
@@ -339,8 +758,21 @@
       "type": "command",
       "category": "sound",
       "syntax": "FMCHORD start_channel, note$",
-      "description": "Play chord across FM channels",
-      "example": "FMCHORD 0,\"CEG\""
+      "description": "Play a chord by distributing the notes in the MML string across consecutive YM2151 FM channels starting at start_channel.",
+      "parameters": [
+        {
+          "name": "start_channel",
+          "type": "integer",
+          "range": "0-5",
+          "description": "First channel to use (chord notes fill subsequent channels)"
+        },
+        {
+          "name": "note$",
+          "type": "string",
+          "description": "MML string where each note plays on the next channel (e.g. \"CEG\" for a C major chord)"
+        }
+      ],
+      "example": "FMINIT : FMINST 0,1 : FMINST 1,1 : FMINST 2,1\nFMCHORD 0, \"O4CEG\" : REM C MAJOR CHORD"
     },
     {
       "keyword": "FMPOKE",
@@ -348,7 +780,22 @@
       "type": "command",
       "category": "sound",
       "syntax": "FMPOKE register, value",
-      "description": "Write directly to a YM2151 register"
+      "description": "Write directly to a YM2151 register. Provides raw access to FM chip parameters beyond what the higher-level FM commands expose.",
+      "parameters": [
+        {
+          "name": "register",
+          "type": "integer",
+          "range": "0-255",
+          "description": "YM2151 register address"
+        },
+        {
+          "name": "value",
+          "type": "integer",
+          "range": "0-255",
+          "description": "Value to write"
+        }
+      ],
+      "example": "FMPOKE 8, 0 : REM WRITE TO YM2151 REGISTER $08"
     },
     {
       "keyword": "PSGINIT",
@@ -356,7 +803,8 @@
       "type": "command",
       "category": "sound",
       "syntax": "PSGINIT",
-      "description": "Initialize VERA PSG and silence all 16 voices"
+      "description": "Initialize the VERA PSG (Programmable Sound Generator), silencing all 16 voices and resetting their registers. Call before using PSG commands.",
+      "example": "PSGINIT\nPSGINST 0, 0 : REM PULSE WAVE\nPSGNOTE 0, 60"
     },
     {
       "keyword": "PSGNOTE",
@@ -364,8 +812,22 @@
       "type": "command",
       "category": "sound",
       "syntax": "PSGNOTE voice, note",
-      "description": "Play a MIDI note on PSG voice (0-15). Note 60=middle C",
-      "example": "PSGNOTE 0,60"
+      "description": "Play a MIDI note on the specified VERA PSG voice. Note 60 is middle C. Note 0 silences the voice.",
+      "parameters": [
+        {
+          "name": "voice",
+          "type": "integer",
+          "range": "0-15",
+          "description": "PSG voice number (VERA has 16 independent PSG voices)"
+        },
+        {
+          "name": "note",
+          "type": "integer",
+          "range": "0-127",
+          "description": "MIDI note number (60=middle C, 0=note off)"
+        }
+      ],
+      "example": "PSGINIT : PSGVOL 0,63 : PSGWAV 0,0\nPSGNOTE 0, 60 : REM MIDDLE C ON VOICE 0"
     },
     {
       "keyword": "PSGVOL",
@@ -373,8 +835,22 @@
       "type": "command",
       "category": "sound",
       "syntax": "PSGVOL voice, volume",
-      "description": "Set PSG voice volume (0-63)",
-      "example": "PSGVOL 0,63"
+      "description": "Set the volume for a VERA PSG voice.",
+      "parameters": [
+        {
+          "name": "voice",
+          "type": "integer",
+          "range": "0-15",
+          "description": "PSG voice number"
+        },
+        {
+          "name": "volume",
+          "type": "integer",
+          "range": "0-63",
+          "description": "Volume level (0=silent, 63=maximum)"
+        }
+      ],
+      "example": "PSGINIT\nPSGVOL 0, 63 : REM FULL VOLUME\nPSGNOTE 0, 60"
     },
     {
       "keyword": "PSGWAV",
@@ -382,8 +858,22 @@
       "type": "command",
       "category": "sound",
       "syntax": "PSGWAV voice, waveform",
-      "description": "Set PSG waveform. 0=pulse, 1=sawtooth, 2=triangle, 3=noise",
-      "example": "PSGWAV 0,1"
+      "description": "Set the waveform type for a VERA PSG voice.",
+      "parameters": [
+        {
+          "name": "voice",
+          "type": "integer",
+          "range": "0-15",
+          "description": "PSG voice number"
+        },
+        {
+          "name": "waveform",
+          "type": "integer",
+          "range": "0-3",
+          "description": "0=pulse/square, 1=sawtooth, 2=triangle, 3=noise"
+        }
+      ],
+      "example": "PSGINIT : PSGVOL 0,63\nPSGWAV 0, 0 : REM PULSE WAVE\nPSGNOTE 0, 60"
     },
     {
       "keyword": "PSGFREQ",
@@ -391,7 +881,22 @@
       "type": "command",
       "category": "sound",
       "syntax": "PSGFREQ voice, frequency",
-      "description": "Set raw frequency for a PSG voice (0-65535)"
+      "description": "Set the raw frequency value for a VERA PSG voice, bypassing the MIDI note lookup.",
+      "parameters": [
+        {
+          "name": "voice",
+          "type": "integer",
+          "range": "0-15",
+          "description": "PSG voice number"
+        },
+        {
+          "name": "frequency",
+          "type": "integer",
+          "range": "0-65535",
+          "description": "Raw VERA PSG frequency register value"
+        }
+      ],
+      "example": "PSGINIT : PSGVOL 0,63 : PSGWAV 0,0\nPSGFREQ 0, 5000 : REM CUSTOM PITCH"
     },
     {
       "keyword": "PSGPAN",
@@ -399,7 +904,22 @@
       "type": "command",
       "category": "sound",
       "syntax": "PSGPAN voice, pan",
-      "description": "Set PSG voice stereo pan. 0=off, 1=right, 2=left, 3=both"
+      "description": "Set the stereo pan position for a VERA PSG voice.",
+      "parameters": [
+        {
+          "name": "voice",
+          "type": "integer",
+          "range": "0-15",
+          "description": "PSG voice number"
+        },
+        {
+          "name": "pan",
+          "type": "integer",
+          "range": "0-3",
+          "description": "0=mute, 1=right only, 2=left only, 3=center (both)"
+        }
+      ],
+      "example": "PSGPAN 0, 3 : REM CENTER\nPSGPAN 1, 2 : REM LEFT ONLY"
     },
     {
       "keyword": "PSGPLAY",
@@ -407,8 +927,21 @@
       "type": "command",
       "category": "sound",
       "syntax": "PSGPLAY voice, note$",
-      "description": "Play MML music string on PSG voice",
-      "example": "PSGPLAY 0,\"T6O4CDEFGAB\""
+      "description": "Play a Music Macro Language (MML) music string on a VERA PSG voice. MML supports note letters (A-G), octave (Ox), tempo (Tx), duration (1-64), rest (R), and waveform changes.",
+      "parameters": [
+        {
+          "name": "voice",
+          "type": "integer",
+          "range": "0-15",
+          "description": "PSG voice number"
+        },
+        {
+          "name": "note$",
+          "type": "string",
+          "description": "MML music string"
+        }
+      ],
+      "example": "PSGINIT : PSGVOL 0,63 : PSGWAV 0,0\nPSGPLAY 0, \"T6O4CDEFGAB\""
     },
     {
       "keyword": "PSGCHORD",
@@ -416,8 +949,21 @@
       "type": "command",
       "category": "sound",
       "syntax": "PSGCHORD start_voice, note$",
-      "description": "Play chord across PSG voices",
-      "example": "PSGCHORD 0,\"CEG\""
+      "description": "Play a chord by distributing the notes in the MML string across consecutive VERA PSG voices starting at start_voice.",
+      "parameters": [
+        {
+          "name": "start_voice",
+          "type": "integer",
+          "range": "0-13",
+          "description": "First PSG voice to use"
+        },
+        {
+          "name": "note$",
+          "type": "string",
+          "description": "MML chord string (each note occupies the next voice)"
+        }
+      ],
+      "example": "PSGINIT\nFOR V=0 TO 2: PSGVOL V,63: PSGWAV V,0: NEXT V\nPSGCHORD 0, \"O4CEG\" : REM C MAJOR CHORD"
     },
     {
       "keyword": "REBOOT",
@@ -426,8 +972,8 @@
       "type": "command",
       "category": "system",
       "syntax": "REBOOT",
-      "description": "Full system reboot — reloads ROM and restarts",
-      "notes": "Token: CE $AC"
+      "description": "Perform a full system reboot, reloading the ROM and restarting as if the power was cycled.",
+      "example": "REBOOT"
     },
     {
       "keyword": "POWEROFF",
@@ -436,8 +982,8 @@
       "type": "command",
       "category": "system",
       "syntax": "POWEROFF",
-      "description": "Power off the Commander X16",
-      "notes": "Token: CE $AD"
+      "description": "Power off the Commander X16.",
+      "example": "POWEROFF"
     },
     {
       "keyword": "I2CPOKE",
@@ -446,8 +992,28 @@
       "type": "command",
       "category": "system",
       "syntax": "I2CPOKE device, register, value",
-      "description": "Write a byte to an I2C bus device register",
-      "notes": "Token: CE $AE"
+      "description": "Write a byte value to a register on a device connected to the X16's I2C bus (used for RTC, SMC, and expansion hardware).",
+      "parameters": [
+        {
+          "name": "device",
+          "type": "integer",
+          "range": "0-127",
+          "description": "I2C device address (7-bit)"
+        },
+        {
+          "name": "register",
+          "type": "integer",
+          "range": "0-255",
+          "description": "Device register address"
+        },
+        {
+          "name": "value",
+          "type": "integer",
+          "range": "0-255",
+          "description": "Byte value to write"
+        }
+      ],
+      "example": "I2CPOKE 104, 0, 0 : REM WRITE TO RTC REGISTER 0"
     },
     {
       "keyword": "SLEEP",
@@ -456,9 +1022,16 @@
       "type": "command",
       "category": "system",
       "syntax": "SLEEP jiffies",
-      "description": "Pause for given number of jiffies (1/60 sec each)",
-      "example": "SLEEP 60",
-      "notes": "Token: CE $AF"
+      "description": "Pause program execution for the specified number of jiffies (1/60 of a second each). Uses the hardware timer and does not busy-wait.",
+      "parameters": [
+        {
+          "name": "jiffies",
+          "type": "integer",
+          "range": "1-65535",
+          "description": "Number of jiffies to wait (60 = 1 second)"
+        }
+      ],
+      "example": "SLEEP 60 : REM WAIT 1 SECOND\nSLEEP 300 : REM WAIT 5 SECONDS"
     },
     {
       "keyword": "BSAVE",
@@ -467,9 +1040,38 @@
       "type": "command",
       "category": "io",
       "syntax": "BSAVE \"filename\", device, bank, start, end",
-      "description": "Save a block of banked RAM to a file",
-      "example": "BSAVE \"DATA.BIN\",8,1,40960,49151",
-      "notes": "Token: CE $B0"
+      "description": "Save a range of banked RAM to a file on disk.",
+      "parameters": [
+        {
+          "name": "filename",
+          "type": "string"
+        },
+        {
+          "name": "device",
+          "type": "integer",
+          "range": "8-11",
+          "description": "IEC device number"
+        },
+        {
+          "name": "bank",
+          "type": "integer",
+          "range": "0-255",
+          "description": "RAM bank to save from"
+        },
+        {
+          "name": "start",
+          "type": "integer",
+          "range": "40960-49151",
+          "description": "Start address within the banked RAM window ($A000-$BFFF)"
+        },
+        {
+          "name": "end",
+          "type": "integer",
+          "range": "40960-49151",
+          "description": "End address (exclusive)"
+        }
+      ],
+      "example": "BSAVE \"DATA.BIN\", 8, 1, 40960, 49152 : REM SAVE FULL BANK 1"
     },
     {
       "keyword": "MENU",
@@ -478,8 +1080,8 @@
       "type": "command",
       "category": "system",
       "syntax": "MENU",
-      "description": "Display the BASIC utility menu",
-      "notes": "Token: CE $B1"
+      "description": "Display the BASIC utility menu for accessing built-in tools.",
+      "example": "MENU"
     },
     {
       "keyword": "REN",
@@ -487,10 +1089,23 @@
       "token": 178,
       "type": "command",
       "category": "editor",
-      "syntax": "REN [start [,step]]",
-      "description": "Renumber program lines",
-      "example": "REN 100,10",
-      "notes": "Token: CE $B2"
+      "syntax": "REN [start [, step]]",
+      "description": "Renumber BASIC program lines, updating all GOTO, GOSUB, and other line number references automatically.",
+      "parameters": [
+        {
+          "name": "start",
+          "type": "integer",
+          "description": "New starting line number (default: 10)",
+          "optional": true
+        },
+        {
+          "name": "step",
+          "type": "integer",
+          "description": "Increment between line numbers (default: 10)",
+          "optional": true
+        }
+      ],
+      "example": "REN 100, 10 : REM RENUMBER FROM 100 IN STEPS OF 10\nREN : REM RENUMBER FROM 10 IN STEPS OF 10"
     },
     {
       "keyword": "LINPUT#",
@@ -499,9 +1114,21 @@
       "type": "command",
       "category": "io",
       "syntax": "LINPUT# channel, variable$",
-      "description": "Read a complete line from a file (accepts commas)",
-      "example": "LINPUT# 1,A,",
-      "notes": "Token: CE $B3"
+      "description": "Read a complete line from a file into a string variable. Unlike INPUT#, LINPUT# accepts commas, colons, and other characters that would normally terminate an INPUT# read.",
+      "parameters": [
+        {
+          "name": "channel",
+          "type": "integer",
+          "range": "1-15",
+          "description": "Logical file number of an open file"
+        },
+        {
+          "name": "variable$",
+          "type": "string",
+          "description": "String variable to receive the line"
+        }
+      ],
+      "example": "OPEN 1, 8, 8, \"DATA.TXT\"\nLINPUT# 1, A$\nPRINT A$\nCLOSE 1"
     },
     {
       "keyword": "LINPUT",
@@ -510,9 +1137,21 @@
       "type": "command",
       "category": "io",
       "syntax": "LINPUT [prompt$;] variable$",
-      "description": "Read a complete line from keyboard (accepts commas and colons)",
-      "example": "LINPUT \"PATH:\",P,",
-      "notes": "Token: CE $B4"
+      "description": "Read a complete line from the keyboard into a string variable. Unlike INPUT, LINPUT accepts commas, colons, and quotes in the input without treating them as delimiters.",
+      "parameters": [
+        {
+          "name": "prompt$",
+          "type": "string",
+          "description": "Optional prompt string displayed before input",
+          "optional": true
+        },
+        {
+          "name": "variable$",
+          "type": "string",
+          "description": "String variable to receive the input"
+        }
+      ],
+      "example": "LINPUT \"ENTER PATH: \"; P$\nPRINT \"YOU ENTERED: \"; P$"
     },
     {
       "keyword": "BINPUT#",
@@ -521,8 +1160,27 @@
       "type": "command",
       "category": "io",
       "syntax": "BINPUT# channel, variable$, count",
-      "description": "Read exactly count bytes from a file into a string variable",
-      "notes": "Token: CE $B5"
+      "description": "Read exactly count bytes from a file into a string variable. Useful for reading binary data from files.",
+      "parameters": [
+        {
+          "name": "channel",
+          "type": "integer",
+          "range": "1-15",
+          "description": "Logical file number of an open file"
+        },
+        {
+          "name": "variable$",
+          "type": "string",
+          "description": "String variable to receive the bytes"
+        },
+        {
+          "name": "count",
+          "type": "integer",
+          "range": "1-255",
+          "description": "Number of bytes to read"
+        }
+      ],
+      "example": "OPEN 1, 8, 8, \"BIN.DAT\"\nBINPUT# 1, D$, 64 : REM READ 64 BYTES\nCLOSE 1"
     },
     {
       "keyword": "HELP",
@@ -531,9 +1189,16 @@
       "type": "command",
       "category": "system",
       "syntax": "HELP [keyword$]",
-      "description": "Display help for a BASIC keyword or list all X16 extensions",
-      "example": "HELP \"VPOKE\"",
-      "notes": "Token: CE $B6"
+      "description": "Display built-in help for an X16 BASIC keyword, or list all available extensions if no argument is given.",
+      "parameters": [
+        {
+          "name": "keyword$",
+          "type": "string",
+          "description": "Keyword to look up (optional)",
+          "optional": true
+        }
+      ],
+      "example": "HELP : REM LIST ALL EXTENSIONS\nHELP \"VPOKE\" : REM HELP FOR VPOKE"
     },
     {
       "keyword": "BANNER",
@@ -542,8 +1207,8 @@
       "type": "command",
       "category": "system",
       "syntax": "BANNER",
-      "description": "Display the Commander X16 startup banner",
-      "notes": "Token: CE $B7"
+      "description": "Display the Commander X16 startup banner showing the ROM version and memory information.",
+      "example": "BANNER"
     },
     {
       "keyword": "VPEEK",
@@ -552,21 +1217,22 @@
       "type": "function",
       "category": "graphics",
       "syntax": "VPEEK(bank, address)",
-      "description": "Read a byte from VERA video RAM",
+      "description": "Read a byte from VERA video RAM. Complements VPOKE.",
       "parameters": [
         {
           "name": "bank",
           "type": "integer",
-          "range": "0-1"
+          "range": "0-1",
+          "description": "VRAM bank (0 = $00000-$0FFFF, 1 = $10000-$1FFFF)"
         },
         {
           "name": "address",
           "type": "integer",
-          "range": "0-65535"
+          "range": "0-65535",
+          "description": "Byte offset within the selected bank"
         }
       ],
-      "example": "PRINT VPEEK(0,0)",
-      "notes": "Token: CE $C2"
+      "example": "PRINT VPEEK(0, 0) : REM READ FIRST VRAM BYTE\nV = VPEEK(1, 4096) : REM READ FROM BANK 1"
     },
     {
       "keyword": "MX",
@@ -575,9 +1241,8 @@
       "type": "function",
       "category": "io",
       "syntax": "MX",
-      "description": "Return current mouse X position",
-      "example": "X = MX",
-      "notes": "Token: CE $C3"
+      "description": "Return the current mouse cursor X position in screen pixels. Only meaningful when MOUSE 1 has been called.",
+      "example": "MOUSE 1\nX = MX : Y = MY\nPRINT \"MOUSE AT\"; X; \",\"; Y"
     },
     {
       "keyword": "MY",
@@ -586,9 +1251,8 @@
       "type": "function",
       "category": "io",
       "syntax": "MY",
-      "description": "Return current mouse Y position",
-      "example": "Y = MY",
-      "notes": "Token: CE $C4"
+      "description": "Return the current mouse cursor Y position in screen pixels. Only meaningful when MOUSE 1 has been called.",
+      "example": "MOUSE 1\nX = MX : Y = MY\nPRINT \"MOUSE AT\"; X; \",\"; Y"
     },
     {
       "keyword": "MB",
@@ -597,9 +1261,8 @@
       "type": "function",
       "category": "io",
       "syntax": "MB",
-      "description": "Return mouse button state. Bit 0=left, bit 1=right, bit 2=middle",
-      "example": "IF MB AND 1 THEN PRINT \"LEFT\"",
-      "notes": "Token: CE $C5"
+      "description": "Return the current mouse button state as a bitmask. Bit 0=left button, bit 1=right button, bit 2=middle button.",
+      "example": "MOUSE 1\n10 B = MB\nIF B AND 1 THEN PRINT \"LEFT BUTTON\"\nIF B AND 2 THEN PRINT \"RIGHT BUTTON\"\nGOTO 10"
     },
     {
       "keyword": "JOY",
@@ -608,16 +1271,16 @@
       "type": "function",
       "category": "io",
       "syntax": "JOY(port)",
-      "description": "Read SNES-style gamepad for port 1-4. Returns button bitmask.",
+      "description": "Read the button state of an SNES-style gamepad. Returns a 16-bit bitmask where each bit corresponds to a button: bits 0-3=B/Y/SEL/START, bits 4-7=UP/DOWN/LEFT/RIGHT, bits 8-11=A/X/L/R.",
       "parameters": [
         {
           "name": "port",
           "type": "integer",
-          "range": "1-4"
+          "range": "1-4",
+          "description": "Gamepad port number"
         }
       ],
-      "example": "J = JOY(1)",
-      "notes": "Token: CE $C6"
+      "example": "J = JOY(1)\nIF J AND 128 THEN PRINT \"RIGHT\"\nIF J AND 64 THEN PRINT \"LEFT\"\nIF J AND 1 THEN PRINT \"B BUTTON\""
     },
     {
       "keyword": "HEX$",
@@ -626,9 +1289,16 @@
       "type": "function",
       "category": "string",
       "syntax": "HEX$(n)",
-      "description": "Convert number to hexadecimal string",
-      "example": "PRINT HEX$(255)",
-      "notes": "Token: CE $C7"
+      "description": "Convert an integer to its hexadecimal string representation. Always returns uppercase with no leading zeros.",
+      "parameters": [
+        {
+          "name": "n",
+          "type": "integer",
+          "range": "0-65535",
+          "description": "Integer value to convert"
+        }
+      ],
+      "example": "PRINT HEX$(255)\nFF\nPRINT HEX$(53248)\nD000"
     },
     {
       "keyword": "BIN$",
@@ -637,9 +1307,16 @@
       "type": "function",
       "category": "string",
       "syntax": "BIN$(n)",
-      "description": "Convert number to binary string",
-      "example": "PRINT BIN$(10)",
-      "notes": "Token: CE $C8"
+      "description": "Convert an integer to its binary string representation. Returns a string of '0' and '1' characters with no leading zeros.",
+      "parameters": [
+        {
+          "name": "n",
+          "type": "integer",
+          "range": "0-65535",
+          "description": "Integer value to convert"
+        }
+      ],
+      "example": "PRINT BIN$(10)\n1010\nPRINT BIN$(255)\n11111111"
     },
     {
       "keyword": "I2CPEEK",
@@ -648,8 +1325,22 @@
       "type": "function",
       "category": "system",
       "syntax": "I2CPEEK(device, register)",
-      "description": "Read a byte from an I2C bus device register",
-      "notes": "Token: CE $C9"
+      "description": "Read a byte from a register on a device connected to the X16's I2C bus.",
+      "parameters": [
+        {
+          "name": "device",
+          "type": "integer",
+          "range": "0-127",
+          "description": "I2C device address (7-bit)"
+        },
+        {
+          "name": "register",
+          "type": "integer",
+          "range": "0-255",
+          "description": "Device register address"
+        }
+      ],
+      "example": "R = I2CPEEK(104, 0) : REM READ RTC REGISTER 0\nPRINT \"RTC REG 0 =\"; R"
     },
     {
       "keyword": "POINTER",
@@ -658,8 +1349,14 @@
       "type": "function",
       "category": "system",
       "syntax": "POINTER(variable)",
-      "description": "Return the memory address of a BASIC variable",
-      "notes": "Token: CE $CA"
+      "description": "Return the memory address of a BASIC variable's storage location. Useful for passing variable addresses to machine language routines.",
+      "parameters": [
+        {
+          "name": "variable",
+          "description": "A BASIC variable name"
+        }
+      ],
+      "example": "A = 42\nPRINT HEX$(POINTER(A)) : REM PRINT ADDRESS OF A"
     },
     {
       "keyword": "STRPTR",
@@ -668,8 +1365,15 @@
       "type": "function",
       "category": "string",
       "syntax": "STRPTR(string$)",
-      "description": "Return the memory address of a string variable's data",
-      "notes": "Token: CE $CB"
+      "description": "Return the memory address of the actual string data for the given string variable. Unlike POINTER, which returns the address of the variable descriptor, STRPTR returns the address of the character data.",
+      "parameters": [
+        {
+          "name": "string$",
+          "type": "string",
+          "description": "A string variable"
+        }
+      ],
+      "example": "A$ = \"HELLO\"\nPRINT HEX$(STRPTR(A$)) : REM ADDRESS OF THE CHAR DATA\nPRINT PEEK(STRPTR(A$)) : REM PRINTS 72 (='H')"
     },
     {
       "keyword": "RPT$",
@@ -678,9 +1382,21 @@
       "type": "function",
       "category": "string",
       "syntax": "RPT$(char$, count)",
-      "description": "Return a string of char$ repeated count times",
-      "example": "PRINT RPT$(\"*\",40)",
-      "notes": "Token: CE $CC"
+      "description": "Return a string consisting of char$ repeated count times. Useful for drawing lines and borders.",
+      "parameters": [
+        {
+          "name": "char$",
+          "type": "string",
+          "description": "Character or string to repeat"
+        },
+        {
+          "name": "count",
+          "type": "integer",
+          "range": "0-255",
+          "description": "Number of repetitions"
+        }
+      ],
+      "example": "PRINT RPT$(\"=\", 40) : REM PRINT A LINE OF 40 EQUALS\nPRINT RPT$(CHR$(102), 20) : REM REPEAT A PETSCII CHAR"
     },
     {
       "keyword": "MWHEEL",
@@ -689,8 +1405,8 @@
       "type": "function",
       "category": "io",
       "syntax": "MWHEEL",
-      "description": "Return mouse scroll wheel delta since last call",
-      "notes": "Token: CE $CD"
+      "description": "Return the accumulated mouse scroll wheel delta since the last time MWHEEL was called, then reset the counter. Positive values indicate scrolling up, negative values down. Only valid when MOUSE 1 is active.",
+      "example": "MOUSE 1\n10 W = MWHEEL\nIF W > 0 THEN PRINT \"SCROLL UP\"; W\nIF W < 0 THEN PRINT \"SCROLL DOWN\"; W\nGOTO 10"
     },
     {
       "keyword": "TDATA",
@@ -699,8 +1415,26 @@
       "type": "function",
       "category": "graphics",
       "syntax": "TDATA(layer, x, y)",
-      "description": "Read tile data from VERA tile map layer at tile position x,y",
-      "notes": "Token: CE $CE"
+      "description": "Read the tile index byte from a VERA tile map layer at tile grid position (x, y). Returns the character/tile index stored in the tile map.",
+      "parameters": [
+        {
+          "name": "layer",
+          "type": "integer",
+          "range": "0-1",
+          "description": "VERA layer number (0 or 1)"
+        },
+        {
+          "name": "x",
+          "type": "integer",
+          "description": "Tile column in the tile map"
+        },
+        {
+          "name": "y",
+          "type": "integer",
+          "description": "Tile row in the tile map"
+        }
+      ],
+      "example": "PRINT TDATA(0, 0, 0) : REM READ TILE AT TOP-LEFT OF LAYER 0"
     },
     {
       "keyword": "TATTR",
@@ -709,8 +1443,26 @@
       "type": "function",
       "category": "graphics",
       "syntax": "TATTR(layer, x, y)",
-      "description": "Read tile attribute byte from VERA tile map layer at tile position x,y",
-      "notes": "Token: CE $CF"
+      "description": "Read the tile attribute byte from a VERA tile map layer at tile grid position (x, y). The attribute byte encodes color and flip flags depending on the current VERA mode.",
+      "parameters": [
+        {
+          "name": "layer",
+          "type": "integer",
+          "range": "0-1",
+          "description": "VERA layer number (0 or 1)"
+        },
+        {
+          "name": "x",
+          "type": "integer",
+          "description": "Tile column in the tile map"
+        },
+        {
+          "name": "y",
+          "type": "integer",
+          "description": "Tile row in the tile map"
+        }
+      ],
+      "example": "A = TATTR(0, 5, 3) : REM READ ATTRIBUTE AT COLUMN 5, ROW 3"
     },
     {
       "keyword": "MOD",
@@ -719,9 +1471,20 @@
       "type": "function",
       "category": "math",
       "syntax": "MOD(a, b)",
-      "description": "Return modulo (remainder) of a divided by b",
-      "example": "PRINT MOD(10,3)",
-      "notes": "Token: CE $D0"
+      "description": "Return the integer remainder (modulo) of a divided by b. Equivalent to a - INT(a/b)*b for positive values.",
+      "parameters": [
+        {
+          "name": "a",
+          "type": "integer",
+          "description": "Dividend"
+        },
+        {
+          "name": "b",
+          "type": "integer",
+          "description": "Divisor (must not be zero)"
+        }
+      ],
+      "example": "PRINT MOD(10, 3)\n1\nPRINT MOD(17, 5)\n2\nFOR I=0 TO 10: PRINT MOD(I,4);: NEXT I\n0 1 2 3 0 1 2 3 0 1 2"
     }
   ]
 }

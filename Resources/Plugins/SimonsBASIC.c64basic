@@ -2,14 +2,15 @@
   "name": "Simons' BASIC",
   "version": "1.0",
   "author": "David Simons / Commodore",
-  "description": "Simons' BASIC for the Commodore 64. Adds 114 commands covering structured programming, hi-res graphics, sprites, sound, string handling, and disk operations. Uses two-byte tokens with $64 as the prefix byte.",
+  "description": "Simons' BASIC for the Commodore 64. Adds 116 keywords covering structured programming (PROC/CALL, REPEAT/UNTIL, LOOP/END LOOP, ON ERROR), hi-res graphics (HIRES, PLOT, LINE, CIRCLE, ARC, FILL, PAINT), sprites/MOBs (MOB SET, MMOB, CMOB, DETECT), SID sound (SOUND, PLAY, ENVELOPE, WAVE, VOL), string handling (INST, INSERT, LIN, INKEY), and disk/utility operations. All keywords use the $64 prefix byte. IMPORTANT: When using Simons' BASIC keywords after IF/THEN, a colon is required between THEN and the keyword. Write 'IF cond THEN:KEYWORD' not 'IF cond THEN KEYWORD' — the standard BASIC THEN dispatcher bypasses the Simons' extension handler.",
   "url": "https://www.c64-wiki.com/wiki/Simons%27_BASIC",
   "extendsBasicV2": true,
+  "loadAddress": 2049,
   "activationSYS": 64738,
   "tokenPrefixes": [
     {
       "byte": 100,
-      "description": "Simons' BASIC prefix ($64) — all Simons' BASIC keywords use this prefix"
+      "description": "Simons' BASIC prefix ($64) — all Simons' BASIC keywords use this prefix followed by a token byte $01-$7F"
     }
   ],
   "keywords": [
@@ -20,21 +21,22 @@
       "type": "command",
       "category": "graphics",
       "syntax": "HIRES mode, color",
-      "description": "Switch to hi-resolution graphics mode",
+      "description": "Switch to hi-resolution bitmap mode (320x200 pixels). Mode 0 returns to text; mode 1 enables hi-res. Color sets the background color for the bitmap screen.",
       "parameters": [
         {
           "name": "mode",
           "type": "integer",
           "range": "0-1",
-          "description": "0=off, 1=on"
+          "description": "0=return to text mode, 1=enter hi-res mode"
         },
         {
           "name": "color",
           "type": "integer",
-          "range": "0-15"
+          "range": "0-15",
+          "description": "Background color index for the hi-res screen"
         }
       ],
-      "example": "HIRES 1,0"
+      "example": "HIRES 1, 0 : REM HI-RES, BLACK BACKGROUND\nPLOT 160, 100, 1\nHIRES 0, 0 : REM RETURN TO TEXT"
     },
     {
       "keyword": "PLOT",
@@ -43,26 +45,28 @@
       "type": "command",
       "category": "graphics",
       "syntax": "PLOT x, y, mode",
-      "description": "Plot a point in hi-res mode",
+      "description": "Set or clear a single pixel in hi-res mode at position x,y.",
       "parameters": [
         {
           "name": "x",
           "type": "integer",
-          "range": "0-319"
+          "range": "0-319",
+          "description": "Horizontal pixel position"
         },
         {
           "name": "y",
           "type": "integer",
-          "range": "0-199"
+          "range": "0-199",
+          "description": "Vertical pixel position"
         },
         {
           "name": "mode",
           "type": "integer",
           "range": "0-1",
-          "description": "0=erase, 1=set"
+          "description": "0=erase pixel, 1=set pixel"
         }
       ],
-      "example": "PLOT 160,100,1"
+      "example": "HIRES 1, 0\nPLOT 160, 100, 1 : REM SET CENTER PIXEL\nPLOT 160, 100, 0 : REM CLEAR IT"
     },
     {
       "keyword": "LINE",
@@ -71,8 +75,40 @@
       "type": "command",
       "category": "graphics",
       "syntax": "LINE x1, y1, x2, y2, mode",
-      "description": "Draw a line in hi-res mode",
-      "example": "LINE 0,0,319,199,1"
+      "description": "Draw a straight line between two pixel coordinates in hi-res mode.",
+      "parameters": [
+        {
+          "name": "x1",
+          "type": "integer",
+          "range": "0-319",
+          "description": "Starting X coordinate"
+        },
+        {
+          "name": "y1",
+          "type": "integer",
+          "range": "0-199",
+          "description": "Starting Y coordinate"
+        },
+        {
+          "name": "x2",
+          "type": "integer",
+          "range": "0-319",
+          "description": "Ending X coordinate"
+        },
+        {
+          "name": "y2",
+          "type": "integer",
+          "range": "0-199",
+          "description": "Ending Y coordinate"
+        },
+        {
+          "name": "mode",
+          "type": "integer",
+          "range": "0-2",
+          "description": "0=erase, 1=draw, 2=XOR"
+        }
+      ],
+      "example": "HIRES 1, 0\nLINE 0, 0, 319, 199, 1 : REM DIAGONAL"
     },
     {
       "keyword": "BLOCK",
@@ -81,8 +117,40 @@
       "type": "command",
       "category": "graphics",
       "syntax": "BLOCK x1, y1, x2, y2, mode",
-      "description": "Draw a filled or outline block (rectangle)",
-      "example": "BLOCK 10,10,100,100,1"
+      "description": "Draw a filled rectangle (block) in hi-res mode between the two corner coordinates.",
+      "parameters": [
+        {
+          "name": "x1",
+          "type": "integer",
+          "range": "0-319",
+          "description": "Left X coordinate"
+        },
+        {
+          "name": "y1",
+          "type": "integer",
+          "range": "0-199",
+          "description": "Top Y coordinate"
+        },
+        {
+          "name": "x2",
+          "type": "integer",
+          "range": "0-319",
+          "description": "Right X coordinate"
+        },
+        {
+          "name": "y2",
+          "type": "integer",
+          "range": "0-199",
+          "description": "Bottom Y coordinate"
+        },
+        {
+          "name": "mode",
+          "type": "integer",
+          "range": "0-2",
+          "description": "0=erase, 1=fill, 2=XOR"
+        }
+      ],
+      "example": "HIRES 1, 0\nBLOCK 10, 10, 100, 100, 1 : REM FILLED BLOCK"
     },
     {
       "keyword": "FCHR",
@@ -91,7 +159,34 @@
       "type": "command",
       "category": "graphics",
       "syntax": "FCHR x, y, char, color",
-      "description": "Print a character at hi-res screen position"
+      "description": "Print a single character at hi-res screen position (x, y) using the specified color.",
+      "parameters": [
+        {
+          "name": "x",
+          "type": "integer",
+          "range": "0-39",
+          "description": "Text column (0-39 in 40-column mode)"
+        },
+        {
+          "name": "y",
+          "type": "integer",
+          "range": "0-24",
+          "description": "Text row"
+        },
+        {
+          "name": "char",
+          "type": "integer",
+          "range": "0-255",
+          "description": "Character code (PETSCII)"
+        },
+        {
+          "name": "color",
+          "type": "integer",
+          "range": "0-15",
+          "description": "Character color"
+        }
+      ],
+      "example": "HIRES 1, 0\nFCHR 10, 5, 65, 1 : REM 'A' IN WHITE AT COL 10, ROW 5"
     },
     {
       "keyword": "FCOL",
@@ -100,7 +195,16 @@
       "type": "command",
       "category": "graphics",
       "syntax": "FCOL color",
-      "description": "Set the foreground color for hi-res graphics"
+      "description": "Set the foreground drawing color for hi-res graphics operations.",
+      "parameters": [
+        {
+          "name": "color",
+          "type": "integer",
+          "range": "0-15",
+          "description": "Foreground color index"
+        }
+      ],
+      "example": "HIRES 1, 0\nFCOL 7 : REM YELLOW\nLINE 0, 0, 319, 199, 1"
     },
     {
       "keyword": "FILL",
@@ -109,7 +213,28 @@
       "type": "command",
       "category": "graphics",
       "syntax": "FILL x, y, mode",
-      "description": "Flood fill an area in hi-res mode starting at x,y"
+      "description": "Flood fill an enclosed area in hi-res mode outward from the seed point (x, y). Fill spreads to all adjacent pixels matching the seed pixel state and stops at pixels with a different state. FILL fills the interior of a boundary. See also PAINT which fills from a boundary edge inward.",
+      "parameters": [
+        {
+          "name": "x",
+          "type": "integer",
+          "range": "0-319",
+          "description": "Seed X coordinate — fill starts here"
+        },
+        {
+          "name": "y",
+          "type": "integer",
+          "range": "0-199",
+          "description": "Seed Y coordinate"
+        },
+        {
+          "name": "mode",
+          "type": "integer",
+          "range": "0-1",
+          "description": "0=fill with background, 1=fill with foreground"
+        }
+      ],
+      "example": "HIRES 1, 0\nCIRCLE 160, 100, 60, 40, 1\nFILL 160, 100, 1 : REM FILL INSIDE CIRCLE"
     },
     {
       "keyword": "REC",
@@ -118,7 +243,40 @@
       "type": "command",
       "category": "graphics",
       "syntax": "REC x1, y1, x2, y2, mode",
-      "description": "Draw a rectangle outline (non-filled) in hi-res mode"
+      "description": "Draw a rectangle outline (four sides, not filled) in hi-res mode. To draw a filled rectangle, use BLOCK instead.",
+      "parameters": [
+        {
+          "name": "x1",
+          "type": "integer",
+          "range": "0-319",
+          "description": "Left X coordinate"
+        },
+        {
+          "name": "y1",
+          "type": "integer",
+          "range": "0-199",
+          "description": "Top Y coordinate"
+        },
+        {
+          "name": "x2",
+          "type": "integer",
+          "range": "0-319",
+          "description": "Right X coordinate"
+        },
+        {
+          "name": "y2",
+          "type": "integer",
+          "range": "0-199",
+          "description": "Bottom Y coordinate"
+        },
+        {
+          "name": "mode",
+          "type": "integer",
+          "range": "0-2",
+          "description": "0=erase, 1=draw, 2=XOR"
+        }
+      ],
+      "example": "HIRES 1, 0\nREC 20, 20, 200, 150, 1 : REM RECTANGLE OUTLINE"
     },
     {
       "keyword": "ROT",
@@ -127,7 +285,16 @@
       "type": "command",
       "category": "graphics",
       "syntax": "ROT angle",
-      "description": "Rotate the hi-res graphics image"
+      "description": "Rotate the hi-res graphics screen by the specified angle. Angle is in 90-degree increments.",
+      "parameters": [
+        {
+          "name": "angle",
+          "type": "integer",
+          "range": "0-3",
+          "description": "Rotation: 0=0 degrees, 1=90 degrees, 2=180 degrees, 3=270 degrees"
+        }
+      ],
+      "example": "HIRES 1, 0\nLINE 0, 0, 319, 0, 1 : REM TOP EDGE\nROT 1 : REM ROTATE 90 DEGREES"
     },
     {
       "keyword": "DRAW",
@@ -136,7 +303,27 @@
       "type": "command",
       "category": "graphics",
       "syntax": "DRAW source, x, y",
-      "description": "Draw a shape from a data block at position x,y"
+      "description": "Draw a predefined shape from a data block to hi-res position (x, y). The source is an address or DATA block index containing the shape definition created with the Simons' BASIC shape editor.",
+      "parameters": [
+        {
+          "name": "source",
+          "type": "integer",
+          "description": "Address of the shape data block in memory"
+        },
+        {
+          "name": "x",
+          "type": "integer",
+          "range": "0-319",
+          "description": "Target X position"
+        },
+        {
+          "name": "y",
+          "type": "integer",
+          "range": "0-199",
+          "description": "Target Y position"
+        }
+      ],
+      "example": "HIRES 1, 0\nDRAW 49152, 100, 80 : REM DRAW SHAPE AT $C000"
     },
     {
       "keyword": "CHAR",
@@ -145,8 +332,27 @@
       "type": "command",
       "category": "screen",
       "syntax": "CHAR x, y, string$",
-      "description": "Print text at column x, row y on screen",
-      "example": "CHAR 10,12,\"HELLO\""
+      "description": "Print a string at text column x, row y on the screen. Works in both text and hi-res mode.",
+      "parameters": [
+        {
+          "name": "x",
+          "type": "integer",
+          "range": "0-39",
+          "description": "Text column (0=leftmost)"
+        },
+        {
+          "name": "y",
+          "type": "integer",
+          "range": "0-24",
+          "description": "Text row (0=top)"
+        },
+        {
+          "name": "string$",
+          "type": "string",
+          "description": "Text to display"
+        }
+      ],
+      "example": "CHAR 10, 12, \"HELLO SIMONS!\""
     },
     {
       "keyword": "HI COL",
@@ -155,7 +361,22 @@
       "type": "command",
       "category": "graphics",
       "syntax": "HI COL x, color",
-      "description": "Set hi-res color for character cell column x"
+      "description": "Set the color for hi-res character cell column x. In hi-res mode each character cell can have its own foreground color.",
+      "parameters": [
+        {
+          "name": "x",
+          "type": "integer",
+          "range": "0-39",
+          "description": "Character cell column (0-39)"
+        },
+        {
+          "name": "color",
+          "type": "integer",
+          "range": "0-15",
+          "description": "Color index for that column"
+        }
+      ],
+      "example": "HIRES 1, 0\nHI COL 20, 7 : REM YELLOW FOREGROUND FOR COLUMN 20"
     },
     {
       "keyword": "INV",
@@ -164,7 +385,8 @@
       "type": "command",
       "category": "graphics",
       "syntax": "INV",
-      "description": "Invert the hi-res screen"
+      "description": "Invert all pixels on the hi-res screen (set pixels become clear and vice versa).",
+      "example": "HIRES 1, 0\nLINE 0, 0, 319, 199, 1\nINV : REM INVERT THE SCREEN"
     },
     {
       "keyword": "FRAC",
@@ -173,8 +395,15 @@
       "type": "function",
       "category": "math",
       "syntax": "FRAC(x)",
-      "description": "Return the fractional part of x",
-      "example": "PRINT FRAC(3.75)"
+      "description": "Return the fractional part of x (equivalent to x - INT(x)).",
+      "parameters": [
+        {
+          "name": "x",
+          "type": "float",
+          "description": "Numeric expression"
+        }
+      ],
+      "example": "PRINT FRAC(3.75)\n.75\nPRINT FRAC(-2.3)\n-.3"
     },
     {
       "keyword": "MOVE",
@@ -183,8 +412,28 @@
       "type": "command",
       "category": "memory",
       "syntax": "MOVE source, dest, length",
-      "description": "Copy a block of memory",
-      "example": "MOVE 1024, 2048, 1000"
+      "description": "Copy a block of memory from source address to destination address. Length is in bytes. Handles overlapping regions correctly.",
+      "parameters": [
+        {
+          "name": "source",
+          "type": "integer",
+          "range": "0-65535",
+          "description": "Source start address"
+        },
+        {
+          "name": "dest",
+          "type": "integer",
+          "range": "0-65535",
+          "description": "Destination start address"
+        },
+        {
+          "name": "length",
+          "type": "integer",
+          "range": "1-65535",
+          "description": "Number of bytes to copy"
+        }
+      ],
+      "example": "MOVE 1024, 2048, 1000 : REM COPY 1000 BYTES"
     },
     {
       "keyword": "PLACE",
@@ -193,7 +442,27 @@
       "type": "command",
       "category": "graphics",
       "syntax": "PLACE shape, x, y",
-      "description": "Place a predefined shape at x,y on screen"
+      "description": "Place a predefined shape at text position (x, y) on the screen using character cell addressing.",
+      "parameters": [
+        {
+          "name": "shape",
+          "type": "integer",
+          "description": "Shape index or address"
+        },
+        {
+          "name": "x",
+          "type": "integer",
+          "range": "0-39",
+          "description": "Column position"
+        },
+        {
+          "name": "y",
+          "type": "integer",
+          "range": "0-24",
+          "description": "Row position"
+        }
+      ],
+      "example": "PLACE 1, 20, 12 : REM PLACE SHAPE 1 AT CENTER"
     },
     {
       "keyword": "UPB",
@@ -202,7 +471,15 @@
       "type": "command",
       "category": "graphics",
       "syntax": "UPB n",
-      "description": "Move graphics cursor up by n bytes"
+      "description": "Move the graphics memory pointer up by n bytes. Used with the shape-drawing commands to navigate the hi-res bitmap. Each byte spans 8 horizontal pixels.",
+      "parameters": [
+        {
+          "name": "n",
+          "type": "integer",
+          "description": "Number of bytes (8 pixels each) to move up"
+        }
+      ],
+      "example": "UPB 5 : REM MOVE POINTER UP 40 PIXELS (5 BYTES)"
     },
     {
       "keyword": "UPW",
@@ -211,7 +488,15 @@
       "type": "command",
       "category": "graphics",
       "syntax": "UPW n",
-      "description": "Move graphics cursor up by n words"
+      "description": "Move the graphics memory pointer up by n words (2 bytes each = 16 horizontal pixels each).",
+      "parameters": [
+        {
+          "name": "n",
+          "type": "integer",
+          "description": "Number of words to move up"
+        }
+      ],
+      "example": "UPW 2 : REM MOVE POINTER UP 32 PIXELS (2 WORDS)"
     },
     {
       "keyword": "LEFTW",
@@ -220,7 +505,15 @@
       "type": "command",
       "category": "graphics",
       "syntax": "LEFTW n",
-      "description": "Move graphics cursor left by n words"
+      "description": "Move the graphics memory pointer left by n words (2 bytes = 16 horizontal pixels each).",
+      "parameters": [
+        {
+          "name": "n",
+          "type": "integer",
+          "description": "Number of words to move left"
+        }
+      ],
+      "example": "LEFTW 1 : REM MOVE POINTER LEFT 16 PIXELS"
     },
     {
       "keyword": "LEFTB",
@@ -229,7 +522,15 @@
       "type": "command",
       "category": "graphics",
       "syntax": "LEFTB n",
-      "description": "Move graphics cursor left by n bytes"
+      "description": "Move the graphics memory pointer left by n bytes (8 horizontal pixels each).",
+      "parameters": [
+        {
+          "name": "n",
+          "type": "integer",
+          "description": "Number of bytes to move left"
+        }
+      ],
+      "example": "LEFTB 2 : REM MOVE POINTER LEFT 16 PIXELS"
     },
     {
       "keyword": "DOWNB",
@@ -238,7 +539,15 @@
       "type": "command",
       "category": "graphics",
       "syntax": "DOWNB n",
-      "description": "Move graphics cursor down by n bytes"
+      "description": "Move the graphics memory pointer down by n bytes (8 horizontal pixels each).",
+      "parameters": [
+        {
+          "name": "n",
+          "type": "integer",
+          "description": "Number of bytes to move down"
+        }
+      ],
+      "example": "DOWNB 5 : REM MOVE POINTER DOWN"
     },
     {
       "keyword": "DOWNW",
@@ -247,7 +556,15 @@
       "type": "command",
       "category": "graphics",
       "syntax": "DOWNW n",
-      "description": "Move graphics cursor down by n words"
+      "description": "Move the graphics memory pointer down by n words (2 bytes = 16 horizontal pixels each).",
+      "parameters": [
+        {
+          "name": "n",
+          "type": "integer",
+          "description": "Number of words to move down"
+        }
+      ],
+      "example": "DOWNW 2 : REM MOVE POINTER DOWN"
     },
     {
       "keyword": "RIGHTB",
@@ -256,7 +573,15 @@
       "type": "command",
       "category": "graphics",
       "syntax": "RIGHTB n",
-      "description": "Move graphics cursor right by n bytes"
+      "description": "Move the graphics memory pointer right by n bytes (8 horizontal pixels each).",
+      "parameters": [
+        {
+          "name": "n",
+          "type": "integer",
+          "description": "Number of bytes to move right"
+        }
+      ],
+      "example": "RIGHTB 3 : REM MOVE POINTER RIGHT 24 PIXELS"
     },
     {
       "keyword": "RIGHTW",
@@ -265,7 +590,15 @@
       "type": "command",
       "category": "graphics",
       "syntax": "RIGHTW n",
-      "description": "Move graphics cursor right by n words"
+      "description": "Move the graphics memory pointer right by n words (2 bytes = 16 horizontal pixels each).",
+      "parameters": [
+        {
+          "name": "n",
+          "type": "integer",
+          "description": "Number of words to move right"
+        }
+      ],
+      "example": "RIGHTW 1 : REM MOVE POINTER RIGHT 16 PIXELS"
     },
     {
       "keyword": "MULTI",
@@ -274,7 +607,16 @@
       "type": "command",
       "category": "graphics",
       "syntax": "MULTI mode",
-      "description": "Enable/disable multicolor hi-res mode"
+      "description": "Enable or disable multicolor hi-res mode. In multicolor mode the horizontal resolution is halved (160x200) but four colors are available instead of two.",
+      "parameters": [
+        {
+          "name": "mode",
+          "type": "integer",
+          "range": "0-1",
+          "description": "0=disable multicolor (return to mono hi-res), 1=enable multicolor"
+        }
+      ],
+      "example": "HIRES 1, 0\nMULTI 1 : REM ENABLE MULTICOLOR MODE"
     },
     {
       "keyword": "COLOUR",
@@ -283,8 +625,22 @@
       "type": "command",
       "category": "screen",
       "syntax": "COLOUR foreground, background",
-      "description": "Set text foreground and background colors",
-      "example": "COLOUR 1,6"
+      "description": "Set the text foreground and background colors.",
+      "parameters": [
+        {
+          "name": "foreground",
+          "type": "integer",
+          "range": "0-15",
+          "description": "Text foreground color"
+        },
+        {
+          "name": "background",
+          "type": "integer",
+          "range": "0-15",
+          "description": "Screen background color"
+        }
+      ],
+      "example": "COLOUR 1, 6 : REM WHITE ON BLUE\nPRINT \"HELLO\""
     },
     {
       "keyword": "MMOB",
@@ -293,24 +649,28 @@
       "type": "command",
       "category": "graphics",
       "syntax": "MMOB sprite, x, y",
-      "description": "Move a sprite (MOB) to absolute position x,y",
+      "description": "Move a sprite (MOB — Movable Object Block) to absolute screen position (x, y).",
       "parameters": [
         {
           "name": "sprite",
           "type": "integer",
-          "range": "0-7"
+          "range": "0-7",
+          "description": "Sprite number"
         },
         {
           "name": "x",
           "type": "integer",
-          "range": "0-511"
+          "range": "0-511",
+          "description": "Horizontal position (0-511, with 255 being the right edge for standard sprites)"
         },
         {
           "name": "y",
           "type": "integer",
-          "range": "0-255"
+          "range": "0-255",
+          "description": "Vertical position"
         }
-      ]
+      ],
+      "example": "MMOB 0, 160, 100 : REM MOVE SPRITE 0 TO CENTER"
     },
     {
       "keyword": "BFLASH",
@@ -319,7 +679,22 @@
       "type": "command",
       "category": "graphics",
       "syntax": "BFLASH sprite, mode",
-      "description": "Enable/disable sprite flashing"
+      "description": "Enable or disable color flashing for a sprite.",
+      "parameters": [
+        {
+          "name": "sprite",
+          "type": "integer",
+          "range": "0-7",
+          "description": "Sprite number"
+        },
+        {
+          "name": "mode",
+          "type": "integer",
+          "range": "0-1",
+          "description": "0=disable flashing, 1=enable flashing"
+        }
+      ],
+      "example": "BFLASH 0, 1 : REM ENABLE FLASHING ON SPRITE 0"
     },
     {
       "keyword": "MOB SET",
@@ -328,8 +703,52 @@
       "type": "command",
       "category": "graphics",
       "syntax": "MOB SET sprite, shape, color, x, y, priority, mode",
-      "description": "Configure all sprite (MOB) parameters at once",
-      "example": "MOB SET 0,1,1,160,100,0,1"
+      "description": "Configure all parameters for a sprite (MOB) in a single command.",
+      "parameters": [
+        {
+          "name": "sprite",
+          "type": "integer",
+          "range": "0-7",
+          "description": "Sprite number"
+        },
+        {
+          "name": "shape",
+          "type": "integer",
+          "range": "0-255",
+          "description": "Sprite shape data block number"
+        },
+        {
+          "name": "color",
+          "type": "integer",
+          "range": "0-15",
+          "description": "Sprite color"
+        },
+        {
+          "name": "x",
+          "type": "integer",
+          "range": "0-511",
+          "description": "Horizontal position"
+        },
+        {
+          "name": "y",
+          "type": "integer",
+          "range": "0-255",
+          "description": "Vertical position"
+        },
+        {
+          "name": "priority",
+          "type": "integer",
+          "range": "0-1",
+          "description": "0=sprite in front of background, 1=sprite behind background"
+        },
+        {
+          "name": "mode",
+          "type": "integer",
+          "range": "0-1",
+          "description": "0=hi-res sprite, 1=multicolor sprite"
+        }
+      ],
+      "example": "MOB SET 0, 1, 1, 160, 100, 0, 0 : REM WHITE HIRES SPRITE AT CENTER"
     },
     {
       "keyword": "MUSIC",
@@ -338,7 +757,15 @@
       "type": "command",
       "category": "sound",
       "syntax": "MUSIC note$",
-      "description": "Play a music string"
+      "description": "Play a music string through the SID chip. The string encodes a sequence of notes in Simons' BASIC music notation. Call MUSIC with an empty string to stop playback.",
+      "parameters": [
+        {
+          "name": "note$",
+          "type": "string",
+          "description": "Music string in Simons' BASIC notation. Use an empty string to stop."
+        }
+      ],
+      "example": "MUSIC \"CDEFGAB\" : REM PLAY A SCALE\nMUSIC \"\" : REM STOP MUSIC"
     },
     {
       "keyword": "FLASH",
@@ -347,7 +774,28 @@
       "type": "command",
       "category": "screen",
       "syntax": "FLASH color1, color2, speed",
-      "description": "Flash the border between two colors"
+      "description": "Flash the screen border between two colors at the given speed.",
+      "parameters": [
+        {
+          "name": "color1",
+          "type": "integer",
+          "range": "0-15",
+          "description": "First border color"
+        },
+        {
+          "name": "color2",
+          "type": "integer",
+          "range": "0-15",
+          "description": "Second border color"
+        },
+        {
+          "name": "speed",
+          "type": "integer",
+          "range": "1-255",
+          "description": "Flash speed (lower=faster)"
+        }
+      ],
+      "example": "FLASH 0, 2, 10 : REM FLASH BETWEEN BLACK AND RED"
     },
     {
       "keyword": "REPEAT",
@@ -356,8 +804,8 @@
       "type": "loop",
       "category": "flow",
       "syntax": "REPEAT",
-      "description": "Begin a REPEAT/UNTIL loop",
-      "example": "REPEAT\n  X=X+1\nUNTIL X>10"
+      "description": "Begin a REPEAT/UNTIL loop. The body executes at least once and repeats until the UNTIL condition is true.",
+      "example": "X = 0\nREPEAT\n  X = X + 1\n  PRINT X\nUNTIL X >= 10"
     },
     {
       "keyword": "PLAY",
@@ -366,31 +814,34 @@
       "type": "command",
       "category": "sound",
       "syntax": "PLAY voice, note, octave, duration",
-      "description": "Play a note on a SID voice",
+      "description": "Play a single note on a SID voice. The note is specified as a semitone (0-11) within an octave (0-7). Duration is in jiffies (1/60 sec).",
       "parameters": [
         {
           "name": "voice",
           "type": "integer",
-          "range": "1-3"
+          "range": "1-3",
+          "description": "SID voice number"
         },
         {
           "name": "note",
           "type": "integer",
           "range": "0-11",
-          "description": "0=C, 1=C#...11=B"
+          "description": "Semitone within the octave: 0=C, 1=C#, 2=D, 3=D#, 4=E, 5=F, 6=F#, 7=G, 8=G#, 9=A, 10=A#, 11=B"
         },
         {
           "name": "octave",
           "type": "integer",
-          "range": "0-7"
+          "range": "0-7",
+          "description": "Octave number (4=middle octave)"
         },
         {
           "name": "duration",
           "type": "integer",
-          "range": "0-255"
+          "range": "0-255",
+          "description": "Note duration in jiffies (1/60 sec each)"
         }
       ],
-      "example": "PLAY 1,0,4,20"
+      "example": "ENVELOPE 1, 0, 9, 0, 0, 32\nPLAY 1, 0, 4, 30 : REM MIDDLE C FOR HALF SECOND\nPLAY 1, 4, 4, 30 : REM MIDDLE E"
     },
     {
       "keyword": "CENTRE",
@@ -399,8 +850,15 @@
       "type": "command",
       "category": "screen",
       "syntax": "CENTRE string$",
-      "description": "Print a string centered on the current line",
-      "example": "CENTRE \"HELLO WORLD\""
+      "description": "Print a string horizontally centered on the current screen row.",
+      "parameters": [
+        {
+          "name": "string$",
+          "type": "string",
+          "description": "Text to center and print"
+        }
+      ],
+      "example": "CENTRE \"SIMONS' BASIC\"\nCENTRE \"PRESS A KEY\""
     },
     {
       "keyword": "ENVELOPE",
@@ -409,40 +867,45 @@
       "type": "command",
       "category": "sound",
       "syntax": "ENVELOPE voice, attack, decay, sustain, release, waveform",
-      "description": "Set the SID ADSR envelope and waveform for a voice",
+      "description": "Set the SID ADSR envelope and waveform for a voice. Must be called before PLAY or SOUND to configure the voice's sound character.",
       "parameters": [
         {
           "name": "voice",
           "type": "integer",
-          "range": "1-3"
+          "range": "1-3",
+          "description": "SID voice number"
         },
         {
           "name": "attack",
           "type": "integer",
-          "range": "0-15"
+          "range": "0-15",
+          "description": "Attack rate (0=fastest)"
         },
         {
           "name": "decay",
           "type": "integer",
-          "range": "0-15"
+          "range": "0-15",
+          "description": "Decay rate"
         },
         {
           "name": "sustain",
           "type": "integer",
-          "range": "0-15"
+          "range": "0-15",
+          "description": "Sustain level (0=silent, 15=full volume)"
         },
         {
           "name": "release",
           "type": "integer",
-          "range": "0-15"
+          "range": "0-15",
+          "description": "Release rate (0=fastest)"
         },
         {
           "name": "waveform",
           "type": "integer",
-          "description": "16=tri, 32=saw, 64=pulse, 128=noise"
+          "description": "SID waveform bits: 16=triangle, 32=sawtooth, 64=pulse, 128=noise. These are bit flags and can be combined (e.g. 48=triangle+sawtooth)."
         }
       ],
-      "example": "ENVELOPE 1,0,9,0,0,33"
+      "example": "ENVELOPE 1, 0, 9, 0, 0, 32 : REM VOICE 1, SAWTOOTH WAVE\nPLAY 1, 0, 4, 30 : REM MIDDLE C"
     },
     {
       "keyword": "CGOTO",
@@ -451,8 +914,20 @@
       "type": "command",
       "category": "flow",
       "syntax": "CGOTO condition, line",
-      "description": "Conditional GOTO — branch to line if condition is non-zero",
-      "example": "CGOTO X>10, 100"
+      "description": "Conditional GOTO — branch to line if condition is non-zero (true). More compact than IF/THEN for simple branches.",
+      "parameters": [
+        {
+          "name": "condition",
+          "type": "integer",
+          "description": "Numeric expression. Branch occurs if this is non-zero."
+        },
+        {
+          "name": "line",
+          "type": "integer",
+          "description": "Line number to jump to if condition is true"
+        }
+      ],
+      "example": "CGOTO X > 10, 100\nCGOTO A$ = \"Q\", 9000 : REM QUIT HANDLER"
     },
     {
       "keyword": "WAVE",
@@ -461,19 +936,21 @@
       "type": "command",
       "category": "sound",
       "syntax": "WAVE voice, waveform",
-      "description": "Set the waveform for a SID voice",
+      "description": "Set the waveform for a SID voice without changing the ADSR envelope.",
       "parameters": [
         {
           "name": "voice",
           "type": "integer",
-          "range": "1-3"
+          "range": "1-3",
+          "description": "SID voice number"
         },
         {
           "name": "waveform",
           "type": "integer",
-          "description": "16=tri, 32=saw, 64=pulse, 128=noise"
+          "description": "SID waveform bits: 16=triangle, 32=sawtooth, 64=pulse, 128=noise"
         }
-      ]
+      ],
+      "example": "WAVE 1, 32 : REM SAWTOOTH ON VOICE 1\nWAVE 2, 64 : REM PULSE ON VOICE 2"
     },
     {
       "keyword": "FETCH",
@@ -482,7 +959,21 @@
       "type": "command",
       "category": "memory",
       "syntax": "FETCH address, variable",
-      "description": "Read a byte from memory into a variable"
+      "description": "Read a byte from memory address into a numeric variable. Similar to PEEK but uses a Simons' BASIC command form.",
+      "parameters": [
+        {
+          "name": "address",
+          "type": "integer",
+          "range": "0-65535",
+          "description": "Memory address to read from"
+        },
+        {
+          "name": "variable",
+          "type": "integer",
+          "description": "Numeric variable to receive the value (0-255)"
+        }
+      ],
+      "example": "FETCH 53280, C : PRINT \"BORDER COLOR:\"; C"
     },
     {
       "keyword": "AT(",
@@ -491,8 +982,22 @@
       "type": "function",
       "category": "screen",
       "syntax": "AT(x, y)",
-      "description": "Return the character code at screen position x,y",
-      "example": "PRINT AT(10,5)"
+      "description": "Return the PETSCII character code at screen text position (x, y).",
+      "parameters": [
+        {
+          "name": "x",
+          "type": "integer",
+          "range": "0-39",
+          "description": "Screen column"
+        },
+        {
+          "name": "y",
+          "type": "integer",
+          "range": "0-24",
+          "description": "Screen row"
+        }
+      ],
+      "example": "PRINT \"HELLO\"\nPRINT AT(0, 0) : REM PRINTS 72 (='H')"
     },
     {
       "keyword": "UNTIL",
@@ -501,8 +1006,15 @@
       "type": "loop",
       "category": "flow",
       "syntax": "UNTIL condition",
-      "description": "End a REPEAT/UNTIL loop — loops until condition is true",
-      "example": "UNTIL X > 100"
+      "description": "End a REPEAT/UNTIL loop. Loop repeats while condition is false (zero). Exits when condition is true (non-zero).",
+      "parameters": [
+        {
+          "name": "condition",
+          "type": "integer",
+          "description": "Loop exits when this expression is non-zero"
+        }
+      ],
+      "example": "X = 0\nREPEAT\n  X = X + 1\nUNTIL X >= 10\nPRINT \"DONE:\"; X"
     },
     {
       "keyword": "USE",
@@ -511,7 +1023,16 @@
       "type": "command",
       "category": "system",
       "syntax": "USE n",
-      "description": "Select character set"
+      "description": "Select which character set to use for display. 0=uppercase/graphics, 1=lowercase/uppercase.",
+      "parameters": [
+        {
+          "name": "n",
+          "type": "integer",
+          "range": "0-1",
+          "description": "0=uppercase/graphics character set, 1=lowercase/uppercase character set"
+        }
+      ],
+      "example": "USE 1 : REM LOWERCASE MODE"
     },
     {
       "keyword": "GLOBAL",
@@ -520,7 +1041,14 @@
       "type": "command",
       "category": "flow",
       "syntax": "GLOBAL variable",
-      "description": "Declare a variable as global within a PROC"
+      "description": "Declare a variable as global within a PROC definition. Global variables retain their values across PROC calls and are accessible outside the PROC.",
+      "parameters": [
+        {
+          "name": "variable",
+          "description": "Variable name to declare as global"
+        }
+      ],
+      "example": "PROC MYPROC\n  GLOBAL SCORE\n  SCORE = SCORE + 10\nEND PROC"
     },
     {
       "keyword": "RESET",
@@ -529,7 +1057,8 @@
       "type": "command",
       "category": "graphics",
       "syntax": "RESET",
-      "description": "Reset hi-res graphics screen (clear)"
+      "description": "Clear the hi-res graphics screen (set all pixels to background color).",
+      "example": "HIRES 1, 0\nLINE 0, 0, 319, 199, 1\nRESET : REM CLEAR THE HI-RES SCREEN"
     },
     {
       "keyword": "PROC",
@@ -538,8 +1067,15 @@
       "type": "command",
       "category": "flow",
       "syntax": "PROC name",
-      "description": "Define a named procedure",
-      "example": "PROC MYPROC\n  PRINT \"IN PROC\"\nEND PROC"
+      "description": "Define the start of a named procedure. Procedures allow structured programming by grouping code under a name. Call with CALL or EXEC. End the procedure with END PROC.",
+      "parameters": [
+        {
+          "name": "name",
+          "type": "string",
+          "description": "Procedure name (identifier)"
+        }
+      ],
+      "example": "PROC GREET\n  PRINT \"HELLO!\"\nEND PROC\nCALL GREET"
     },
     {
       "keyword": "CALL",
@@ -548,8 +1084,15 @@
       "type": "command",
       "category": "flow",
       "syntax": "CALL name",
-      "description": "Call a named procedure",
-      "example": "CALL MYPROC"
+      "description": "Call a named procedure defined with PROC. Execution jumps to the PROC body and returns after END PROC.",
+      "parameters": [
+        {
+          "name": "name",
+          "type": "string",
+          "description": "Name of the procedure to call"
+        }
+      ],
+      "example": "CALL GREET\nCALL DRAW_SHIP"
     },
     {
       "keyword": "EXEC",
@@ -558,7 +1101,15 @@
       "type": "command",
       "category": "flow",
       "syntax": "EXEC name",
-      "description": "Execute a named procedure (alias for CALL)"
+      "description": "Execute a named procedure. Alias for CALL — both invoke a procedure defined with PROC.",
+      "parameters": [
+        {
+          "name": "name",
+          "type": "string",
+          "description": "Name of the procedure to execute"
+        }
+      ],
+      "example": "EXEC GREET"
     },
     {
       "keyword": "END PROC",
@@ -567,7 +1118,8 @@
       "type": "command",
       "category": "flow",
       "syntax": "END PROC",
-      "description": "End a PROC definition and return to caller"
+      "description": "Mark the end of a PROC definition. Returns execution to the caller.",
+      "example": "PROC MYPROC\n  PRINT \"IN PROC\"\nEND PROC"
     },
     {
       "keyword": "EXIT",
@@ -576,7 +1128,8 @@
       "type": "command",
       "category": "flow",
       "syntax": "EXIT",
-      "description": "Exit the current PROC, LOOP, or REPEAT block"
+      "description": "Immediately exit the current PROC, LOOP, or REPEAT block. Execution continues after the enclosing END PROC, END LOOP, or next statement.",
+      "example": "REPEAT\n  INPUT \"Q TO QUIT\"; A$\n  CGOTO A$ = \"Q\", 9000\nUNTIL 0 : REM INFINITE — EXIT INSIDE"
     },
     {
       "keyword": "END LOOP",
@@ -585,7 +1138,8 @@
       "type": "loop",
       "category": "flow",
       "syntax": "END LOOP",
-      "description": "End a LOOP block"
+      "description": "Mark the end of a LOOP block. Execution returns to the matching LOOP statement (infinite loop unless EXIT is used inside).",
+      "example": "X = 0\nLOOP\n  X = X + 1\n  IF X = 10 THEN:EXIT\nEND LOOP\nPRINT \"DONE:\"; X"
     },
     {
       "keyword": "ON KEY",
@@ -594,8 +1148,20 @@
       "type": "command",
       "category": "io",
       "syntax": "ON KEY string$, line",
-      "description": "Set a key handler — when key is pressed, GOTO line",
-      "example": "ON KEY \"Q\", 9000"
+      "description": "Install a key handler. When the specified key is pressed, program execution jumps to the given line number. Use DISABLE to remove the handler.",
+      "parameters": [
+        {
+          "name": "string$",
+          "type": "string",
+          "description": "Single character string — the key to trap"
+        },
+        {
+          "name": "line",
+          "type": "integer",
+          "description": "Line number to jump to when the key is pressed"
+        }
+      ],
+      "example": "ON KEY \"Q\", 9000\nGOTO 10 : REM MAIN LOOP\n9000 PRINT \"QUIT\": END"
     },
     {
       "keyword": "DISABLE",
@@ -604,7 +1170,8 @@
       "type": "command",
       "category": "io",
       "syntax": "DISABLE",
-      "description": "Disable ON KEY handler"
+      "description": "Disable the ON KEY handler installed with ON KEY.",
+      "example": "ON KEY \"Q\", 9000\nDISABLE : REM REMOVE KEY HANDLER"
     },
     {
       "keyword": "RESUME",
@@ -613,7 +1180,16 @@
       "type": "command",
       "category": "flow",
       "syntax": "RESUME [line]",
-      "description": "Resume execution after ON ERROR — optionally at a specific line"
+      "description": "Resume execution after an ON ERROR handler. Without a line number, resumes at the statement that caused the error. With a line number, resumes at that line.",
+      "parameters": [
+        {
+          "name": "line",
+          "type": "integer",
+          "description": "Line number to resume at (optional — default resumes at the error location)",
+          "optional": true
+        }
+      ],
+      "example": "ON ERROR 9000\n...\n9000 PRINT \"ERROR:\"; ERR : RESUME 10"
     },
     {
       "keyword": "LOOP",
@@ -622,7 +1198,8 @@
       "type": "loop",
       "category": "flow",
       "syntax": "LOOP",
-      "description": "Begin an infinite loop block (terminate with END LOOP or EXIT)"
+      "description": "Begin an infinite loop block. Loop runs forever until EXIT is encountered inside the body, or GOTO jumps out of it.",
+      "example": "X = 0\nLOOP\n  X = X + 1\n  IF X > 100 THEN:EXIT\nEND LOOP"
     },
     {
       "keyword": "DELAY",
@@ -631,8 +1208,16 @@
       "type": "command",
       "category": "system",
       "syntax": "DELAY n",
-      "description": "Pause execution for n jiffies (1/60 second each)",
-      "example": "DELAY 60 : REM WAIT ONE SECOND"
+      "description": "Pause program execution for n jiffies (1/60 of a second each).",
+      "parameters": [
+        {
+          "name": "n",
+          "type": "integer",
+          "range": "1-65535",
+          "description": "Number of jiffies to wait (60 = 1 second)"
+        }
+      ],
+      "example": "DELAY 60 : REM WAIT ONE SECOND\nDELAY 300 : REM WAIT 5 SECONDS"
     },
     {
       "keyword": "SECURE",
@@ -641,7 +1226,8 @@
       "type": "command",
       "category": "system",
       "syntax": "SECURE",
-      "description": "Protect program from LISTing"
+      "description": "Protect the current program from being listed with the LIST command. The program can still be RUN but its source code cannot be viewed.",
+      "example": "SECURE : REM PROTECT FROM LISTING"
     },
     {
       "keyword": "DISAPA",
@@ -650,7 +1236,16 @@
       "type": "command",
       "category": "graphics",
       "syntax": "DISAPA sprite",
-      "description": "Make a sprite disappear (disable it)"
+      "description": "Make a sprite disappear by disabling it. The sprite shape and position are preserved; use MOB SET or MMOB to re-enable.",
+      "parameters": [
+        {
+          "name": "sprite",
+          "type": "integer",
+          "range": "0-7",
+          "description": "Sprite number to disable"
+        }
+      ],
+      "example": "DISAPA 0 : REM HIDE SPRITE 0"
     },
     {
       "keyword": "CIRCLE",
@@ -659,35 +1254,38 @@
       "type": "command",
       "category": "graphics",
       "syntax": "CIRCLE x, y, rx, ry, mode",
-      "description": "Draw a circle or ellipse in hi-res mode",
+      "description": "Draw a circle or ellipse in hi-res mode. Specify equal radii for a circle; different radii for an ellipse.",
       "parameters": [
         {
           "name": "x",
           "type": "integer",
-          "description": "Centre X"
+          "range": "0-319",
+          "description": "Centre X coordinate"
         },
         {
           "name": "y",
           "type": "integer",
-          "description": "Centre Y"
+          "range": "0-199",
+          "description": "Centre Y coordinate"
         },
         {
           "name": "rx",
           "type": "integer",
-          "description": "Horizontal radius"
+          "description": "Horizontal radius in pixels"
         },
         {
           "name": "ry",
           "type": "integer",
-          "description": "Vertical radius"
+          "description": "Vertical radius in pixels"
         },
         {
           "name": "mode",
           "type": "integer",
-          "range": "0-1"
+          "range": "0-1",
+          "description": "0=erase, 1=draw"
         }
       ],
-      "example": "CIRCLE 160,100,80,50,1"
+      "example": "HIRES 1, 0\nCIRCLE 160, 100, 80, 50, 1 : REM ELLIPSE"
     },
     {
       "keyword": "ON ERROR",
@@ -696,8 +1294,15 @@
       "type": "command",
       "category": "flow",
       "syntax": "ON ERROR line",
-      "description": "Set error trap — on error, GOTO line",
-      "example": "ON ERROR 9000"
+      "description": "Install a global error trap. When any BASIC error occurs, execution jumps to the specified line. Use ERR to identify the error, and RESUME to continue. Disable with NO ERROR.",
+      "parameters": [
+        {
+          "name": "line",
+          "type": "integer",
+          "description": "Line number to jump to on any error"
+        }
+      ],
+      "example": "ON ERROR 9000\n...\n9000 PRINT \"ERR #\"; ERR : NO ERROR : END"
     },
     {
       "keyword": "NO ERROR",
@@ -706,7 +1311,8 @@
       "type": "command",
       "category": "flow",
       "syntax": "NO ERROR",
-      "description": "Disable the ON ERROR trap"
+      "description": "Disable the ON ERROR trap, restoring the default error handling behavior.",
+      "example": "ON ERROR 9000\n...\n9000 NO ERROR : PRINT \"ERROR CLEARED\""
     },
     {
       "keyword": "LOCAL",
@@ -715,16 +1321,24 @@
       "type": "command",
       "category": "flow",
       "syntax": "LOCAL variable",
-      "description": "Declare a local variable within a PROC"
+      "description": "Declare a local variable within a PROC. The variable's value is saved on entry and restored on exit, isolating it from the rest of the program.",
+      "parameters": [
+        {
+          "name": "variable",
+          "description": "Variable name to declare as local to the current PROC"
+        }
+      ],
+      "example": "PROC MYPROC\n  LOCAL I\n  FOR I = 1 TO 10: PRINT I: NEXT I\nEND PROC"
     },
     {
       "keyword": "RCOMP",
       "prefix": 100,
       "token": 70,
       "type": "function",
-      "category": "system",
+      "category": "graphics",
       "syntax": "RCOMP",
-      "description": "Read compare register (used with collision detection)"
+      "description": "Read the VIC-II sprite collision registers and return the collision status. Returns a bitmask where each bit represents a sprite involved in a collision.",
+      "example": "C = RCOMP\nIF C AND 1 THEN PRINT \"SPRITE 0 COLLIDED\""
     },
     {
       "keyword": "ELSE",
@@ -732,8 +1346,9 @@
       "token": 71,
       "type": "conditional",
       "category": "flow",
-      "syntax": "IF condition THEN action ELSE alternative",
-      "description": "Alternative branch in an IF/THEN statement"
+      "syntax": "IF condition THEN statement ELSE alternative",
+      "description": "Provides an alternative branch in an IF/THEN statement. Executes the alternative if the condition is false. Note: Simons' BASIC keywords after THEN or ELSE require a preceding colon (THEN:KEYWORD).",
+      "example": "IF X > 10 THEN PRINT \"BIG\" ELSE PRINT \"SMALL\""
     },
     {
       "keyword": "RETRACE",
@@ -742,7 +1357,8 @@
       "type": "command",
       "category": "system",
       "syntax": "RETRACE",
-      "description": "Wait for vertical retrace (raster sync)"
+      "description": "Wait for the next vertical retrace (raster sync) before continuing. Useful for smooth sprite or graphics updates — synchronizes updates to the display refresh cycle.",
+      "example": "RETRACE\nMMOB 0, X, Y : REM UPDATE SPRITE IN SYNC"
     },
     {
       "keyword": "TRACE",
@@ -751,7 +1367,16 @@
       "type": "command",
       "category": "system",
       "syntax": "TRACE mode",
-      "description": "Enable/disable program trace (prints line numbers as executed)"
+      "description": "Enable or disable program trace mode. When enabled, each line number is printed as it is executed, useful for debugging.",
+      "parameters": [
+        {
+          "name": "mode",
+          "type": "integer",
+          "range": "0-1",
+          "description": "0=disable trace, 1=enable trace"
+        }
+      ],
+      "example": "TRACE 1 : REM ENABLE TRACING\nGOSUB 1000\nTRACE 0 : REM DISABLE TRACING"
     },
     {
       "keyword": "DIR",
@@ -760,8 +1385,16 @@
       "type": "command",
       "category": "io",
       "syntax": "DIR [pattern]",
-      "description": "List disk directory",
-      "example": "DIR \"*.BAS\""
+      "description": "List the disk directory. An optional filename pattern filters the listing. The $ pattern lists all files.",
+      "parameters": [
+        {
+          "name": "pattern",
+          "type": "string",
+          "description": "Optional filename filter (e.g. \"*.BAS\"). Wildcards * and ? are supported.",
+          "optional": true
+        }
+      ],
+      "example": "DIR : REM LIST ALL FILES\nDIR \"P*\" : REM FILES STARTING WITH P"
     },
     {
       "keyword": "PAGE",
@@ -770,7 +1403,22 @@
       "type": "command",
       "category": "screen",
       "syntax": "PAGE start, end",
-      "description": "Set the scrolling page boundaries"
+      "description": "Set the screen scrolling region to the rows between start and end. Scroll operations are confined to this area.",
+      "parameters": [
+        {
+          "name": "start",
+          "type": "integer",
+          "range": "0-24",
+          "description": "First row of the scrolling region"
+        },
+        {
+          "name": "end",
+          "type": "integer",
+          "range": "0-24",
+          "description": "Last row of the scrolling region"
+        }
+      ],
+      "example": "PAGE 2, 22 : REM SCROLL ROWS 2-22 ONLY"
     },
     {
       "keyword": "DUMP",
@@ -779,7 +1427,8 @@
       "type": "command",
       "category": "system",
       "syntax": "DUMP",
-      "description": "Display all current variable values"
+      "description": "Display all current variable names and their values. Useful for debugging.",
+      "example": "X = 42 : A$ = \"HELLO\"\nDUMP : REM DISPLAY ALL VARIABLES"
     },
     {
       "keyword": "FIND",
@@ -788,8 +1437,15 @@
       "type": "command",
       "category": "editor",
       "syntax": "FIND string$",
-      "description": "Search the program listing for a string",
-      "example": "FIND \"PRINT\""
+      "description": "Search the program listing for all occurrences of the given string and display the matching lines.",
+      "parameters": [
+        {
+          "name": "string$",
+          "type": "string",
+          "description": "Text to search for in the program listing"
+        }
+      ],
+      "example": "FIND \"PRINT\"\nFIND \"GOSUB\""
     },
     {
       "keyword": "OPTION",
@@ -798,7 +1454,15 @@
       "type": "command",
       "category": "system",
       "syntax": "OPTION mode",
-      "description": "Set various Simons' BASIC options"
+      "description": "Set Simons' BASIC system options that control interpreter behavior.",
+      "parameters": [
+        {
+          "name": "mode",
+          "type": "integer",
+          "description": "Option mode value (see Simons' BASIC manual for specific option flags)"
+        }
+      ],
+      "example": "OPTION 1"
     },
     {
       "keyword": "AUTO",
@@ -806,9 +1470,23 @@
       "token": 79,
       "type": "command",
       "category": "editor",
-      "syntax": "AUTO [start [,step]]",
-      "description": "Enable automatic line numbering",
-      "example": "AUTO 100,10"
+      "syntax": "AUTO [start [, step]]",
+      "description": "Enable automatic line numbering for the editor. Each time RETURN is pressed, the next line number is generated automatically.",
+      "parameters": [
+        {
+          "name": "start",
+          "type": "integer",
+          "description": "Starting line number (default: 10)",
+          "optional": true
+        },
+        {
+          "name": "step",
+          "type": "integer",
+          "description": "Increment between line numbers (default: 10)",
+          "optional": true
+        }
+      ],
+      "example": "AUTO 100, 10 : REM START AT 100, STEP 10\nAUTO : REM USE DEFAULTS"
     },
     {
       "keyword": "OLD",
@@ -817,7 +1495,8 @@
       "type": "command",
       "category": "system",
       "syntax": "OLD",
-      "description": "Recover a program deleted with NEW"
+      "description": "Recover a program deleted with the NEW command by restoring the end-of-program pointer. Only works if no new data has overwritten BASIC memory since NEW was executed.",
+      "example": "NEW : REM CLEARS PROGRAM\nOLD : REM ATTEMPT RECOVERY"
     },
     {
       "keyword": "JOY",
@@ -826,15 +1505,16 @@
       "type": "function",
       "category": "io",
       "syntax": "JOY(port)",
-      "description": "Read joystick state for port 1 or 2",
+      "description": "Read the joystick state for port 1 or 2. Returns a bitmask where bit 4=fire, bit 3=right, bit 2=left, bit 1=down, bit 0=up.",
       "parameters": [
         {
           "name": "port",
           "type": "integer",
-          "range": "1-2"
+          "range": "1-2",
+          "description": "Joystick port number"
         }
       ],
-      "example": "IF JOY(1) AND 16 THEN PRINT \"FIRE!\""
+      "example": "J = JOY(1)\nIF J AND 16 THEN PRINT \"FIRE!\"\nIF J AND 1 THEN PRINT \"UP\"\nIF J AND 2 THEN PRINT \"DOWN\""
     },
     {
       "keyword": "MOD",
@@ -843,8 +1523,20 @@
       "type": "function",
       "category": "math",
       "syntax": "MOD(a, b)",
-      "description": "Return the modulo (remainder) of a divided by b",
-      "example": "PRINT MOD(10,3)"
+      "description": "Return the modulo (remainder) of a divided by b.",
+      "parameters": [
+        {
+          "name": "a",
+          "type": "integer",
+          "description": "Dividend"
+        },
+        {
+          "name": "b",
+          "type": "integer",
+          "description": "Divisor (must not be zero)"
+        }
+      ],
+      "example": "PRINT MOD(10, 3)\n1\nPRINT MOD(17, 5)\n2"
     },
     {
       "keyword": "DIV",
@@ -853,8 +1545,20 @@
       "type": "function",
       "category": "math",
       "syntax": "DIV(a, b)",
-      "description": "Return the integer quotient of a divided by b",
-      "example": "PRINT DIV(10,3)"
+      "description": "Return the integer quotient of a divided by b (truncates toward zero).",
+      "parameters": [
+        {
+          "name": "a",
+          "type": "integer",
+          "description": "Dividend"
+        },
+        {
+          "name": "b",
+          "type": "integer",
+          "description": "Divisor (must not be zero)"
+        }
+      ],
+      "example": "PRINT DIV(10, 3)\n3\nPRINT DIV(17, 5)\n3"
     },
     {
       "keyword": "DUP",
@@ -863,7 +1567,8 @@
       "type": "command",
       "category": "screen",
       "syntax": "DUP",
-      "description": "Duplicate the current screen line"
+      "description": "Duplicate the current screen line — inserts a copy of the current cursor line below it.",
+      "example": "PRINT \"LINE TO COPY\"\nDUP : REM DUPLICATES THE LINE"
     },
     {
       "keyword": "INKEY",
@@ -872,8 +1577,8 @@
       "type": "function",
       "category": "io",
       "syntax": "INKEY",
-      "description": "Read a key from the keyboard buffer (non-blocking, returns empty string if no key)",
-      "example": "K$ = INKEY : IF K$ <> \"\" THEN ..."
+      "description": "Read one character from the keyboard buffer without waiting. Returns an empty string if no key is waiting. Unlike GET, INKEY can be used in an expression.",
+      "example": "10 K$ = INKEY\nIF K$ = \"\" THEN GOTO 10 : REM WAIT FOR KEY\nIF K$ = \"Q\" THEN END"
     },
     {
       "keyword": "INST",
@@ -882,8 +1587,20 @@
       "type": "function",
       "category": "string",
       "syntax": "INST(string$, search$)",
-      "description": "Return the position of search$ in string$ (1-based), or 0 if not found",
-      "example": "PRINT INST(\"HELLO\",\"LL\")"
+      "description": "Search for search$ inside string$. Returns the 1-based position of the first occurrence, or 0 if not found.",
+      "parameters": [
+        {
+          "name": "string$",
+          "type": "string",
+          "description": "String to search in"
+        },
+        {
+          "name": "search$",
+          "type": "string",
+          "description": "Substring to search for"
+        }
+      ],
+      "example": "PRINT INST(\"HELLO WORLD\", \"WORLD\")\n7\nPRINT INST(\"HELLO\", \"XYZ\")\n0"
     },
     {
       "keyword": "TEST",
@@ -892,8 +1609,22 @@
       "type": "function",
       "category": "graphics",
       "syntax": "TEST(x, y)",
-      "description": "Return the pixel state at hi-res position x,y (0=off, 1=on)",
-      "example": "IF TEST(160,100) THEN PRINT \"PIXEL SET\""
+      "description": "Return the state of the pixel at hi-res position (x, y). Returns 0 if the pixel is off (background), 1 if on (foreground).",
+      "parameters": [
+        {
+          "name": "x",
+          "type": "integer",
+          "range": "0-319",
+          "description": "X pixel coordinate"
+        },
+        {
+          "name": "y",
+          "type": "integer",
+          "range": "0-199",
+          "description": "Y pixel coordinate"
+        }
+      ],
+      "example": "HIRES 1, 0\nPLOT 100, 50, 1\nIF TEST(100, 50) THEN PRINT \"PIXEL IS SET\""
     },
     {
       "keyword": "LIN",
@@ -902,7 +1633,16 @@
       "type": "function",
       "category": "screen",
       "syntax": "LIN(n)",
-      "description": "Return a string of n newline characters"
+      "description": "Return a string of n newline (carriage return) characters.",
+      "parameters": [
+        {
+          "name": "n",
+          "type": "integer",
+          "range": "1-255",
+          "description": "Number of newline characters to generate"
+        }
+      ],
+      "example": "PRINT LIN(3) : REM SKIP 3 LINES\nPRINT \"AFTER BLANK LINES\""
     },
     {
       "keyword": "EXOR",
@@ -911,8 +1651,20 @@
       "type": "function",
       "category": "math",
       "syntax": "EXOR(a, b)",
-      "description": "Bitwise exclusive OR of a and b",
-      "example": "PRINT EXOR(255, 15)"
+      "description": "Return the bitwise exclusive OR (XOR) of integers a and b.",
+      "parameters": [
+        {
+          "name": "a",
+          "type": "integer",
+          "description": "First operand"
+        },
+        {
+          "name": "b",
+          "type": "integer",
+          "description": "Second operand"
+        }
+      ],
+      "example": "PRINT EXOR(255, 15)\n240\nPRINT EXOR(170, 85)\n255"
     },
     {
       "keyword": "INSERT",
@@ -921,7 +1673,26 @@
       "type": "command",
       "category": "string",
       "syntax": "INSERT string$, pos, insert$",
-      "description": "Insert insert$ into string$ at position pos"
+      "description": "Insert insert$ into string$ at character position pos (1-based). The characters from pos onwards are shifted right.",
+      "parameters": [
+        {
+          "name": "string$",
+          "type": "string",
+          "description": "Target string variable to modify in place"
+        },
+        {
+          "name": "pos",
+          "type": "integer",
+          "range": "1-255",
+          "description": "Position to insert at (1=before first character)"
+        },
+        {
+          "name": "insert$",
+          "type": "string",
+          "description": "String to insert"
+        }
+      ],
+      "example": "A$ = \"HELO\"\nINSERT A$, 3, \"L\"\nPRINT A$\nHELLO"
     },
     {
       "keyword": "POT",
@@ -930,14 +1701,16 @@
       "type": "function",
       "category": "io",
       "syntax": "POT(n)",
-      "description": "Read paddle/potentiometer value for port n",
+      "description": "Read the current value of a paddle (potentiometer) controller. Returns 0-255.",
       "parameters": [
         {
           "name": "n",
           "type": "integer",
-          "range": "1-4"
+          "range": "1-4",
+          "description": "Paddle number: 1=port1 paddle A, 2=port1 paddle B, 3=port2 paddle A, 4=port2 paddle B"
         }
-      ]
+      ],
+      "example": "P = POT(1) : PRINT \"PADDLE:\"; P"
     },
     {
       "keyword": "PENX",
@@ -946,7 +1719,8 @@
       "type": "function",
       "category": "io",
       "syntax": "PENX",
-      "description": "Return the lightpen X position"
+      "description": "Return the X (horizontal) raster position where the lightpen last triggered.",
+      "example": "X = PENX : Y = PENY\nPRINT \"LIGHTPEN AT\"; X; \",\"; Y"
     },
     {
       "keyword": "PENY",
@@ -955,7 +1729,8 @@
       "type": "function",
       "category": "io",
       "syntax": "PENY",
-      "description": "Return the lightpen Y position"
+      "description": "Return the Y (vertical) raster position where the lightpen last triggered.",
+      "example": "X = PENX : Y = PENY\nPRINT \"LIGHTPEN AT\"; X; \",\"; Y"
     },
     {
       "keyword": "SOUND",
@@ -964,25 +1739,28 @@
       "type": "command",
       "category": "sound",
       "syntax": "SOUND voice, frequency, duration",
-      "description": "Generate a sound on a SID voice",
+      "description": "Generate a sound on a SID voice at the given raw frequency for the given duration in jiffies. Unlike PLAY, SOUND takes a raw SID frequency value (0-65535) rather than a note name.",
       "parameters": [
         {
           "name": "voice",
           "type": "integer",
-          "range": "1-3"
+          "range": "1-3",
+          "description": "SID voice number"
         },
         {
           "name": "frequency",
           "type": "integer",
-          "range": "0-65535"
+          "range": "0-65535",
+          "description": "Raw SID frequency register value"
         },
         {
           "name": "duration",
           "type": "integer",
-          "range": "0-255"
+          "range": "0-255",
+          "description": "Duration in jiffies (1/60 sec each)"
         }
       ],
-      "example": "SOUND 1,2000,30"
+      "example": "ENVELOPE 1, 0, 9, 0, 0, 32\nSOUND 1, 4400, 30 : REM APPROX MIDDLE A"
     },
     {
       "keyword": "GRAPHICS",
@@ -991,7 +1769,16 @@
       "type": "command",
       "category": "graphics",
       "syntax": "GRAPHICS mode",
-      "description": "Set graphics mode (0=text, 1=hi-res, 2=multicolor)"
+      "description": "Set the graphics display mode. Alias for HIRES/NRM with mode selection: 0=return to text, 1=hi-res, 2=multicolor.",
+      "parameters": [
+        {
+          "name": "mode",
+          "type": "integer",
+          "range": "0-2",
+          "description": "0=text mode, 1=hi-resolution, 2=multicolor hi-res"
+        }
+      ],
+      "example": "GRAPHICS 1 : REM ENTER HI-RES\nGRAPHICS 0 : REM RETURN TO TEXT"
     },
     {
       "keyword": "DESIGN",
@@ -1000,7 +1787,28 @@
       "type": "command",
       "category": "graphics",
       "syntax": "DESIGN sprite, row, data",
-      "description": "Define sprite shape data"
+      "description": "Define a row of pixel data for a sprite shape. Used to build sprite bitmaps programmatically.",
+      "parameters": [
+        {
+          "name": "sprite",
+          "type": "integer",
+          "range": "0-7",
+          "description": "Sprite number to define"
+        },
+        {
+          "name": "row",
+          "type": "integer",
+          "range": "0-20",
+          "description": "Row within the sprite (sprite is 21 rows tall)"
+        },
+        {
+          "name": "data",
+          "type": "integer",
+          "range": "0-16777215",
+          "description": "24-bit value encoding 24 pixels (3 bytes) for this row"
+        }
+      ],
+      "example": "DESIGN 0, 10, 16711680 : REM SET ROW 10 OF SPRITE 0"
     },
     {
       "keyword": "RLOCMOB",
@@ -1009,20 +1817,22 @@
       "type": "function",
       "category": "graphics",
       "syntax": "RLOCMOB(sprite, axis)",
-      "description": "Read sprite location. Axis: 0=X, 1=Y",
+      "description": "Read the current screen position of a sprite. Returns X or Y coordinate.",
       "parameters": [
         {
           "name": "sprite",
           "type": "integer",
-          "range": "0-7"
+          "range": "0-7",
+          "description": "Sprite number"
         },
         {
           "name": "axis",
           "type": "integer",
           "range": "0-1",
-          "description": "0=X, 1=Y"
+          "description": "0=X position, 1=Y position"
         }
-      ]
+      ],
+      "example": "X = RLOCMOB(0, 0)\nY = RLOCMOB(0, 1)\nPRINT \"SPRITE 0 AT\"; X; \",\"; Y"
     },
     {
       "keyword": "CMOB",
@@ -1031,7 +1841,16 @@
       "type": "function",
       "category": "graphics",
       "syntax": "CMOB(sprite)",
-      "description": "Check sprite collision — returns bitmask of colliding sprites"
+      "description": "Check sprite-to-sprite collision for the given sprite. Returns a bitmask where each bit represents whether that sprite has collided with the given sprite.",
+      "parameters": [
+        {
+          "name": "sprite",
+          "type": "integer",
+          "range": "0-7",
+          "description": "Sprite number to check collisions for"
+        }
+      ],
+      "example": "IF CMOB(0) AND 2 THEN PRINT \"SPRITE 0 HIT SPRITE 1\""
     },
     {
       "keyword": "BCKGNDS",
@@ -1040,7 +1859,16 @@
       "type": "command",
       "category": "graphics",
       "syntax": "BCKGNDS color",
-      "description": "Set the background color for hi-res graphics"
+      "description": "Set the background color for the hi-res graphics screen.",
+      "parameters": [
+        {
+          "name": "color",
+          "type": "integer",
+          "range": "0-15",
+          "description": "Background color index"
+        }
+      ],
+      "example": "HIRES 1, 0\nBCKGNDS 6 : REM BLUE BACKGROUND"
     },
     {
       "keyword": "PAUSE",
@@ -1049,7 +1877,16 @@
       "type": "command",
       "category": "system",
       "syntax": "PAUSE n",
-      "description": "Wait for n jiffies or until a key is pressed"
+      "description": "Pause execution for n jiffies, or until a key is pressed (whichever comes first).",
+      "parameters": [
+        {
+          "name": "n",
+          "type": "integer",
+          "range": "0-65535",
+          "description": "Maximum wait time in jiffies (0=wait for key only)"
+        }
+      ],
+      "example": "PAUSE 120 : REM WAIT UP TO 2 SECONDS OR A KEY\nPAUSE 0 : REM WAIT INDEFINITELY FOR A KEY"
     },
     {
       "keyword": "NRM",
@@ -1058,7 +1895,8 @@
       "type": "command",
       "category": "system",
       "syntax": "NRM",
-      "description": "Restore normal screen mode (exit hi-res)"
+      "description": "Return to normal text mode, exiting hi-res graphics. Equivalent to GRAPHICS 0 or HIRES 0, 0.",
+      "example": "HIRES 1, 0\nLINE 0, 0, 319, 199, 1\nPAUSE 180\nNRM : REM BACK TO TEXT"
     },
     {
       "keyword": "MOB OFF",
@@ -1067,7 +1905,16 @@
       "type": "command",
       "category": "graphics",
       "syntax": "MOB OFF sprite",
-      "description": "Disable a sprite (make it invisible)"
+      "description": "Disable a specific sprite, making it invisible. The sprite's data is not erased.",
+      "parameters": [
+        {
+          "name": "sprite",
+          "type": "integer",
+          "range": "0-7",
+          "description": "Sprite number to disable"
+        }
+      ],
+      "example": "MOB OFF 0 : REM DISABLE SPRITE 0\nMOB OFF 3 : REM DISABLE SPRITE 3"
     },
     {
       "keyword": "OFF",
@@ -1076,7 +1923,8 @@
       "type": "command",
       "category": "system",
       "syntax": "OFF",
-      "description": "Disable all sprites"
+      "description": "Disable all sprites simultaneously.",
+      "example": "OFF : REM TURN OFF ALL 8 SPRITES AT ONCE"
     },
     {
       "keyword": "ANGL",
@@ -1085,7 +1933,30 @@
       "type": "function",
       "category": "math",
       "syntax": "ANGL(x1, y1, x2, y2)",
-      "description": "Return the angle in degrees between two points"
+      "description": "Return the angle in degrees between the vector from (x1,y1) to (x2,y2) and the positive X axis.",
+      "parameters": [
+        {
+          "name": "x1",
+          "type": "integer",
+          "description": "Starting X coordinate"
+        },
+        {
+          "name": "y1",
+          "type": "integer",
+          "description": "Starting Y coordinate"
+        },
+        {
+          "name": "x2",
+          "type": "integer",
+          "description": "Ending X coordinate"
+        },
+        {
+          "name": "y2",
+          "type": "integer",
+          "description": "Ending Y coordinate"
+        }
+      ],
+      "example": "A = ANGL(0, 0, 10, 10)\nPRINT \"ANGLE:\"; A : REM PRINTS ~45"
     },
     {
       "keyword": "ARC",
@@ -1094,7 +1965,43 @@
       "type": "command",
       "category": "graphics",
       "syntax": "ARC x, y, r, start, end, mode",
-      "description": "Draw an arc in hi-res mode"
+      "description": "Draw an arc (portion of a circle) in hi-res mode. Start and end angles are in degrees.",
+      "parameters": [
+        {
+          "name": "x",
+          "type": "integer",
+          "description": "Centre X coordinate"
+        },
+        {
+          "name": "y",
+          "type": "integer",
+          "description": "Centre Y coordinate"
+        },
+        {
+          "name": "r",
+          "type": "integer",
+          "description": "Radius in pixels"
+        },
+        {
+          "name": "start",
+          "type": "integer",
+          "range": "0-360",
+          "description": "Starting angle in degrees"
+        },
+        {
+          "name": "end",
+          "type": "integer",
+          "range": "0-360",
+          "description": "Ending angle in degrees"
+        },
+        {
+          "name": "mode",
+          "type": "integer",
+          "range": "0-1",
+          "description": "0=erase, 1=draw"
+        }
+      ],
+      "example": "HIRES 1, 0\nARC 160, 100, 60, 0, 180, 1 : REM UPPER SEMICIRCLE"
     },
     {
       "keyword": "COLD",
@@ -1103,7 +2010,8 @@
       "type": "command",
       "category": "system",
       "syntax": "COLD",
-      "description": "Cold restart — full reset of Simons' BASIC"
+      "description": "Perform a cold restart of Simons' BASIC — reinitializes the interpreter and clears all program and variable memory.",
+      "example": "COLD : REM FULL RESET"
     },
     {
       "keyword": "SCRSV",
@@ -1112,7 +2020,8 @@
       "type": "command",
       "category": "screen",
       "syntax": "SCRSV",
-      "description": "Save the current screen contents to memory"
+      "description": "Save the current screen contents to an internal memory buffer.",
+      "example": "SCRSV : REM SAVE SCREEN\nPRINT \"TEMPORARY MESSAGE\"\nDELAY 180\nSCRLD : REM RESTORE SCREEN"
     },
     {
       "keyword": "SCRLD",
@@ -1121,7 +2030,8 @@
       "type": "command",
       "category": "screen",
       "syntax": "SCRLD",
-      "description": "Restore a previously saved screen"
+      "description": "Restore the screen contents from the buffer saved with SCRSV.",
+      "example": "SCRSV\nCHAR 10, 12, \"LOADING...\"\nDELAY 300\nSCRLD : REM RESTORE ORIGINAL SCREEN"
     },
     {
       "keyword": "TEXT",
@@ -1130,7 +2040,8 @@
       "type": "command",
       "category": "screen",
       "syntax": "TEXT",
-      "description": "Switch to text mode from hi-res"
+      "description": "Switch from hi-res graphics mode back to normal text mode. Alias for NRM.",
+      "example": "HIRES 1, 0\nLINE 0, 100, 319, 100, 1\nDELAY 120\nTEXT : REM BACK TO TEXT MODE"
     },
     {
       "keyword": "CSET",
@@ -1139,7 +2050,16 @@
       "type": "command",
       "category": "screen",
       "syntax": "CSET n",
-      "description": "Select character set (0=uppercase/graphics, 1=lower/upper)"
+      "description": "Select the active character set. 0=uppercase/graphics (the C64 default), 1=lowercase/uppercase.",
+      "parameters": [
+        {
+          "name": "n",
+          "type": "integer",
+          "range": "0-1",
+          "description": "0=uppercase/graphics character set, 1=lowercase/uppercase character set"
+        }
+      ],
+      "example": "CSET 1 : REM LOWERCASE MODE\nPRINT \"Hello World\"\nCSET 0 : REM BACK TO UPPERCASE"
     },
     {
       "keyword": "VOL",
@@ -1148,14 +2068,16 @@
       "type": "command",
       "category": "sound",
       "syntax": "VOL n",
-      "description": "Set SID master volume (0-15)",
+      "description": "Set the SID chip master volume (affects all three voices).",
       "parameters": [
         {
           "name": "n",
           "type": "integer",
-          "range": "0-15"
+          "range": "0-15",
+          "description": "Master volume level (0=silence, 15=maximum)"
         }
-      ]
+      ],
+      "example": "VOL 15 : REM FULL VOLUME\nENVELOPE 1, 0, 9, 0, 0, 32\nPLAY 1, 0, 4, 60"
     },
     {
       "keyword": "DISK",
@@ -1164,8 +2086,15 @@
       "type": "command",
       "category": "io",
       "syntax": "DISK command$",
-      "description": "Send a command string directly to the disk drive",
-      "example": "DISK \"I0\""
+      "description": "Send a command string directly to the disk drive via the command channel.",
+      "parameters": [
+        {
+          "name": "command$",
+          "type": "string",
+          "description": "DOS command string (e.g. \"I0\" to initialize, \"S:FILE\" to scratch)"
+        }
+      ],
+      "example": "DISK \"I0\" : REM INITIALIZE DRIVE\nDISK \"S:OLDFILE\" : REM SCRATCH FILE"
     },
     {
       "keyword": "HRDCPY",
@@ -1174,7 +2103,8 @@
       "type": "command",
       "category": "io",
       "syntax": "HRDCPY",
-      "description": "Print a hardcopy of the screen to a printer"
+      "description": "Print a hardcopy of the current screen contents to the printer on device 4.",
+      "example": "HRDCPY : REM PRINT SCREEN TO PRINTER"
     },
     {
       "keyword": "KEY",
@@ -1183,8 +2113,21 @@
       "type": "command",
       "category": "system",
       "syntax": "KEY n, string$",
-      "description": "Assign a string to a function key",
-      "example": "KEY 1,\"RUN\""
+      "description": "Assign a string to function key n. When that function key is pressed, the string is typed as keyboard input.",
+      "parameters": [
+        {
+          "name": "n",
+          "type": "integer",
+          "range": "1-8",
+          "description": "Function key number (1-8)"
+        },
+        {
+          "name": "string$",
+          "type": "string",
+          "description": "String to type when the key is pressed"
+        }
+      ],
+      "example": "KEY 1, \"RUN\"\nKEY 2, \"LIST\"\nKEY 8, \"HIRES 0,0\""
     },
     {
       "keyword": "PAINT",
@@ -1193,7 +2136,28 @@
       "type": "command",
       "category": "graphics",
       "syntax": "PAINT x, y, mode",
-      "description": "Flood fill an area in hi-res mode starting at x,y"
+      "description": "Paint (flood fill) an area in hi-res mode starting at (x, y), filling adjacent pixels of the same state. PAINT fills from the seed point outward, stopping at pixels with a different state. See also FILL, which may differ in boundary detection behavior.",
+      "parameters": [
+        {
+          "name": "x",
+          "type": "integer",
+          "range": "0-319",
+          "description": "Seed X coordinate — fill starts here"
+        },
+        {
+          "name": "y",
+          "type": "integer",
+          "range": "0-199",
+          "description": "Seed Y coordinate"
+        },
+        {
+          "name": "mode",
+          "type": "integer",
+          "range": "0-1",
+          "description": "0=paint with background, 1=paint with foreground"
+        }
+      ],
+      "example": "HIRES 1, 0\nREC 50, 50, 200, 150, 1\nPAINT 125, 100, 1 : REM FILL INSIDE RECTANGLE"
     },
     {
       "keyword": "LOW COL",
@@ -1202,7 +2166,16 @@
       "type": "command",
       "category": "graphics",
       "syntax": "LOW COL color",
-      "description": "Set lo-resolution color"
+      "description": "Set the lo-resolution (background) color used in hi-res mode.",
+      "parameters": [
+        {
+          "name": "color",
+          "type": "integer",
+          "range": "0-15",
+          "description": "Lo-res background color index"
+        }
+      ],
+      "example": "HIRES 1, 0\nLOW COL 6 : REM BLUE LO-RES BACKGROUND"
     },
     {
       "keyword": "COPY",
@@ -1211,7 +2184,20 @@
       "type": "command",
       "category": "io",
       "syntax": "COPY \"source\" TO \"dest\"",
-      "description": "Copy a file on disk"
+      "description": "Copy a file from source to destination on the same disk.",
+      "parameters": [
+        {
+          "name": "source",
+          "type": "string",
+          "description": "Source filename"
+        },
+        {
+          "name": "dest",
+          "type": "string",
+          "description": "Destination filename"
+        }
+      ],
+      "example": "COPY \"PROG\" TO \"BACKUP\""
     },
     {
       "keyword": "MERGE",
@@ -1220,8 +2206,15 @@
       "type": "command",
       "category": "io",
       "syntax": "MERGE \"filename\"",
-      "description": "Merge a BASIC program from disk with the current program",
-      "example": "MERGE \"LIBRARY\""
+      "description": "Load a BASIC program from disk and merge it with the current program in memory. Lines in the loaded program replace any existing lines with the same number.",
+      "parameters": [
+        {
+          "name": "filename",
+          "type": "string",
+          "description": "Name of the file to merge"
+        }
+      ],
+      "example": "MERGE \"LIBRARY\" : REM ADD SUBROUTINES TO PROGRAM"
     },
     {
       "keyword": "RENUMBER",
@@ -1229,9 +2222,23 @@
       "token": 121,
       "type": "command",
       "category": "editor",
-      "syntax": "RENUMBER [start [,step]]",
-      "description": "Renumber program lines",
-      "example": "RENUMBER 100,10"
+      "syntax": "RENUMBER [start [, step]]",
+      "description": "Renumber all BASIC program lines and update all GOTO, GOSUB, and THEN references automatically.",
+      "parameters": [
+        {
+          "name": "start",
+          "type": "integer",
+          "description": "New starting line number (default: 10)",
+          "optional": true
+        },
+        {
+          "name": "step",
+          "type": "integer",
+          "description": "Line number increment (default: 10)",
+          "optional": true
+        }
+      ],
+      "example": "RENUMBER 100, 10 : REM START AT 100, STEP 10\nRENUMBER : REM USE DEFAULTS"
     },
     {
       "keyword": "MEM",
@@ -1240,7 +2247,8 @@
       "type": "function",
       "category": "system",
       "syntax": "MEM",
-      "description": "Return the amount of free BASIC memory"
+      "description": "Return the amount of free BASIC memory in bytes.",
+      "example": "PRINT \"FREE:\"; MEM; \" BYTES\""
     },
     {
       "keyword": "DETECT",
@@ -1249,7 +2257,16 @@
       "type": "function",
       "category": "graphics",
       "syntax": "DETECT(sprite)",
-      "description": "Detect sprite-to-background collision for given sprite"
+      "description": "Check if the given sprite has collided with the background (non-sprite graphics). Returns non-zero if a collision has occurred.",
+      "parameters": [
+        {
+          "name": "sprite",
+          "type": "integer",
+          "range": "0-7",
+          "description": "Sprite number to check for background collision"
+        }
+      ],
+      "example": "IF DETECT(0) THEN PRINT \"HIT BACKGROUND!\""
     },
     {
       "keyword": "CHECK",
@@ -1258,7 +2275,22 @@
       "type": "function",
       "category": "graphics",
       "syntax": "CHECK(sprite1, sprite2)",
-      "description": "Check if two sprites are colliding"
+      "description": "Check if two specific sprites are colliding with each other. Returns non-zero if they are overlapping.",
+      "parameters": [
+        {
+          "name": "sprite1",
+          "type": "integer",
+          "range": "0-7",
+          "description": "First sprite number"
+        },
+        {
+          "name": "sprite2",
+          "type": "integer",
+          "range": "0-7",
+          "description": "Second sprite number"
+        }
+      ],
+      "example": "IF CHECK(0, 1) THEN PRINT \"SPRITE 0 AND 1 COLLIDED!\""
     },
     {
       "keyword": "DISPLAY",
@@ -1267,7 +2299,16 @@
       "type": "command",
       "category": "screen",
       "syntax": "DISPLAY mode",
-      "description": "Enable or disable the screen display"
+      "description": "Enable or disable the screen display.",
+      "parameters": [
+        {
+          "name": "mode",
+          "type": "integer",
+          "range": "0-1",
+          "description": "0=disable display (blank screen), 1=enable display"
+        }
+      ],
+      "example": "DISPLAY 0 : REM BLANK SCREEN FOR SMOOTH UPDATE\nMOVE 1024, 1025, 999 : REM UPDATE SCREEN\nDISPLAY 1 : REM SHOW RESULT"
     },
     {
       "keyword": "ERR",
@@ -1276,7 +2317,8 @@
       "type": "function",
       "category": "system",
       "syntax": "ERR",
-      "description": "Return the last error number (used with ON ERROR)"
+      "description": "Return the number of the last BASIC error that triggered the ON ERROR handler.",
+      "example": "ON ERROR 9000\n...\n9000 PRINT \"ERROR CODE:\"; ERR : RESUME"
     },
     {
       "keyword": "OUT",
@@ -1285,7 +2327,22 @@
       "type": "command",
       "category": "io",
       "syntax": "OUT port, value",
-      "description": "Write a value to a hardware I/O port"
+      "description": "Write a byte value to a hardware I/O port address.",
+      "parameters": [
+        {
+          "name": "port",
+          "type": "integer",
+          "range": "0-65535",
+          "description": "I/O port address"
+        },
+        {
+          "name": "value",
+          "type": "integer",
+          "range": "0-255",
+          "description": "Byte value to write"
+        }
+      ],
+      "example": "OUT 53280, 0 : REM SET BORDER TO BLACK"
     }
   ]
 }
