@@ -1,19 +1,20 @@
 {
   "name": "Commodore 128 BASIC 7.0",
   "version": "7.0",
-  "author": "Commodore Business Machines",
-  "description": "BASIC 7.0 as found in the Commodore 128. Extends BASIC V2 with structured flow control (DO/LOOP/EXIT), disk commands, sprite control, music, hi-res graphics, and more. Uses two prefix bytes: $CE for function tokens and $FE for command tokens.",
+  "author": "Thomas Knox",
+  "description": "BASIC 7.0 as found in the Commodore 128. Extends BASIC 2.0 with structured flow control (DO/LOOP/EXIT/BEGIN/BEND), disk commands (DOPEN/DCLOSE/DLOAD/DSAVE etc.), VIC-II sprite control, SID music and sound, hires and multicolor bitmap graphics, and C128-specific features (FAST/SLOW, bank switching, 80-column VDC support via COLOR/WINDOW). Uses two prefix bytes: $CE for extended functions and $FE for extended commands. All graphics commands target the VIC-II (40-column side). Note: FE token slots 28-30, 32, 34, and 36 appear unused in the ROM dispatch table.",
   "url": "https://www.c64-wiki.com/wiki/BASIC_7.0",
   "extendsBasicV2": true,
   "loadAddress": 7169,
+  "requiresSYSStub": true,
   "tokenPrefixes": [
     {
       "byte": 206,
-      "description": "CE-prefix: BASIC 7.0 extended functions"
+      "description": "CE-prefix: BASIC 7.0 extended functions (POT, BUMP, PEN, RSPxxx, XOR, RWINDOW, POINTER)"
     },
     {
       "byte": 254,
-      "description": "FE-prefix: BASIC 7.0 extended commands"
+      "description": "FE-prefix: BASIC 7.0 extended commands (BANK, PLAY, SPRITE, disk ops, memory banking, etc.)"
     }
   ],
   "keywords": [
@@ -23,15 +24,33 @@
       "type": "function",
       "category": "graphics",
       "syntax": "RGR(n)",
-      "description": "Read graphics register n"
+      "description": "Returns the current graphics mode as set by GRAPHIC. Pass n=0. Return values: 0=text, 1=hires, 2=split hires, 3=multicolor, 4=split multicolor.",
+      "parameters": [
+        {
+          "name": "n",
+          "type": "integer",
+          "range": "0",
+          "description": "Must be 0"
+        }
+      ],
+      "example": "IF RGR(0) = 0 THEN PRINT \"TEXT MODE\""
     },
     {
       "keyword": "RCLR",
       "token": 205,
       "type": "function",
       "category": "graphics",
-      "syntax": "RCLR(n)",
-      "description": "Read color register n"
+      "syntax": "RCLR(source)",
+      "description": "Returns the current color value for the specified color source as set by COLOR. Sources: 0=background, 1=foreground, 2=multi-color 1, 3=multi-color 2, 4=border.",
+      "parameters": [
+        {
+          "name": "source",
+          "type": "integer",
+          "range": "0-4",
+          "description": "0=background, 1=foreground, 2=multi-color 1, 3=multi-color 2, 4=border"
+        }
+      ],
+      "example": "PRINT RCLR(0) : REM PRINT CURRENT BACKGROUND COLOR"
     },
     {
       "keyword": "JOY",
@@ -39,15 +58,16 @@
       "type": "function",
       "category": "io",
       "syntax": "JOY(n)",
-      "description": "Read joystick port n (1 or 2)",
+      "description": "Returns the current state of joystick port n as a bitmask. Bit 0=up, bit 1=down, bit 2=left, bit 3=right, bit 4=fire button.",
       "parameters": [
         {
           "name": "n",
           "type": "integer",
-          "range": "1-2"
+          "range": "1-2",
+          "description": "Joystick port number"
         }
       ],
-      "example": "IF JOY(1) AND 16 THEN PRINT \"FIRE!\""
+      "example": "J = JOY(1) : IF J AND 16 THEN PRINT \"FIRE!\""
     },
     {
       "keyword": "RDOT",
@@ -55,7 +75,22 @@
       "type": "function",
       "category": "graphics",
       "syntax": "RDOT(x, y)",
-      "description": "Read the pixel value at graphics position x,y"
+      "description": "Returns the color index of the pixel at graphics coordinates (x, y) on the current bitmap screen. Returns 0 if the pixel is the background color.",
+      "parameters": [
+        {
+          "name": "x",
+          "type": "integer",
+          "range": "0-319",
+          "description": "Horizontal pixel coordinate (0-319 in hires, 0-159 in multicolor)"
+        },
+        {
+          "name": "y",
+          "type": "integer",
+          "range": "0-199",
+          "description": "Vertical pixel coordinate"
+        }
+      ],
+      "example": "GRAPHIC 1,1 : DRAW ,100,100\nPRINT RDOT(100,100) : REM RETURNS 1"
     },
     {
       "keyword": "DEC",
@@ -63,8 +98,15 @@
       "type": "function",
       "category": "math",
       "syntax": "DEC(hex$)",
-      "description": "Convert a hexadecimal string to a decimal number",
-      "example": "PRINT DEC(\"FF\")"
+      "description": "Converts a hexadecimal string to a decimal number. The string may be 1-4 hex digits (0-9, A-F, uppercase or lowercase).",
+      "parameters": [
+        {
+          "name": "hex$",
+          "type": "string",
+          "description": "1-4 character hex string"
+        }
+      ],
+      "example": "PRINT DEC(\"FF\")\n255\nPRINT DEC(\"1000\")\n4096"
     },
     {
       "keyword": "HEX$",
@@ -72,8 +114,15 @@
       "type": "function",
       "category": "string",
       "syntax": "HEX$(n)",
-      "description": "Convert a decimal number to a hexadecimal string",
-      "example": "PRINT HEX$(255)"
+      "description": "Returns a 4-character uppercase hexadecimal string representation of the integer part of n.",
+      "parameters": [
+        {
+          "name": "n",
+          "type": "integer",
+          "range": "0-65535"
+        }
+      ],
+      "example": "PRINT HEX$(255)\nFF\nPRINT HEX$(53248)\nD000"
     },
     {
       "keyword": "ERR$",
@@ -81,16 +130,43 @@
       "type": "function",
       "category": "system",
       "syntax": "ERR$(n)",
-      "description": "Return the error message string for error number n"
+      "description": "Returns the text description of BASIC error number n. Inside a TRAP handler, the reserved variable ER holds the current error number and EL holds the line where it occurred.",
+      "parameters": [
+        {
+          "name": "n",
+          "type": "integer",
+          "range": "1-41",
+          "description": "BASIC error number"
+        }
+      ],
+      "example": "10 TRAP 1000\n20 PRINT 1/0 : REM PROVOKE ERROR\n30 END\n1000 PRINT ERR$(ER); \" IN LINE\"; EL\n1010 RESUME NEXT"
     },
     {
       "keyword": "INSTR",
       "token": 212,
       "type": "function",
       "category": "string",
-      "syntax": "INSTR(string$, search$)",
-      "description": "Return position of search$ within string$ (1-based), or 0 if not found",
-      "example": "PRINT INSTR(\"HELLO\",\"LL\")"
+      "syntax": "INSTR(string$, search$ [,start])",
+      "description": "Returns the 1-based position of the first occurrence of search$ within string$. Returns 0 if not found. The optional start parameter sets the character position to begin searching.",
+      "parameters": [
+        {
+          "name": "string$",
+          "type": "string",
+          "description": "The string to search in"
+        },
+        {
+          "name": "search$",
+          "type": "string",
+          "description": "The substring to find"
+        },
+        {
+          "name": "start",
+          "type": "integer",
+          "description": "Starting character position (1-based). Defaults to 1.",
+          "optional": true
+        }
+      ],
+      "example": "PRINT INSTR(\"HELLO WORLD\",\"WORLD\")\n7"
     },
     {
       "keyword": "ELSE",
@@ -98,24 +174,42 @@
       "type": "conditional",
       "category": "flow",
       "syntax": "IF condition THEN action ELSE alternative",
-      "description": "Alternative branch in an IF/THEN statement"
+      "description": "Provides an alternative branch for IF/THEN. In BASIC 7.0, ELSE is a proper token. Everything after ELSE on the same line runs when the condition is false.",
+      "example": "10 IF X>10 THEN PRINT \"BIG\" ELSE PRINT \"SMALL\""
     },
     {
       "keyword": "RESUME",
       "token": 214,
       "type": "command",
       "category": "flow",
-      "syntax": "RESUME [line]",
-      "description": "Resume execution after a TRAP error handler"
+      "syntax": "RESUME [line | NEXT]",
+      "description": "Resumes normal execution after handling an error in a TRAP routine. RESUME alone re-executes the statement that caused the error. RESUME NEXT continues with the statement after the error. RESUME line jumps to the specified line.",
+      "parameters": [
+        {
+          "name": "line",
+          "type": "integer",
+          "description": "Line number to jump to after handling the error",
+          "optional": true
+        }
+      ],
+      "example": "10 TRAP 1000\n20 PRINT 1/0\n30 PRINT \"DONE\" : END\n1000 PRINT ERR$(ER)\n1010 RESUME NEXT"
     },
     {
       "keyword": "TRAP",
       "token": 215,
       "type": "command",
       "category": "flow",
-      "syntax": "TRAP line",
-      "description": "Set error trap — on error, GOTO line",
-      "example": "TRAP 9000"
+      "syntax": "TRAP [line]",
+      "description": "Sets an error handler. When a BASIC error occurs, execution branches to the specified line instead of stopping with an error message. Inside the handler, ER = error number, EL = line where error occurred. TRAP with no argument clears the current error handler. Use RESUME to return from the handler.",
+      "parameters": [
+        {
+          "name": "line",
+          "type": "integer",
+          "description": "Line number of the error handler. Omit to clear the handler.",
+          "optional": true
+        }
+      ],
+      "example": "10 TRAP 9000\n20 OPEN 8,8,8,\"MISSING\"\n30 PRINT \"FILE OPENED\" : CLOSE 8 : END\n9000 PRINT \"ERROR\"; ER; \"AT\"; EL\n9010 RESUME NEXT"
     },
     {
       "keyword": "TRON",
@@ -123,7 +217,8 @@
       "type": "command",
       "category": "system",
       "syntax": "TRON",
-      "description": "Enable program trace — prints each line number as it executes"
+      "description": "Enables program trace mode. While active, the number of each line is printed in brackets as the line executes, making it easy to follow program flow. Disable with TROFF.",
+      "example": "TRON\nGOSUB 1000\nTROFF"
     },
     {
       "keyword": "TROFF",
@@ -131,16 +226,72 @@
       "type": "command",
       "category": "system",
       "syntax": "TROFF",
-      "description": "Disable program trace"
+      "description": "Disables program trace mode previously enabled by TRON.",
+      "example": "TRON : GOSUB 1000 : TROFF"
     },
     {
       "keyword": "SOUND",
       "token": 218,
       "type": "command",
       "category": "sound",
-      "syntax": "SOUND voice, frequency, duration [,direction [,mindur [,wave [,pulse [,adsr]]]]]",
-      "description": "Generate a sound from the SID chip",
-      "example": "SOUND 1,1000,30"
+      "syntax": "SOUND voice, frequency, duration [,direction [,minimum [,step [,wavefm [,pwidth]]]]]",
+      "description": "Generates a sound on one of the three SID chip voices. The optional sweep parameters (direction, minimum, step) create frequency glides. The waveform and pulse width parameters control the timbre.",
+      "parameters": [
+        {
+          "name": "voice",
+          "type": "integer",
+          "range": "1-3",
+          "description": "SID voice number"
+        },
+        {
+          "name": "frequency",
+          "type": "integer",
+          "range": "0-65535",
+          "description": "SID frequency register value (higher = higher pitch)"
+        },
+        {
+          "name": "duration",
+          "type": "integer",
+          "range": "0-32767",
+          "description": "Duration in jiffies (1/60 second each)"
+        },
+        {
+          "name": "direction",
+          "type": "integer",
+          "range": "0-2",
+          "description": "Frequency sweep direction: 0=none, 1=sweep up, 2=sweep down",
+          "optional": true
+        },
+        {
+          "name": "minimum",
+          "type": "integer",
+          "range": "0-65535",
+          "description": "Minimum (or maximum) frequency value for the sweep",
+          "optional": true
+        },
+        {
+          "name": "step",
+          "type": "integer",
+          "range": "0-32767",
+          "description": "Frequency change per jiffy during the sweep",
+          "optional": true
+        },
+        {
+          "name": "wavefm",
+          "type": "integer",
+          "range": "0-4",
+          "description": "Waveform: 0=triangle, 1=sawtooth, 2=square/pulse, 3=noise, 4=ring modulation",
+          "optional": true
+        },
+        {
+          "name": "pwidth",
+          "type": "integer",
+          "range": "0-4095",
+          "description": "Pulse width for square wave (wavefm=2 only)",
+          "optional": true
+        }
+      ],
+      "example": "SOUND 1, 4000, 60 : REM SIMPLE TONE FOR 1 SECOND\nSOUND 2, 8000, 120, 2, 100, 50, 1 : REM DOWNWARD SWEEP, SAWTOOTH"
     },
     {
       "keyword": "VOL",
@@ -148,14 +299,16 @@
       "type": "command",
       "category": "sound",
       "syntax": "VOL n",
-      "description": "Set SID master volume (0-15)",
+      "description": "Sets the SID chip master volume. Affects all three voices. VOL 0 silences all sound output.",
       "parameters": [
         {
           "name": "n",
           "type": "integer",
-          "range": "0-15"
+          "range": "0-15",
+          "description": "Volume level (0=silent, 15=maximum)"
         }
-      ]
+      ],
+      "example": "VOL 15 : REM FULL VOLUME\nSOUND 1, 4000, 60\nVOL 0 : REM SILENCE"
     },
     {
       "keyword": "AUTO",
@@ -163,7 +316,21 @@
       "type": "command",
       "category": "editor",
       "syntax": "AUTO [start [,step]]",
-      "description": "Enable automatic line numbering",
+      "description": "Enables automatic line numbering during program entry. After pressing RETURN on each new line, the editor automatically displays the next line number. AUTO with no arguments disables the feature.",
+      "parameters": [
+        {
+          "name": "start",
+          "type": "integer",
+          "description": "Starting line number (default: 10)",
+          "optional": true
+        },
+        {
+          "name": "step",
+          "type": "integer",
+          "description": "Increment between line numbers (default: 10)",
+          "optional": true
+        }
+      ],
       "example": "AUTO 100,10"
     },
     {
@@ -172,7 +339,15 @@
       "type": "command",
       "category": "io",
       "syntax": "PUDEF char$",
-      "description": "Define the fill, decimal point, comma, and space characters used by PRINT USING"
+      "description": "Redefines the special characters used by PRINT USING. The 4-character string sets: position 1=fill character (replaces #), position 2=thousands separator (replaces ,), position 3=decimal point (replaces .), position 4=reserved.",
+      "parameters": [
+        {
+          "name": "char$",
+          "type": "string",
+          "description": "4-character string defining PRINT USING special characters"
+        }
+      ],
+      "example": "PUDEF \" ,.\"\nPRINT USING \"###,###.##\"; 1234.5"
     },
     {
       "keyword": "GRAPHIC",
@@ -180,30 +355,51 @@
       "type": "command",
       "category": "graphics",
       "syntax": "GRAPHIC mode [,clear]",
-      "description": "Set graphics mode (0=text, 1=hires, 2=split hires, 3=multicolor, 4=split multicolor)",
+      "description": "Sets the VIC-II graphics mode. Mode 0 returns to full text mode and releases graphics memory. Modes 1-4 enable bitmap graphics on the 40-column display.",
       "parameters": [
         {
           "name": "mode",
           "type": "integer",
-          "range": "0-4"
+          "range": "0-4",
+          "description": "0=text only, 1=hires (320x200), 2=split screen hires, 3=multicolor (160x200), 4=split screen multicolor"
         },
         {
           "name": "clear",
           "type": "integer",
           "range": "0-1",
-          "description": "1=clear screen",
+          "description": "1=clear the graphics screen after switching mode",
           "optional": true
         }
       ],
-      "example": "GRAPHIC 1,1"
+      "example": "GRAPHIC 1,1 : REM HIRES MODE, CLEAR SCREEN\nGRAPHIC 0 : REM RETURN TO TEXT"
     },
     {
       "keyword": "PAINT",
       "token": 223,
       "type": "command",
       "category": "graphics",
-      "syntax": "PAINT [mode,] x, y [,fcolor [,bcolor]]",
-      "description": "Flood fill an area starting at x,y"
+      "syntax": "PAINT [mode,] x, y",
+      "description": "Performs a flood fill starting at pixel (x, y), filling all adjacent pixels of the same color with the current foreground color (set by COLOR). The optional mode controls the drawing operation: 0=plot (default), 1=erase, 2=XOR.",
+      "parameters": [
+        {
+          "name": "mode",
+          "type": "integer",
+          "range": "0-2",
+          "description": "Drawing mode: 0=plot (default, can be omitted), 1=erase, 2=XOR",
+          "optional": true
+        },
+        {
+          "name": "x",
+          "type": "integer",
+          "description": "X coordinate of the seed pixel"
+        },
+        {
+          "name": "y",
+          "type": "integer",
+          "description": "Y coordinate of the seed pixel"
+        }
+      ],
+      "example": "GRAPHIC 1,1\nBOX ,50,50,150,100\nPAINT ,100,75 : REM FILL INSIDE BOX"
     },
     {
       "keyword": "CHAR",
@@ -211,8 +407,41 @@
       "type": "command",
       "category": "screen",
       "syntax": "CHAR [mode,] column, row, string$ [,color]",
-      "description": "Display a string at the specified screen position",
-      "example": "CHAR ,10,12,\"HELLO\",1"
+      "description": "Displays a string at the specified character position on the current screen. Works in both text and graphics modes. Mode controls whether the text is drawn normally or XOR'd with the background.",
+      "parameters": [
+        {
+          "name": "mode",
+          "type": "integer",
+          "range": "0-2",
+          "description": "Drawing mode: 0=normal (default), 1=erase, 2=XOR",
+          "optional": true
+        },
+        {
+          "name": "column",
+          "type": "integer",
+          "range": "0-39",
+          "description": "Horizontal character position"
+        },
+        {
+          "name": "row",
+          "type": "integer",
+          "range": "0-24",
+          "description": "Vertical character position"
+        },
+        {
+          "name": "string$",
+          "type": "string",
+          "description": "Text to display"
+        },
+        {
+          "name": "color",
+          "type": "integer",
+          "range": "0-15",
+          "description": "Text color (0-15)",
+          "optional": true
+        }
+      ],
+      "example": "CHAR ,10,12,\"HELLO C128\",1"
     },
     {
       "keyword": "BOX",
@@ -220,8 +449,51 @@
       "type": "command",
       "category": "graphics",
       "syntax": "BOX [mode,] x1, y1, x2, y2 [,angle [,fill]]",
-      "description": "Draw a rectangle",
-      "example": "BOX ,10,10,150,100"
+      "description": "Draws a rectangle on the current graphics screen from (x1,y1) to (x2,y2). The optional angle rotates the box (0-360 degrees). The optional fill flag draws a filled rectangle.",
+      "parameters": [
+        {
+          "name": "mode",
+          "type": "integer",
+          "range": "0-2",
+          "description": "Drawing mode: 0=plot (default, can be omitted), 1=erase, 2=XOR",
+          "optional": true
+        },
+        {
+          "name": "x1",
+          "type": "integer",
+          "description": "Left X coordinate"
+        },
+        {
+          "name": "y1",
+          "type": "integer",
+          "description": "Top Y coordinate"
+        },
+        {
+          "name": "x2",
+          "type": "integer",
+          "description": "Right X coordinate"
+        },
+        {
+          "name": "y2",
+          "type": "integer",
+          "description": "Bottom Y coordinate"
+        },
+        {
+          "name": "angle",
+          "type": "integer",
+          "range": "0-360",
+          "description": "Rotation angle in degrees",
+          "optional": true
+        },
+        {
+          "name": "fill",
+          "type": "integer",
+          "range": "0-1",
+          "description": "0=outline only, 1=filled rectangle",
+          "optional": true
+        }
+      ],
+      "example": "GRAPHIC 1,1\nBOX ,10,10,150,100 : REM OUTLINE\nBOX ,160,10,310,100,,1 : REM FILLED"
     },
     {
       "keyword": "CIRCLE",
@@ -229,33 +501,170 @@
       "type": "command",
       "category": "graphics",
       "syntax": "CIRCLE [mode,] x, y, rx [,ry [,start [,end [,fill]]]]",
-      "description": "Draw a circle or arc",
-      "example": "CIRCLE ,160,100,50"
+      "description": "Draws a circle or ellipse on the graphics screen. Specify only rx for a circle, or both rx and ry for an ellipse. Start and end angles (0-360) draw arcs.",
+      "parameters": [
+        {
+          "name": "mode",
+          "type": "integer",
+          "range": "0-2",
+          "description": "Drawing mode: 0=plot (default, can be omitted), 1=erase, 2=XOR",
+          "optional": true
+        },
+        {
+          "name": "x",
+          "type": "integer",
+          "description": "Center X coordinate"
+        },
+        {
+          "name": "y",
+          "type": "integer",
+          "description": "Center Y coordinate"
+        },
+        {
+          "name": "rx",
+          "type": "integer",
+          "description": "Horizontal radius"
+        },
+        {
+          "name": "ry",
+          "type": "integer",
+          "description": "Vertical radius (default: same as rx)",
+          "optional": true
+        },
+        {
+          "name": "start",
+          "type": "integer",
+          "range": "0-360",
+          "description": "Start angle for arc drawing (default: 0)",
+          "optional": true
+        },
+        {
+          "name": "end",
+          "type": "integer",
+          "range": "0-360",
+          "description": "End angle for arc drawing (default: 360)",
+          "optional": true
+        },
+        {
+          "name": "fill",
+          "type": "integer",
+          "range": "0-1",
+          "description": "0=outline only, 1=filled",
+          "optional": true
+        }
+      ],
+      "example": "GRAPHIC 1,1\nCIRCLE ,160,100,50 : REM CIRCLE\nCIRCLE ,160,100,80,40 : REM ELLIPSE"
     },
     {
       "keyword": "GSHAPE",
       "token": 227,
       "type": "command",
       "category": "graphics",
-      "syntax": "GSHAPE string$, x, y [,mode]",
-      "description": "Retrieve a shape from the graphics screen into a string"
+      "syntax": "GSHAPE string$, x1, y1 [,x2, y2]",
+      "description": "Captures a rectangular region of the current graphics screen and stores the pixel data in a string variable. If x2, y2 are omitted, captures from (x1,y1) to the graphics cursor position. Use SSHAPE to paste the captured data back to the screen.",
+      "parameters": [
+        {
+          "name": "string$",
+          "type": "string",
+          "description": "String variable to store the captured shape data"
+        },
+        {
+          "name": "x1",
+          "type": "integer",
+          "description": "Left X coordinate of the region to capture"
+        },
+        {
+          "name": "y1",
+          "type": "integer",
+          "description": "Top Y coordinate of the region to capture"
+        },
+        {
+          "name": "x2",
+          "type": "integer",
+          "description": "Right X coordinate of the region to capture",
+          "optional": true
+        },
+        {
+          "name": "y2",
+          "type": "integer",
+          "description": "Bottom Y coordinate of the region to capture",
+          "optional": true
+        }
+      ],
+      "example": "GRAPHIC 1,1\nBOX ,10,10,70,70\nGSHAPE S$, 10, 10, 70, 70 : REM CAPTURE BOX AREA\nSSHAPE S$, 100, 100 : REM PASTE AT NEW POSITION"
     },
     {
       "keyword": "SSHAPE",
       "token": 228,
       "type": "command",
       "category": "graphics",
-      "syntax": "SSHAPE string$, x1, y1 [,x2, y2]",
-      "description": "Save a rectangular region of the graphics screen to a string"
+      "syntax": "SSHAPE string$, x, y [,mode]",
+      "description": "Restores shape data previously captured by GSHAPE, drawing it on the graphics screen at position (x, y). The optional mode controls how the shape is combined with the existing screen content.",
+      "parameters": [
+        {
+          "name": "string$",
+          "type": "string",
+          "description": "String variable containing shape data from a previous GSHAPE call"
+        },
+        {
+          "name": "x",
+          "type": "integer",
+          "description": "X coordinate of the upper-left corner of the destination"
+        },
+        {
+          "name": "y",
+          "type": "integer",
+          "description": "Y coordinate of the upper-left corner of the destination"
+        },
+        {
+          "name": "mode",
+          "type": "integer",
+          "range": "0-2",
+          "description": "Drawing mode: 0=plot (default), 1=erase, 2=XOR",
+          "optional": true
+        }
+      ],
+      "example": "GSHAPE S$, 0, 0, 63, 63\nSSHAPE S$, 100, 50 : REM PASTE AT NEW POSITION\nSSHAPE S$, 200, 50, 2 : REM PASTE XOR'D"
     },
     {
       "keyword": "DRAW",
       "token": 229,
       "type": "command",
       "category": "graphics",
-      "syntax": "DRAW [mode,] x1, y1 [TO x2, y2 ...]",
-      "description": "Draw lines on the graphics screen",
-      "example": "DRAW ,0,0 TO 319,199"
+      "syntax": "DRAW [mode,] x1, y1 [TO x2, y2 [TO ...]]",
+      "description": "Draws a point or a connected sequence of lines on the current graphics screen. Each TO clause extends the line to the next coordinate pair. Uses the color set by COLOR.",
+      "parameters": [
+        {
+          "name": "mode",
+          "type": "integer",
+          "range": "0-2",
+          "description": "Drawing mode: 0=plot (default, can be omitted), 1=erase, 2=XOR",
+          "optional": true
+        },
+        {
+          "name": "x1",
+          "type": "integer",
+          "description": "Starting X coordinate"
+        },
+        {
+          "name": "y1",
+          "type": "integer",
+          "description": "Starting Y coordinate"
+        },
+        {
+          "name": "x2",
+          "type": "integer",
+          "description": "Next X coordinate (TO clause)",
+          "optional": true
+        },
+        {
+          "name": "y2",
+          "type": "integer",
+          "description": "Next Y coordinate (TO clause)",
+          "optional": true
+        }
+      ],
+      "example": "GRAPHIC 1,1\nDRAW ,0,0 TO 319,199 : REM DIAGONAL LINE\nDRAW ,0,199 TO 319,0 : REM CROSSING LINE"
     },
     {
       "keyword": "LOCATE",
@@ -263,7 +672,22 @@
       "type": "command",
       "category": "screen",
       "syntax": "LOCATE x, y",
-      "description": "Move the graphics cursor to x,y without drawing"
+      "description": "Moves the graphics cursor to position (x, y) without drawing. Subsequent DRAW commands start from this position.",
+      "parameters": [
+        {
+          "name": "x",
+          "type": "integer",
+          "range": "0-319",
+          "description": "Horizontal pixel coordinate"
+        },
+        {
+          "name": "y",
+          "type": "integer",
+          "range": "0-199",
+          "description": "Vertical pixel coordinate"
+        }
+      ],
+      "example": "LOCATE 160,100\nDRAW ,TO 200,150 : REM LINE FROM (160,100)"
     },
     {
       "keyword": "COLOR",
@@ -271,7 +695,28 @@
       "type": "command",
       "category": "screen",
       "syntax": "COLOR source, color [,luminance]",
-      "description": "Set color for the specified source (0=background, 1=foreground, etc.)"
+      "description": "Sets the color for the specified VIC-II color source. The optional luminance parameter is ignored on the C128 VIC-II (it is used on the C16/Plus4 TED chip).",
+      "parameters": [
+        {
+          "name": "source",
+          "type": "integer",
+          "range": "0-4",
+          "description": "Color source: 0=background, 1=foreground/text, 2=multi-color 1, 3=multi-color 2, 4=border"
+        },
+        {
+          "name": "color",
+          "type": "integer",
+          "range": "0-15",
+          "description": "Color value (0=black, 1=white, 2=red, 3=cyan, 4=purple, 5=green, 6=blue, 7=yellow, 8=orange, 9=brown, 10=light red, 11=dark grey, 12=grey, 13=light green, 14=light blue, 15=light grey)"
+        },
+        {
+          "name": "luminance",
+          "type": "integer",
+          "description": "Ignored on C128 VIC-II",
+          "optional": true
+        }
+      ],
+      "example": "COLOR 0, 6 : REM BLUE BACKGROUND\nCOLOR 1, 1 : REM WHITE FOREGROUND\nCOLOR 4, 0 : REM BLACK BORDER"
     },
     {
       "keyword": "SCNCLR",
@@ -279,7 +724,16 @@
       "type": "command",
       "category": "screen",
       "syntax": "SCNCLR [window]",
-      "description": "Clear the graphics screen or a defined window"
+      "description": "Clears the current graphics or text screen. If a window number is specified, clears only that window.",
+      "parameters": [
+        {
+          "name": "window",
+          "type": "integer",
+          "description": "Window number to clear (optional; clears full screen if omitted)",
+          "optional": true
+        }
+      ],
+      "example": "GRAPHIC 1,1 : SCNCLR : REM CLEAR HIRES SCREEN"
     },
     {
       "keyword": "SCALE",
@@ -287,7 +741,28 @@
       "type": "command",
       "category": "graphics",
       "syntax": "SCALE mode [,xmax [,ymax]]",
-      "description": "Enable or disable graphics coordinate scaling"
+      "description": "Enables or disables scaled graphics coordinates. When enabled (mode=1), graphics coordinates are specified as fractions of the screen dimensions rather than absolute pixel positions.",
+      "parameters": [
+        {
+          "name": "mode",
+          "type": "integer",
+          "range": "0-1",
+          "description": "0=disable scaling (use absolute pixel coordinates), 1=enable scaled coordinates"
+        },
+        {
+          "name": "xmax",
+          "type": "integer",
+          "description": "Maximum X value to use in scaled mode (default: 1023)",
+          "optional": true
+        },
+        {
+          "name": "ymax",
+          "type": "integer",
+          "description": "Maximum Y value to use in scaled mode (default: 1023)",
+          "optional": true
+        }
+      ],
+      "example": "SCALE 1, 100, 100 : REM 100x100 COORDINATE SPACE\nDRAW ,0,0 TO 50,50 : REM DRAWS TO SCREEN CENTER"
     },
     {
       "keyword": "HELP",
@@ -295,7 +770,8 @@
       "type": "command",
       "category": "system",
       "syntax": "HELP",
-      "description": "Highlight the statement that caused the last error"
+      "description": "Highlights the token or statement within the BASIC program that caused the most recent error. The offending section is displayed in reverse video.",
+      "example": "10 PRINT SQR(-1)\nRUN\n?ILLEGAL QUANTITY  ERROR IN 10\nHELP"
     },
     {
       "keyword": "DO",
@@ -303,8 +779,8 @@
       "type": "loop",
       "category": "flow",
       "syntax": "DO",
-      "description": "Begin a DO/LOOP block",
-      "example": "DO\n  X=X+1\nLOOP UNTIL X>10"
+      "description": "Marks the start of a DO/LOOP block. The block repeats until a LOOP UNTIL or LOOP WHILE condition exits it, or EXIT is executed. The loop body always executes at least once.",
+      "example": "10 I = 0\n20 DO\n30   I = I + 1\n40   PRINT I\n50 LOOP UNTIL I >= 10"
     },
     {
       "keyword": "LOOP",
@@ -312,7 +788,8 @@
       "type": "loop",
       "category": "flow",
       "syntax": "LOOP [UNTIL condition | WHILE condition]",
-      "description": "End a DO/LOOP block, with optional condition"
+      "description": "Marks the end of a DO/LOOP block. With UNTIL, exits when the condition becomes true. With WHILE, exits when the condition becomes false. Without a condition, loops forever (use EXIT to break out).",
+      "example": "10 DO\n20   GET A$\n30 LOOP UNTIL A$ = \"Y\"\n\n10 X = 0\n20 DO : X = X + 1\n30 LOOP WHILE X < 100"
     },
     {
       "keyword": "EXIT",
@@ -320,16 +797,39 @@
       "type": "loop",
       "category": "flow",
       "syntax": "EXIT",
-      "description": "Exit the current DO/LOOP or FOR/NEXT loop"
+      "description": "Immediately exits the innermost active DO/LOOP or FOR/NEXT loop, continuing execution after the LOOP or NEXT statement.",
+      "example": "10 I = 0\n20 DO\n30   I = I + 1\n40   IF I = 5 THEN EXIT\n50 LOOP\n60 PRINT \"EXITED AT\"; I"
     },
     {
       "keyword": "DIRECTORY",
       "token": 238,
       "type": "command",
       "category": "io",
-      "syntax": "DIRECTORY [drive] [,pattern$]",
-      "description": "Display the disk directory",
-      "example": "DIRECTORY \"*.PRG\""
+      "syntax": "DIRECTORY [pattern$] [,D drive] [,U unit]",
+      "description": "Lists the disk directory. An optional filename pattern (using * and ? wildcards) filters the listing. See also CATALOG which is an alias.",
+      "parameters": [
+        {
+          "name": "pattern$",
+          "type": "string",
+          "description": "Optional filename filter with wildcards (* and ?)",
+          "optional": true
+        },
+        {
+          "name": "drive",
+          "type": "integer",
+          "range": "0-1",
+          "description": "Drive number for dual-drive units",
+          "optional": true
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "description": "IEC device number (default: 8)",
+          "optional": true
+        }
+      ],
+      "example": "DIRECTORY\nDIRECTORY \"*.PRG\"\nDIRECTORY, U9"
     },
     {
       "keyword": "DSAVE",
@@ -337,7 +837,29 @@
       "type": "command",
       "category": "io",
       "syntax": "DSAVE \"filename\" [,D drive] [,U unit]",
-      "description": "Save the current BASIC program to disk"
+      "description": "Saves the current BASIC program to disk as a PRG file, writing the two-byte load address header automatically.",
+      "parameters": [
+        {
+          "name": "filename",
+          "type": "string",
+          "description": "Name to save the file as (up to 16 characters)"
+        },
+        {
+          "name": "drive",
+          "type": "integer",
+          "range": "0-1",
+          "description": "Drive number for dual-drive units",
+          "optional": true
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "description": "IEC device number (default: 8)",
+          "optional": true
+        }
+      ],
+      "example": "DSAVE \"MYPROG\"\nDSAVE \"BACKUP\", U9"
     },
     {
       "keyword": "DLOAD",
@@ -345,7 +867,28 @@
       "type": "command",
       "category": "io",
       "syntax": "DLOAD \"filename\" [,D drive] [,U unit]",
-      "description": "Load a BASIC program from disk"
+      "description": "Loads a BASIC program file from disk. The load address stored in the first two bytes of the PRG file is used.",
+      "parameters": [
+        {
+          "name": "filename",
+          "type": "string"
+        },
+        {
+          "name": "drive",
+          "type": "integer",
+          "range": "0-1",
+          "description": "Drive number for dual-drive units",
+          "optional": true
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "description": "IEC device number (default: 8)",
+          "optional": true
+        }
+      ],
+      "example": "DLOAD \"MYPROG\"\nDLOAD \"MYPROG\", U9"
     },
     {
       "keyword": "HEADER",
@@ -353,8 +896,29 @@
       "type": "command",
       "category": "io",
       "syntax": "HEADER \"diskname\" [,I id] [,U unit]",
-      "description": "Format a disk",
-      "notes": "Destructive — erases all data"
+      "description": "Formats a disk, erasing all data and writing the given disk name and optional 2-character ID. This operation is irreversible.",
+      "notes": "Destructive — erases all data on the disk",
+      "parameters": [
+        {
+          "name": "diskname",
+          "type": "string",
+          "description": "Name to assign to the disk (up to 16 characters)"
+        },
+        {
+          "name": "id",
+          "type": "string",
+          "description": "2-character disk ID (e.g. ,I\"AB\")",
+          "optional": true
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "description": "IEC device number (default: 8)",
+          "optional": true
+        }
+      ],
+      "example": "HEADER \"WORKDISK\", I\"WD\""
     },
     {
       "keyword": "SCRATCH",
@@ -362,7 +926,22 @@
       "type": "command",
       "category": "io",
       "syntax": "SCRATCH \"filename\" [,U unit]",
-      "description": "Delete a file from disk"
+      "description": "Deletes a file from disk. Wildcards * and ? are supported in the filename.",
+      "parameters": [
+        {
+          "name": "filename",
+          "type": "string",
+          "description": "File to delete. Supports * and ? wildcards."
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "description": "IEC device number (default: 8)",
+          "optional": true
+        }
+      ],
+      "example": "SCRATCH \"OLDFILE\"\nSCRATCH \"TEMP*\""
     },
     {
       "keyword": "COLLECT",
@@ -370,15 +949,52 @@
       "type": "command",
       "category": "io",
       "syntax": "COLLECT [,U unit]",
-      "description": "Validate the disk — recover sectors from improperly closed files"
+      "description": "Validates the disk structure and recovers blocks from improperly closed files (splat files). Splat files are permanently discarded.",
+      "parameters": [
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "description": "IEC device number (default: 8)",
+          "optional": true
+        }
+      ],
+      "example": "COLLECT\nCOLLECT, U9"
     },
     {
       "keyword": "COPY",
       "token": 244,
       "type": "command",
       "category": "io",
-      "syntax": "COPY \"source\" TO \"dest\" [,U unit]",
-      "description": "Copy a file on disk"
+      "syntax": "COPY \"source\" TO \"dest\" [,D drive] [,U unit]",
+      "description": "Copies a disk file to a new name or to another drive.",
+      "parameters": [
+        {
+          "name": "source",
+          "type": "string",
+          "description": "Source filename"
+        },
+        {
+          "name": "dest",
+          "type": "string",
+          "description": "Destination filename"
+        },
+        {
+          "name": "drive",
+          "type": "integer",
+          "range": "0-1",
+          "description": "Drive number for dual-drive units",
+          "optional": true
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "description": "IEC device number",
+          "optional": true
+        }
+      ],
+      "example": "COPY \"PROG\" TO \"BACKUP\"\nCOPY \"PROG\", U8 TO \"PROG\", U9"
     },
     {
       "keyword": "RENAME",
@@ -386,15 +1002,52 @@
       "type": "command",
       "category": "io",
       "syntax": "RENAME \"oldname\" TO \"newname\" [,U unit]",
-      "description": "Rename a file on disk"
+      "description": "Renames a file on disk.",
+      "parameters": [
+        {
+          "name": "oldname",
+          "type": "string",
+          "description": "Current filename"
+        },
+        {
+          "name": "newname",
+          "type": "string",
+          "description": "New filename"
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "description": "IEC device number (default: 8)",
+          "optional": true
+        }
+      ],
+      "example": "RENAME \"DRAFT\" TO \"FINAL\""
     },
     {
       "keyword": "BACKUP",
       "token": 246,
       "type": "command",
       "category": "io",
-      "syntax": "BACKUP [,U unit]",
-      "description": "Copy an entire disk to another disk"
+      "syntax": "BACKUP [,U source] [TO U dest]",
+      "description": "Copies an entire disk to another disk. Both drives must be accessible via IEC.",
+      "parameters": [
+        {
+          "name": "source",
+          "type": "integer",
+          "range": "8-11",
+          "description": "IEC device number of source drive",
+          "optional": true
+        },
+        {
+          "name": "dest",
+          "type": "integer",
+          "range": "8-11",
+          "description": "IEC device number of destination drive",
+          "optional": true
+        }
+      ],
+      "example": "BACKUP, U8 TO U9"
     },
     {
       "keyword": "DELETE",
@@ -402,7 +1055,21 @@
       "type": "command",
       "category": "editor",
       "syntax": "DELETE firstline [,lastline]",
-      "description": "Delete one or more program lines"
+      "description": "Deletes one or more BASIC program lines. Omit lastline to delete a single line.",
+      "parameters": [
+        {
+          "name": "firstline",
+          "type": "integer",
+          "description": "First line number to delete"
+        },
+        {
+          "name": "lastline",
+          "type": "integer",
+          "description": "Last line number to delete (optional; defaults to firstline)",
+          "optional": true
+        }
+      ],
+      "example": "DELETE 100\nDELETE 200,500"
     },
     {
       "keyword": "RENUMBER",
@@ -410,17 +1077,56 @@
       "type": "command",
       "category": "editor",
       "syntax": "RENUMBER [start [,step [,firstline [,lastline]]]]",
-      "description": "Renumber program lines",
-      "example": "RENUMBER 100,10"
+      "description": "Renumbers BASIC program lines, updating all GOTO, GOSUB, ON/GOTO, and THEN references automatically. Without arguments, renumbers the entire program starting at 10 with increments of 10.",
+      "parameters": [
+        {
+          "name": "start",
+          "type": "integer",
+          "description": "New starting line number (default: 10)",
+          "optional": true
+        },
+        {
+          "name": "step",
+          "type": "integer",
+          "description": "Increment between new line numbers (default: 10)",
+          "optional": true
+        },
+        {
+          "name": "firstline",
+          "type": "integer",
+          "description": "First line of the range to renumber (default: first line)",
+          "optional": true
+        },
+        {
+          "name": "lastline",
+          "type": "integer",
+          "description": "Last line of the range to renumber (default: last line)",
+          "optional": true
+        }
+      ],
+      "example": "RENUMBER : REM RENUMBER ENTIRE PROGRAM\nRENUMBER 100,10"
     },
     {
       "keyword": "KEY",
       "token": 249,
       "type": "command",
       "category": "system",
-      "syntax": "KEY n, string$",
-      "description": "Assign a string to a function key",
-      "example": "KEY 1,\"RUN\""
+      "syntax": "KEY n, string$ | KEY LIST | KEY LOAD | KEY SAVE \"filename\"",
+      "description": "Assigns a macro string to a function key (F1-F8). The string is typed automatically when that key is pressed. KEY LIST displays all current assignments. KEY LOAD and KEY SAVE read and write key definitions to disk.",
+      "parameters": [
+        {
+          "name": "n",
+          "type": "integer",
+          "range": "1-8",
+          "description": "Function key number (1=F1, 2=F3, 3=F5, 4=F7, 5=F2, 6=F4, 7=F6, 8=F8)"
+        },
+        {
+          "name": "string$",
+          "type": "string",
+          "description": "String to type when the key is pressed. CHR$(13) sends RETURN."
+        }
+      ],
+      "example": "KEY 1, \"RUN\" + CHR$(13)\nKEY LIST"
     },
     {
       "keyword": "MONITOR",
@@ -428,16 +1134,17 @@
       "type": "command",
       "category": "system",
       "syntax": "MONITOR",
-      "description": "Enter the machine code monitor"
+      "description": "Enters the C128 built-in machine language monitor. Supports examining and modifying memory, registers, and stepping through code. Type X at the monitor prompt to return to BASIC.",
+      "example": "MONITOR"
     },
     {
       "keyword": "USING",
       "token": 251,
       "type": "command",
       "category": "io",
-      "syntax": "PRINT USING format$; values",
-      "description": "Format numbers for PRINT output",
-      "example": "PRINT USING \"###.##\"; 3.14159"
+      "syntax": "PRINT [#channel,] USING format$; value [,value ...]",
+      "description": "Formats numeric output according to a template string. In the format, # is a digit placeholder, . is the decimal point, , is the thousands separator, + or - prefixes the sign, and * fills empty digit positions with asterisks.",
+      "example": "PRINT USING \"###.##\"; 3.14159\n  3.14\nPRINT USING \"$###,###.##\"; 12345.6\n$12,345.60"
     },
     {
       "keyword": "UNTIL",
@@ -445,7 +1152,8 @@
       "type": "loop",
       "category": "flow",
       "syntax": "LOOP UNTIL condition",
-      "description": "Condition clause for LOOP — loops until condition becomes true"
+      "description": "Exit condition for a DO/LOOP block. The loop exits when condition becomes true. Evaluated at the bottom of the loop, so the body always runs at least once.",
+      "example": "10 DO\n20   GET A$\n30 LOOP UNTIL A$ <> \"\""
     },
     {
       "keyword": "WHILE",
@@ -453,7 +1161,8 @@
       "type": "loop",
       "category": "flow",
       "syntax": "LOOP WHILE condition",
-      "description": "Condition clause for LOOP — loops while condition remains true"
+      "description": "Continuation condition for a DO/LOOP block. The loop continues while condition remains true. Evaluated at the bottom of the loop, so the body always runs at least once.",
+      "example": "10 X = 1\n20 DO\n30   PRINT X\n40   X = X * 2\n50 LOOP WHILE X < 1000"
     },
     {
       "keyword": "POT",
@@ -462,14 +1171,16 @@
       "type": "function",
       "category": "io",
       "syntax": "POT(n)",
-      "description": "Read potentiometer (paddle) value for port n",
+      "description": "Reads the analog value of a paddle (potentiometer) controller. Paddles are connected via the joystick ports.",
       "parameters": [
         {
           "name": "n",
           "type": "integer",
-          "range": "1-4"
+          "range": "1-4",
+          "description": "Paddle number: 1=port1 paddle A, 2=port1 paddle B, 3=port2 paddle A, 4=port2 paddle B"
         }
-      ]
+      ],
+      "example": "P = POT(1) : PRINT \"PADDLE:\"; P"
     },
     {
       "keyword": "BUMP",
@@ -477,8 +1188,17 @@
       "token": 3,
       "type": "function",
       "category": "graphics",
-      "syntax": "BUMP(n)",
-      "description": "Check sprite collision register n (1=sprite-sprite, 2=sprite-background)"
+      "syntax": "BUMP(type)",
+      "description": "Returns the VIC-II sprite collision register. After reading, the register is cleared. Bit n of the result corresponds to sprite n.",
+      "parameters": [
+        {
+          "name": "type",
+          "type": "integer",
+          "range": "1-2",
+          "description": "1=sprite-sprite collision register ($D01E), 2=sprite-background collision register ($D01F)"
+        }
+      ],
+      "example": "10 IF BUMP(1) AND 3 THEN PRINT \"SPRITES 0 AND 1 COLLIDED\""
     },
     {
       "keyword": "PEN",
@@ -487,7 +1207,16 @@
       "type": "function",
       "category": "io",
       "syntax": "PEN(n)",
-      "description": "Read lightpen register n (0=X, 1=Y trigger, 2=X trigger)"
+      "description": "Reads a lightpen register value from the VIC-II chip.",
+      "parameters": [
+        {
+          "name": "n",
+          "type": "integer",
+          "range": "0-2",
+          "description": "0=current X position ($D013), 1=current Y position ($D014), 2=X position at last trigger"
+        }
+      ],
+      "example": "PX = PEN(0) : PY = PEN(1)\nPRINT \"LIGHTPEN:\"; PX; PY"
     },
     {
       "keyword": "RSPPOS",
@@ -496,20 +1225,22 @@
       "type": "function",
       "category": "graphics",
       "syntax": "RSPPOS(sprite, axis)",
-      "description": "Read sprite position. Axis: 0=X, 1=Y",
+      "description": "Returns the position or speed of a sprite. For non-animated sprites, axis 0=X and axis 1=Y return the sprite screen coordinates. For sprites being moved with MOVSPR in angle/speed mode, axis 2 returns the current speed.",
       "parameters": [
         {
           "name": "sprite",
           "type": "integer",
-          "range": "0-7"
+          "range": "0-7",
+          "description": "Sprite number"
         },
         {
           "name": "axis",
           "type": "integer",
-          "range": "0-1",
-          "description": "0=X, 1=Y"
+          "range": "0-2",
+          "description": "0=X position, 1=Y position, 2=current speed (for animated sprites)"
         }
-      ]
+      ],
+      "example": "SX = RSPPOS(0,0) : SY = RSPPOS(0,1)\nPRINT \"SPRITE 0 AT\"; SX; \",\"; SY"
     },
     {
       "keyword": "RSPRITE",
@@ -517,8 +1248,23 @@
       "token": 6,
       "type": "function",
       "category": "graphics",
-      "syntax": "RSPRITE(sprite)",
-      "description": "Read sprite enable/color register"
+      "syntax": "RSPRITE(sprite, attribute)",
+      "description": "Reads sprite configuration attributes set by the SPRITE command.",
+      "parameters": [
+        {
+          "name": "sprite",
+          "type": "integer",
+          "range": "0-7",
+          "description": "Sprite number"
+        },
+        {
+          "name": "attribute",
+          "type": "integer",
+          "range": "0-5",
+          "description": "0=enabled, 1=color (0-15), 2=priority (0=in front, 1=behind background), 3=multicolor enabled, 4=X-expanded, 5=Y-expanded"
+        }
+      ],
+      "example": "IF RSPRITE(0,0) = 0 THEN PRINT \"SPRITE 0 DISABLED\""
     },
     {
       "keyword": "RSPCOLOR",
@@ -526,8 +1272,17 @@
       "token": 7,
       "type": "function",
       "category": "graphics",
-      "syntax": "RSPCOLOR(sprite)",
-      "description": "Read sprite color register"
+      "syntax": "RSPCOLOR(n)",
+      "description": "Returns the value of one of the two shared multicolor sprite color registers. These are set by SPRCOLOR.",
+      "parameters": [
+        {
+          "name": "n",
+          "type": "integer",
+          "range": "1-2",
+          "description": "1=shared multicolor 1 ($D025), 2=shared multicolor 2 ($D026)"
+        }
+      ],
+      "example": "PRINT \"SHARED COLORS:\"; RSPCOLOR(1); RSPCOLOR(2)"
     },
     {
       "keyword": "XOR",
@@ -536,8 +1291,8 @@
       "type": "operator",
       "category": "math",
       "syntax": "a XOR b",
-      "description": "Bitwise exclusive OR",
-      "example": "PRINT 255 XOR 15"
+      "description": "Returns the bitwise exclusive OR of two integer values. Operands are converted to 16-bit integers before the operation.",
+      "example": "PRINT 255 XOR 15\n240\nPRINT 12 XOR 10\n6"
     },
     {
       "keyword": "RWINDOW",
@@ -546,7 +1301,16 @@
       "type": "function",
       "category": "screen",
       "syntax": "RWINDOW(n)",
-      "description": "Read current window boundary n (0=left, 1=top, 2=right, 3=bottom)"
+      "description": "Returns the boundary coordinate of the current text window as defined by WINDOW.",
+      "parameters": [
+        {
+          "name": "n",
+          "type": "integer",
+          "range": "0-3",
+          "description": "0=left column, 1=top row, 2=right column, 3=bottom row"
+        }
+      ],
+      "example": "PRINT \"WINDOW:\"; RWINDOW(0); RWINDOW(1); \"TO\"; RWINDOW(2); RWINDOW(3)"
     },
     {
       "keyword": "POINTER",
@@ -555,7 +1319,15 @@
       "type": "function",
       "category": "system",
       "syntax": "POINTER(var)",
-      "description": "Return the address of a variable"
+      "description": "Returns the address of a variable's data in memory. For numeric variables, this is the address of the 5-byte floating-point value. For string variables, this is the address of the string descriptor.",
+      "parameters": [
+        {
+          "name": "var",
+          "type": "string",
+          "description": "A variable name (without its value; pass the name as a string, e.g. POINTER(A))"
+        }
+      ],
+      "example": "A = 3.14\nPRINT HEX$(POINTER(A)) : REM ADDRESS OF A'S VALUE"
     },
     {
       "keyword": "BANK",
@@ -564,15 +1336,16 @@
       "type": "command",
       "category": "memory",
       "syntax": "BANK n",
-      "description": "Set memory bank for PEEK/POKE (0-15 on C128)",
+      "description": "Selects which of the 16 C128 memory banks is accessed by subsequent PEEK and POKE commands. Bank 15 is the default (KERNAL/BASIC ROM + I/O) and is the value active at startup.",
       "parameters": [
         {
           "name": "n",
           "type": "integer",
-          "range": "0-15"
+          "range": "0-15",
+          "description": "Bank configuration (0=all RAM, 15=I/O+KERNAL visible, other values map various ROM/RAM combinations)"
         }
       ],
-      "example": "BANK 15 : POKE 53280,0"
+      "example": "BANK 0 : POKE 1024, 65 : REM WRITE TO VIC-II RAM IN BANK 0\nBANK 15 : POKE 53280, 0 : REM SET BORDER BLACK VIA I/O"
     },
     {
       "keyword": "FILTER",
@@ -581,7 +1354,36 @@
       "type": "command",
       "category": "sound",
       "syntax": "FILTER cutoff, resonance [,mode [,voice]]",
-      "description": "Configure the SID filter"
+      "description": "Configures the SID chip's audio filter. The filter cutoff frequency and resonance control which harmonics pass through. The mode parameter selects the filter type; the voice parameter specifies which voices are routed through the filter.",
+      "parameters": [
+        {
+          "name": "cutoff",
+          "type": "integer",
+          "range": "0-2047",
+          "description": "Filter cutoff frequency (higher = lets more high frequencies through)"
+        },
+        {
+          "name": "resonance",
+          "type": "integer",
+          "range": "0-15",
+          "description": "Filter resonance/Q factor (higher = more pronounced peak at cutoff frequency)"
+        },
+        {
+          "name": "mode",
+          "type": "integer",
+          "range": "0-7",
+          "description": "Filter type bitmask: bit 0=low-pass, bit 1=band-pass, bit 2=high-pass",
+          "optional": true
+        },
+        {
+          "name": "voice",
+          "type": "integer",
+          "range": "0-15",
+          "description": "Voices to route through the filter as a bitmask (bit 0=voice 1, bit 1=voice 2, bit 2=voice 3, bit 3=external input)",
+          "optional": true
+        }
+      ],
+      "example": "FILTER 1024, 8, 1, 7 : REM LOW-PASS, ALL VOICES\nSOUND 1, 8000, 120, 2, 100, 50, 2"
     },
     {
       "keyword": "PLAY",
@@ -590,8 +1392,8 @@
       "type": "command",
       "category": "sound",
       "syntax": "PLAY string$",
-      "description": "Play a music string (MML-style notation)",
-      "example": "PLAY \"T6O4CDEFGAB\""
+      "description": "Plays a music string using Music Macro Language (MML) notation. The string contains commands: T=tempo (1-255), O=octave (0-6), note letters A-G (with # or + for sharp, - for flat), R=rest, duration numbers (1=whole, 2=half, 4=quarter, 8=eighth, 16=sixteenth, 32=32nd), V=volume (0-7 per voice), S=voice selection, M=SID mode, X=envelope number.",
+      "example": "PLAY \"T7 O3 C4 D4 E4 F4 G4\" : REM C MAJOR SCALE\nPLAY \"T6 O4 V5 E2. D4 C2\" : REM MELODY PHRASE"
     },
     {
       "keyword": "TEMPO",
@@ -600,7 +1402,16 @@
       "type": "command",
       "category": "sound",
       "syntax": "TEMPO n",
-      "description": "Set music playback tempo (1-255)"
+      "description": "Sets the global music playback tempo for use with PLAY. Also sets the T value used within PLAY strings.",
+      "parameters": [
+        {
+          "name": "n",
+          "type": "integer",
+          "range": "1-255",
+          "description": "Tempo value (higher = faster)"
+        }
+      ],
+      "example": "TEMPO 6 : PLAY \"O4 CDEFGAB\""
     },
     {
       "keyword": "MOVSPR",
@@ -608,26 +1419,29 @@
       "token": 6,
       "type": "command",
       "category": "graphics",
-      "syntax": "MOVSPR sprite, x, y",
-      "description": "Move sprite to absolute screen position",
+      "syntax": "MOVSPR sprite, x, y | MOVSPR sprite, angle#speed",
+      "description": "Moves a sprite to an absolute screen position (x, y) or starts it moving automatically at the given compass angle and speed. Use RSPPOS to read the current position of an animated sprite.",
       "parameters": [
         {
           "name": "sprite",
           "type": "integer",
-          "range": "0-7"
+          "range": "0-7",
+          "description": "Sprite number"
         },
         {
           "name": "x",
           "type": "integer",
-          "range": "0-511"
+          "range": "0-511",
+          "description": "Horizontal screen position"
         },
         {
           "name": "y",
           "type": "integer",
-          "range": "0-255"
+          "range": "0-255",
+          "description": "Vertical screen position"
         }
       ],
-      "example": "MOVSPR 0,160,100"
+      "example": "MOVSPR 0, 160, 100 : REM MOVE TO CENTER\nMOVSPR 0, 45#2 : REM MOVE AT 45 DEGREES, SPEED 2"
     },
     {
       "keyword": "SPRITE",
@@ -636,8 +1450,57 @@
       "type": "command",
       "category": "graphics",
       "syntax": "SPRITE n, enable [,color [,priority [,multicolor [,xexpand [,yexpand]]]]]",
-      "description": "Configure a hardware sprite",
-      "example": "SPRITE 0,1,1,0"
+      "description": "Configures a hardware VIC-II sprite. Each of the 8 sprites can be enabled/disabled, colored, layered relative to the background, and optionally expanded or set to multicolor mode.",
+      "parameters": [
+        {
+          "name": "n",
+          "type": "integer",
+          "range": "0-7",
+          "description": "Sprite number"
+        },
+        {
+          "name": "enable",
+          "type": "integer",
+          "range": "0-1",
+          "description": "0=disable sprite, 1=enable sprite"
+        },
+        {
+          "name": "color",
+          "type": "integer",
+          "range": "0-15",
+          "description": "Sprite color (0-15)",
+          "optional": true
+        },
+        {
+          "name": "priority",
+          "type": "integer",
+          "range": "0-1",
+          "description": "0=sprite in front of background, 1=sprite behind background",
+          "optional": true
+        },
+        {
+          "name": "multicolor",
+          "type": "integer",
+          "range": "0-1",
+          "description": "0=single-color (24x21 pixels), 1=multicolor (12x21 pixels, 3 colors)",
+          "optional": true
+        },
+        {
+          "name": "xexpand",
+          "type": "integer",
+          "range": "0-1",
+          "description": "0=normal width, 1=double width",
+          "optional": true
+        },
+        {
+          "name": "yexpand",
+          "type": "integer",
+          "range": "0-1",
+          "description": "0=normal height, 1=double height",
+          "optional": true
+        }
+      ],
+      "example": "SPRITE 0, 1, 1, 0 : REM ENABLE SPRITE 0, WHITE, IN FRONT\nSPRITE 1, 1, 2, 0, 0, 1, 1 : REM ENABLE SPRITE 1, DOUBLE SIZE"
     },
     {
       "keyword": "SPRCOLOR",
@@ -646,7 +1509,22 @@
       "type": "command",
       "category": "graphics",
       "syntax": "SPRCOLOR mc1, mc2",
-      "description": "Set the two shared multicolor sprite colors"
+      "description": "Sets the two shared multicolor registers used by all sprites in multicolor mode. Every multicolor sprite shares these two colors in addition to its own individual color.",
+      "parameters": [
+        {
+          "name": "mc1",
+          "type": "integer",
+          "range": "0-15",
+          "description": "Shared multicolor 1 ($D025)"
+        },
+        {
+          "name": "mc2",
+          "type": "integer",
+          "range": "0-15",
+          "description": "Shared multicolor 2 ($D026)"
+        }
+      ],
+      "example": "SPRCOLOR 0, 7 : REM SHARED COLORS: BLACK AND YELLOW\nSPRITE 0, 1, 1, 0, 1 : REM RED SPRITE IN MULTICOLOR MODE"
     },
     {
       "keyword": "RREG",
@@ -655,7 +1533,22 @@
       "type": "command",
       "category": "system",
       "syntax": "RREG A, X, Y",
-      "description": "Read the 6502 registers A, X, Y after a SYS call into variables"
+      "description": "Reads the CPU register values that were set immediately after the most recent SYS call and stores them in the specified variables. Useful for reading return values from machine language routines.",
+      "parameters": [
+        {
+          "name": "A",
+          "description": "Variable to receive the accumulator value"
+        },
+        {
+          "name": "X",
+          "description": "Variable to receive the X register value"
+        },
+        {
+          "name": "Y",
+          "description": "Variable to receive the Y register value"
+        }
+      ],
+      "example": "SYS 65490 : REM CALL KERNAL GETIN\nRREG A, X, Y\nIF A <> 0 THEN PRINT \"KEY:\"; CHR$(A)"
     },
     {
       "keyword": "ENVELOPE",
@@ -664,8 +1557,54 @@
       "type": "command",
       "category": "sound",
       "syntax": "ENVELOPE n, attack, decay, sustain, release [,waveform [,pulse]]",
-      "description": "Define a numbered sound envelope for use with PLAY",
-      "example": "ENVELOPE 1,0,9,0,0,33,2048"
+      "description": "Defines a numbered SID ADSR sound envelope for use with the PLAY command. The waveform and pulse width parameters set the SID oscillator timbre.",
+      "parameters": [
+        {
+          "name": "n",
+          "type": "integer",
+          "range": "1-9",
+          "description": "Envelope slot number, referenced by X (number) in PLAY strings"
+        },
+        {
+          "name": "attack",
+          "type": "integer",
+          "range": "0-15",
+          "description": "Attack time (0=fastest, 15=slowest)"
+        },
+        {
+          "name": "decay",
+          "type": "integer",
+          "range": "0-15",
+          "description": "Decay time (0=fastest, 15=slowest)"
+        },
+        {
+          "name": "sustain",
+          "type": "integer",
+          "range": "0-15",
+          "description": "Sustain level (0=silent, 15=full volume)"
+        },
+        {
+          "name": "release",
+          "type": "integer",
+          "range": "0-15",
+          "description": "Release time (0=fastest, 15=slowest)"
+        },
+        {
+          "name": "waveform",
+          "type": "integer",
+          "range": "0-4",
+          "description": "Waveform: 0=triangle, 1=sawtooth, 2=square/pulse, 3=noise, 4=ring modulation",
+          "optional": true
+        },
+        {
+          "name": "pulse",
+          "type": "integer",
+          "range": "0-4095",
+          "description": "Pulse width for square wave (waveform=2 only)",
+          "optional": true
+        }
+      ],
+      "example": "ENVELOPE 1, 0, 9, 0, 0, 1 : REM FAST PLUCK, SAWTOOTH\nPLAY \"X1 O4 CDEFGAB\""
     },
     {
       "keyword": "SLEEP",
@@ -674,8 +1613,16 @@
       "type": "command",
       "category": "system",
       "syntax": "SLEEP n",
-      "description": "Pause execution for n seconds",
-      "example": "SLEEP 2"
+      "description": "Pauses program execution for n seconds. The delay continues until the time elapses; keystrokes are buffered but not processed during the sleep.",
+      "parameters": [
+        {
+          "name": "n",
+          "type": "float",
+          "range": "0-",
+          "description": "Number of seconds to pause (fractional values supported)"
+        }
+      ],
+      "example": "PRINT \"WAIT 3 SECONDS...\"\nSLEEP 3\nPRINT \"DONE\""
     },
     {
       "keyword": "CATALOG",
@@ -683,8 +1630,31 @@
       "token": 12,
       "type": "command",
       "category": "io",
-      "syntax": "CATALOG [drive] [,pattern$]",
-      "description": "Display disk directory (alias for DIRECTORY)"
+      "syntax": "CATALOG [pattern$] [,D drive] [,U unit]",
+      "description": "Lists the disk directory. Alias for DIRECTORY.",
+      "parameters": [
+        {
+          "name": "pattern$",
+          "type": "string",
+          "description": "Optional filename filter with wildcards",
+          "optional": true
+        },
+        {
+          "name": "drive",
+          "type": "integer",
+          "range": "0-1",
+          "description": "Drive number for dual-drive units",
+          "optional": true
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "description": "IEC device number (default: 8)",
+          "optional": true
+        }
+      ],
+      "example": "CATALOG\nCATALOG \"*.PRG\""
     },
     {
       "keyword": "DOPEN",
@@ -693,8 +1663,39 @@
       "type": "command",
       "category": "io",
       "syntax": "DOPEN #channel, \"filename\" [,D drive] [,U unit] [,W]",
-      "description": "Open a disk file for sequential reading or writing",
-      "example": "DOPEN #1,\"DATA\",W"
+      "description": "Opens a sequential disk file on the specified logical channel. Use W flag to open for writing (creates new file). Without W, opens for reading. Use DCLOSE to close the file.",
+      "parameters": [
+        {
+          "name": "#channel",
+          "type": "integer",
+          "range": "1-15",
+          "description": "Logical channel number"
+        },
+        {
+          "name": "filename",
+          "type": "string"
+        },
+        {
+          "name": "drive",
+          "type": "integer",
+          "range": "0-1",
+          "description": "Drive number for dual-drive units",
+          "optional": true
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "description": "IEC device number (default: 8)",
+          "optional": true
+        },
+        {
+          "name": "W",
+          "description": "Open for writing (creates or overwrites the file)",
+          "optional": true
+        }
+      ],
+      "example": "DOPEN #2, \"DATA\", W\nPRINT #2, \"LINE 1\"\nDCLOSE #2\n\nDOPEN #3, \"DATA\"\nINPUT #3, A$\nDCLOSE #3"
     },
     {
       "keyword": "APPEND",
@@ -703,7 +1704,27 @@
       "type": "command",
       "category": "io",
       "syntax": "APPEND #channel, \"filename\" [,U unit]",
-      "description": "Open a disk file for appending"
+      "description": "Opens a sequential disk file for appending. New data written to the channel is added after the existing file content.",
+      "parameters": [
+        {
+          "name": "#channel",
+          "type": "integer",
+          "range": "1-15",
+          "description": "Logical channel number"
+        },
+        {
+          "name": "filename",
+          "type": "string"
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "description": "IEC device number (default: 8)",
+          "optional": true
+        }
+      ],
+      "example": "APPEND #2, \"LOG\"\nPRINT #2, \"NEW ENTRY\"\nDCLOSE #2"
     },
     {
       "keyword": "DCLOSE",
@@ -712,7 +1733,17 @@
       "type": "command",
       "category": "io",
       "syntax": "DCLOSE [#channel]",
-      "description": "Close a disk file or all open disk files"
+      "description": "Closes a disk file opened with DOPEN or APPEND. Without a channel number, closes all open disk files.",
+      "parameters": [
+        {
+          "name": "#channel",
+          "type": "integer",
+          "range": "1-15",
+          "description": "Logical channel to close. Omit to close all open channels.",
+          "optional": true
+        }
+      ],
+      "example": "DCLOSE #2 : REM CLOSE CHANNEL 2\nDCLOSE : REM CLOSE ALL CHANNELS"
     },
     {
       "keyword": "BSAVE",
@@ -721,8 +1752,39 @@
       "type": "command",
       "category": "io",
       "syntax": "BSAVE \"filename\", B bank, P start TO P end [,U unit]",
-      "description": "Save a block of memory to disk",
-      "example": "BSAVE \"SCREEN\",B0,P2048 TO P3047"
+      "description": "Saves a block of memory from the specified bank to a binary file on disk. The file is saved without a PRG load address header.",
+      "parameters": [
+        {
+          "name": "filename",
+          "type": "string"
+        },
+        {
+          "name": "bank",
+          "type": "integer",
+          "range": "0-15",
+          "description": "Memory bank number (B keyword required)"
+        },
+        {
+          "name": "start",
+          "type": "integer",
+          "range": "0-65535",
+          "description": "Start address in the bank (P keyword required)"
+        },
+        {
+          "name": "end",
+          "type": "integer",
+          "range": "0-65535",
+          "description": "End address (exclusive) in the bank (P keyword required after TO)"
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "description": "IEC device number (default: 8)",
+          "optional": true
+        }
+      ],
+      "example": "BSAVE \"SCREEN\", B0, P2048 TO P3047 : REM SAVE VIC-II SCREEN RAM"
     },
     {
       "keyword": "BLOAD",
@@ -731,8 +1793,35 @@
       "type": "command",
       "category": "io",
       "syntax": "BLOAD \"filename\" [,B bank] [,P address] [,U unit]",
-      "description": "Load a binary file from disk to memory",
-      "example": "BLOAD \"SPRITES\""
+      "description": "Loads a binary file from disk into memory at the specified bank and address. If no address is given, loads to the address stored in the PRG header.",
+      "parameters": [
+        {
+          "name": "filename",
+          "type": "string"
+        },
+        {
+          "name": "bank",
+          "type": "integer",
+          "range": "0-15",
+          "description": "Destination memory bank (B keyword required)",
+          "optional": true
+        },
+        {
+          "name": "address",
+          "type": "integer",
+          "range": "0-65535",
+          "description": "Destination address (P keyword required; overrides PRG header)",
+          "optional": true
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "description": "IEC device number (default: 8)",
+          "optional": true
+        }
+      ],
+      "example": "BLOAD \"SPRITES\" : REM LOAD TO HEADER ADDRESS\nBLOAD \"DATA\", B1, P 4096 : REM LOAD TO BANK 1 AT $1000"
     },
     {
       "keyword": "RECORD",
@@ -741,7 +1830,27 @@
       "type": "command",
       "category": "io",
       "syntax": "RECORD #channel, record [,byte]",
-      "description": "Position to a record in a relative file"
+      "description": "Seeks to a specific record in a relative (random-access) disk file opened with OPEN using record-length syntax. The optional byte parameter positions within the record.",
+      "parameters": [
+        {
+          "name": "#channel",
+          "type": "integer",
+          "description": "Logical channel number of the open relative file"
+        },
+        {
+          "name": "record",
+          "type": "integer",
+          "range": "1-65535",
+          "description": "1-based record number to seek to"
+        },
+        {
+          "name": "byte",
+          "type": "integer",
+          "description": "Byte position within the record (1-based)",
+          "optional": true
+        }
+      ],
+      "example": "OPEN 8, 8, 8, \"REL,L,\" + CHR$(64)\nRECORD #8, 5 : REM SEEK TO RECORD 5\nPRINT #8, \"DATA\"\nCLOSE 8"
     },
     {
       "keyword": "CONCAT",
@@ -750,7 +1859,27 @@
       "type": "command",
       "category": "io",
       "syntax": "CONCAT \"source\" TO \"dest\" [,U unit]",
-      "description": "Concatenate (append) one disk file to another"
+      "description": "Appends the contents of the source file to the end of the destination file. The source file is unchanged; the destination file must already exist.",
+      "parameters": [
+        {
+          "name": "source",
+          "type": "string",
+          "description": "Source filename to append from"
+        },
+        {
+          "name": "dest",
+          "type": "string",
+          "description": "Destination filename to append to"
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "description": "IEC device number (default: 8)",
+          "optional": true
+        }
+      ],
+      "example": "CONCAT \"PART2\" TO \"PART1\""
     },
     {
       "keyword": "DVERIFY",
@@ -759,7 +1888,21 @@
       "type": "command",
       "category": "io",
       "syntax": "DVERIFY \"filename\" [,U unit]",
-      "description": "Verify a saved BASIC program against the disk copy"
+      "description": "Verifies that the BASIC program currently in memory matches the specified file on disk, byte for byte.",
+      "parameters": [
+        {
+          "name": "filename",
+          "type": "string"
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "description": "IEC device number (default: 8)",
+          "optional": true
+        }
+      ],
+      "example": "DSAVE \"MYPROG\"\nDVERIFY \"MYPROG\" : REM CONFIRM SAVE"
     },
     {
       "keyword": "DCLEAR",
@@ -768,7 +1911,17 @@
       "type": "command",
       "category": "io",
       "syntax": "DCLEAR [,U unit]",
-      "description": "Initialize disk drive and close all channels"
+      "description": "Initializes the disk drive and closes all open disk channels. Use before switching disks or to recover from disk errors.",
+      "parameters": [
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "description": "IEC device number (default: 8)",
+          "optional": true
+        }
+      ],
+      "example": "DCLEAR : REM RESET DEFAULT DRIVE\nDCLEAR, U9 : REM RESET DRIVE AT UNIT 9"
     },
     {
       "keyword": "SPRSAV",
@@ -777,7 +1930,21 @@
       "type": "command",
       "category": "graphics",
       "syntax": "SPRSAV sprite, string$",
-      "description": "Save or restore sprite shape data to/from a string variable"
+      "description": "Copies sprite shape data between a hardware sprite slot and a string variable. If string$ is a variable receiving data, sprite shape is copied from the sprite definition block to string$ (63 bytes). If string$ contains data, it is copied to the sprite definition block.",
+      "parameters": [
+        {
+          "name": "sprite",
+          "type": "integer",
+          "range": "0-7",
+          "description": "Sprite number to save or restore"
+        },
+        {
+          "name": "string$",
+          "type": "string",
+          "description": "String variable for the 63-byte sprite shape data"
+        }
+      ],
+      "example": "SPRSAV 0, S$ : REM SAVE SPRITE 0 DATA TO S$\nSPRSAV 1, S$ : REM COPY SAME DATA TO SPRITE 1"
     },
     {
       "keyword": "COLLISION",
@@ -786,21 +1953,21 @@
       "type": "command",
       "category": "graphics",
       "syntax": "COLLISION type, line",
-      "description": "Set up a collision interrupt handler — on collision, GOTO line",
+      "description": "Sets up a collision interrupt handler. When the specified collision type occurs, execution branches to the given line number. Set line to 0 to disable the handler.",
       "parameters": [
         {
           "name": "type",
           "type": "integer",
           "range": "1-2",
-          "description": "1=sprite-sprite, 2=sprite-background"
+          "description": "1=sprite-sprite collision, 2=sprite-background collision"
         },
         {
           "name": "line",
           "type": "integer",
-          "description": "Line number to GOTO on collision"
+          "description": "Line number to branch to on collision, or 0 to disable"
         }
       ],
-      "example": "COLLISION 1,5000"
+      "example": "COLLISION 1, 5000 : REM SPRITE-SPRITE -> LINE 5000\n5000 C = BUMP(1) : REM READ WHICH SPRITES COLLIDED\n5010 RETURN"
     },
     {
       "keyword": "BEGIN",
@@ -809,8 +1976,8 @@
       "type": "conditional",
       "category": "flow",
       "syntax": "BEGIN",
-      "description": "Begin a multi-statement THEN or ELSE block (paired with BEND)",
-      "example": "IF X>10 THEN BEGIN\n  PRINT \"BIG\"\n  X=0\nBEND"
+      "description": "Begins a multi-statement block following THEN or ELSE. Paired with BEND, allows multiple statements to be executed conditionally across multiple program lines.",
+      "example": "10 IF X > 10 THEN BEGIN\n20   PRINT \"X IS BIG\"\n30   X = 0\n40 BEND ELSE BEGIN\n50   PRINT \"X IS SMALL\"\n60 BEND"
     },
     {
       "keyword": "BEND",
@@ -819,7 +1986,8 @@
       "type": "conditional",
       "category": "flow",
       "syntax": "BEND",
-      "description": "End a BEGIN block"
+      "description": "Closes a BEGIN block. See BEGIN for usage.",
+      "example": "10 IF X > 0 THEN BEGIN\n20   PRINT \"POSITIVE\"\n30 BEND"
     },
     {
       "keyword": "WINDOW",
@@ -828,8 +1996,41 @@
       "type": "command",
       "category": "screen",
       "syntax": "WINDOW x1, y1, x2, y2 [,clear]",
-      "description": "Define a text window",
-      "example": "WINDOW 5,5,35,20,1"
+      "description": "Defines a text window on the screen. Subsequent PRINT output stays within the window boundaries. The cursor wraps at the right edge and scrolls within the window.",
+      "parameters": [
+        {
+          "name": "x1",
+          "type": "integer",
+          "range": "0-79",
+          "description": "Left column of the window"
+        },
+        {
+          "name": "y1",
+          "type": "integer",
+          "range": "0-24",
+          "description": "Top row of the window"
+        },
+        {
+          "name": "x2",
+          "type": "integer",
+          "range": "0-79",
+          "description": "Right column of the window"
+        },
+        {
+          "name": "y2",
+          "type": "integer",
+          "range": "0-24",
+          "description": "Bottom row of the window"
+        },
+        {
+          "name": "clear",
+          "type": "integer",
+          "range": "0-1",
+          "description": "1=clear the window after defining it",
+          "optional": true
+        }
+      ],
+      "example": "WINDOW 5, 5, 35, 20, 1 : REM DEFINE AND CLEAR A WINDOW\nPRINT \"TEXT INSIDE WINDOW\""
     },
     {
       "keyword": "BOOT",
@@ -838,7 +2039,23 @@
       "type": "command",
       "category": "system",
       "syntax": "BOOT [\"filename\"] [,U unit]",
-      "description": "Load and run a boot program from disk"
+      "description": "Loads and runs a boot program from disk. Without a filename, attempts to load a file named AUTOBOOT.128. This is commonly used to chain programs or load a new program from BASIC.",
+      "parameters": [
+        {
+          "name": "filename",
+          "type": "string",
+          "description": "Name of the program file to load and run (default: AUTOBOOT.128)",
+          "optional": true
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "description": "IEC device number (default: 8)",
+          "optional": true
+        }
+      ],
+      "example": "BOOT \"MENU\"\nBOOT : REM LOAD AUTOBOOT.128"
     },
     {
       "keyword": "STASH",
@@ -846,8 +2063,35 @@
       "token": 31,
       "type": "command",
       "category": "memory",
-      "syntax": "STASH count, source, dest, bank",
-      "description": "Copy bytes from main memory to a specified RAM bank"
+      "syntax": "STASH count, B bank, P source TO P dest",
+      "description": "Copies count bytes from address source in the current main memory into address dest in the specified RAM bank. Useful for moving data to common RAM banks that are not normally visible.",
+      "parameters": [
+        {
+          "name": "count",
+          "type": "integer",
+          "range": "1-65535",
+          "description": "Number of bytes to copy"
+        },
+        {
+          "name": "bank",
+          "type": "integer",
+          "range": "0-15",
+          "description": "Destination bank number (B keyword required)"
+        },
+        {
+          "name": "source",
+          "type": "integer",
+          "range": "0-65535",
+          "description": "Source address in main memory (P keyword required)"
+        },
+        {
+          "name": "dest",
+          "type": "integer",
+          "range": "0-65535",
+          "description": "Destination address in the target bank (P keyword required after TO)"
+        }
+      ],
+      "example": "STASH 1024, B 1, P 4096 TO P 4096 : REM COPY 1K TO BANK 1"
     },
     {
       "keyword": "FETCH",
@@ -855,8 +2099,35 @@
       "token": 33,
       "type": "command",
       "category": "memory",
-      "syntax": "FETCH count, source, dest, bank",
-      "description": "Copy bytes from a RAM bank into main memory"
+      "syntax": "FETCH count, B bank, P source TO P dest",
+      "description": "Copies count bytes from address source in the specified RAM bank into address dest in the current main memory. Reverses the operation of STASH.",
+      "parameters": [
+        {
+          "name": "count",
+          "type": "integer",
+          "range": "1-65535",
+          "description": "Number of bytes to copy"
+        },
+        {
+          "name": "bank",
+          "type": "integer",
+          "range": "0-15",
+          "description": "Source bank number (B keyword required)"
+        },
+        {
+          "name": "source",
+          "type": "integer",
+          "range": "0-65535",
+          "description": "Source address in the specified bank (P keyword required)"
+        },
+        {
+          "name": "dest",
+          "type": "integer",
+          "range": "0-65535",
+          "description": "Destination address in main memory (P keyword required after TO)"
+        }
+      ],
+      "example": "FETCH 1024, B 1, P 4096 TO P 4096 : REM COPY 1K FROM BANK 1"
     },
     {
       "keyword": "SWAP",
@@ -864,8 +2135,35 @@
       "token": 35,
       "type": "command",
       "category": "memory",
-      "syntax": "SWAP count, source, dest, bank",
-      "description": "Exchange bytes between main memory and a RAM bank"
+      "syntax": "SWAP count, B bank, P source TO P dest",
+      "description": "Exchanges count bytes between address source in main memory and address dest in the specified RAM bank. Both regions are updated simultaneously.",
+      "parameters": [
+        {
+          "name": "count",
+          "type": "integer",
+          "range": "1-65535",
+          "description": "Number of bytes to exchange"
+        },
+        {
+          "name": "bank",
+          "type": "integer",
+          "range": "0-15",
+          "description": "Bank number to swap with (B keyword required)"
+        },
+        {
+          "name": "source",
+          "type": "integer",
+          "range": "0-65535",
+          "description": "Address in main memory (P keyword required)"
+        },
+        {
+          "name": "dest",
+          "type": "integer",
+          "range": "0-65535",
+          "description": "Address in the specified bank (P keyword required after TO)"
+        }
+      ],
+      "example": "SWAP 2048, B 0, P 2048 TO P 2048 : REM SWAP SCREEN CONTENTS WITH BANK 0"
     },
     {
       "keyword": "FAST",
@@ -874,8 +2172,9 @@
       "type": "command",
       "category": "system",
       "syntax": "FAST",
-      "description": "Switch the C128 CPU to 2 MHz fast mode",
-      "notes": "Blanks the screen — use SLOW to restore"
+      "description": "Switches the C128 CPU to 2 MHz mode. The VIC-II screen is blanked while in 2 MHz mode because the VIC-II bus contention prevents normal display refresh at that speed. Use SLOW to return to 1 MHz and restore the display.",
+      "notes": "Blanks the screen — use SLOW to restore display",
+      "example": "FAST : REM SWITCH TO 2 MHZ\nFOR I=1 TO 10000 : NEXT I : REM FAST LOOP\nSLOW : REM RETURN TO 1 MHZ"
     },
     {
       "keyword": "SLOW",
@@ -884,7 +2183,8 @@
       "type": "command",
       "category": "system",
       "syntax": "SLOW",
-      "description": "Switch the C128 CPU back to 1 MHz mode and restore screen"
+      "description": "Returns the C128 CPU to 1 MHz mode and restores the VIC-II display. Use after FAST to make the screen visible again.",
+      "example": "FAST\nFOR I=1 TO 10000 : NEXT I\nSLOW"
     }
   ]
 }

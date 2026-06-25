@@ -1,0 +1,1085 @@
+{
+  "name": "Commodore BASIC 3.5",
+  "version": "1.0",
+  "author": "Thomas Knox",
+  "description": "BASIC 3.5 for the Commodore Plus/4, C16, and C116 (all TED-chip machines). Extends BASIC 2.0 with graphics, sound, structured flow control, disk management, error handling, and TED hardware functions. Token values $CC-$FD have been cross-verified against the MEGA65 BASIC 65 lineage and are reliable. Load address is $1001 (4097 decimal).",
+  "url": "https://www.c64-wiki.com/wiki/Commodore_BASIC",
+  "extendsBasicV2": true,
+  "loadAddress": 4097,
+  "requiresSYSStub": true,
+  "keywords": [
+    {
+      "keyword": "AUTO",
+      "token": 220,
+      "type": "command",
+      "category": "editor",
+      "syntax": "AUTO [start [, step]]",
+      "description": "Enables automatic line numbering during program entry. After each line is entered, the next line number is automatically displayed. AUTO with no arguments disables the feature.",
+      "parameters": [
+        {
+          "name": "start",
+          "type": "integer",
+          "description": "Starting line number (default: 10)",
+          "optional": true
+        },
+        {
+          "name": "step",
+          "type": "integer",
+          "description": "Increment between line numbers (default: 10)",
+          "optional": true
+        }
+      ],
+      "example": "AUTO 100, 10"
+    },
+    {
+      "keyword": "BACKUP",
+      "token": 246,
+      "type": "io",
+      "category": "io",
+      "syntax": "BACKUP U source TO U target",
+      "description": "Copies all files from one disk drive to another.",
+      "parameters": [
+        {
+          "name": "source",
+          "type": "integer",
+          "range": "8-11",
+          "description": "Device number of the source drive"
+        },
+        {
+          "name": "target",
+          "type": "integer",
+          "range": "8-11",
+          "description": "Device number of the destination drive"
+        }
+      ],
+      "example": "BACKUP U8 TO U9"
+    },
+    {
+      "keyword": "BOX",
+      "token": 225,
+      "type": "graphics",
+      "category": "graphics",
+      "syntax": "BOX color, x1, y1, x2, y2 [, fill]",
+      "description": "Draws a rectangle on the graphics screen from (x1,y1) to (x2,y2) using the specified color. Set fill to 1 for a filled rectangle.",
+      "parameters": [
+        {
+          "name": "color",
+          "type": "integer",
+          "range": "0-15"
+        },
+        {
+          "name": "x1",
+          "type": "integer",
+          "description": "Left column"
+        },
+        {
+          "name": "y1",
+          "type": "integer",
+          "description": "Top row"
+        },
+        {
+          "name": "x2",
+          "type": "integer",
+          "description": "Right column"
+        },
+        {
+          "name": "y2",
+          "type": "integer",
+          "description": "Bottom row"
+        },
+        {
+          "name": "fill",
+          "type": "integer",
+          "range": "0-1",
+          "description": "0=outline only, 1=filled",
+          "optional": true
+        }
+      ],
+      "example": "GRAPHIC 1,1\nBOX 1, 10, 10, 150, 90"
+    },
+    {
+      "keyword": "CHAR",
+      "token": 224,
+      "type": "graphics",
+      "category": "graphics",
+      "syntax": "CHAR color, column, row, string$",
+      "description": "Displays text on the current graphics screen at the specified column and row using the given foreground color.",
+      "parameters": [
+        {
+          "name": "color",
+          "type": "integer",
+          "range": "0-15"
+        },
+        {
+          "name": "column",
+          "type": "integer",
+          "description": "Horizontal character position"
+        },
+        {
+          "name": "row",
+          "type": "integer",
+          "description": "Vertical character position"
+        },
+        {
+          "name": "string$",
+          "type": "string",
+          "description": "The text to display"
+        }
+      ],
+      "example": "GRAPHIC 1,1\nCHAR 1, 5, 10, \"HELLO\""
+    },
+    {
+      "keyword": "CIRCLE",
+      "token": 226,
+      "type": "graphics",
+      "category": "graphics",
+      "syntax": "CIRCLE color, x, y, radius_x [, radius_y [, start_angle, end_angle]]",
+      "description": "Draws a circle or ellipse on the graphics screen. Specify both radius values for an ellipse, or one value for a circle. Angles are in degrees.",
+      "parameters": [
+        {
+          "name": "color",
+          "type": "integer",
+          "range": "0-15"
+        },
+        {
+          "name": "x",
+          "type": "integer",
+          "description": "Center X coordinate"
+        },
+        {
+          "name": "y",
+          "type": "integer",
+          "description": "Center Y coordinate"
+        },
+        {
+          "name": "radius_x",
+          "type": "integer",
+          "description": "Horizontal radius"
+        },
+        {
+          "name": "radius_y",
+          "type": "integer",
+          "description": "Vertical radius (optional; defaults to radius_x for a circle)",
+          "optional": true
+        },
+        {
+          "name": "start_angle",
+          "type": "integer",
+          "range": "0-360",
+          "description": "Start angle for arc drawing",
+          "optional": true
+        },
+        {
+          "name": "end_angle",
+          "type": "integer",
+          "range": "0-360",
+          "description": "End angle for arc drawing",
+          "optional": true
+        }
+      ],
+      "example": "GRAPHIC 1,1\nCIRCLE 1, 160, 100, 50"
+    },
+    {
+      "keyword": "COLLECT",
+      "token": 243,
+      "type": "io",
+      "category": "io",
+      "syntax": "COLLECT [U unit]",
+      "description": "Validates the disk and reclaims blocks from unclosed (splat) files. Use with caution - splat files are permanently discarded.",
+      "parameters": [
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "optional": true,
+          "description": "IEEE-488 device number"
+        }
+      ],
+      "example": "COLLECT U8"
+    },
+    {
+      "keyword": "COLOR",
+      "token": 231,
+      "type": "command",
+      "category": "screen",
+      "syntax": "COLOR source, color [, luminance]",
+      "description": "Sets a color register on the TED chip. Source selects which color source to change: 0=background, 1=foreground (text), 2=multi-color 1, 3=multi-color 2, 4=border.",
+      "parameters": [
+        {
+          "name": "source",
+          "type": "integer",
+          "range": "0-4",
+          "description": "0=background, 1=foreground, 2=multi-color 1, 3=multi-color 2, 4=border"
+        },
+        {
+          "name": "color",
+          "type": "integer",
+          "range": "0-15",
+          "description": "Color value (0=black, 1=white, 2=red, 3=cyan, 4=purple, 5=green, 6=blue, 7=yellow, 8=orange, 9=brown, 10=yellow-green, 11=pink, 12=blue-green, 13=light blue, 14=dark blue, 15=light green)"
+        },
+        {
+          "name": "luminance",
+          "type": "integer",
+          "range": "0-7",
+          "description": "Luminance (brightness) level",
+          "optional": true
+        }
+      ],
+      "example": "COLOR 0, 6 : REM BLUE BACKGROUND\nCOLOR 1, 1, 7 : REM BRIGHT WHITE TEXT"
+    },
+    {
+      "keyword": "COPY",
+      "token": 244,
+      "type": "io",
+      "category": "io",
+      "syntax": "COPY \"source\" [,U unit] TO \"target\" [,U unit]",
+      "description": "Copies a file on disk to a new name or to a different drive.",
+      "parameters": [
+        {
+          "name": "source",
+          "type": "string",
+          "description": "Source filename"
+        },
+        {
+          "name": "target",
+          "type": "string",
+          "description": "Destination filename"
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "optional": true,
+          "description": "IEEE-488 device number"
+        }
+      ],
+      "example": "COPY \"PROG\" TO \"BACKUP\"\nCOPY \"PROG\", U8 TO \"PROG\", U9"
+    },
+    {
+      "keyword": "DEC",
+      "token": 209,
+      "type": "function",
+      "category": "system",
+      "syntax": "DEC(hex_string)",
+      "description": "Returns the decimal integer value of a hexadecimal string. The string may contain 1-4 hex digits (0-9, A-F).",
+      "parameters": [
+        {
+          "name": "hex_string",
+          "type": "string",
+          "description": "A string of 1-4 hexadecimal digits"
+        }
+      ],
+      "example": "PRINT DEC(\"FF\")\n255\n\nPRINT DEC(\"1000\")\n4096"
+    },
+    {
+      "keyword": "DELETE",
+      "token": 247,
+      "type": "command",
+      "category": "editor",
+      "syntax": "DELETE [line | first_line - last_line]",
+      "description": "Deletes a BASIC program line or a range of lines.",
+      "parameters": [
+        {
+          "name": "line",
+          "type": "integer",
+          "description": "A single line number to delete",
+          "optional": true
+        },
+        {
+          "name": "first_line",
+          "type": "integer",
+          "description": "Start of range to delete",
+          "optional": true
+        },
+        {
+          "name": "last_line",
+          "type": "integer",
+          "description": "End of range to delete",
+          "optional": true
+        }
+      ],
+      "example": "DELETE 100\nDELETE 200-500"
+    },
+    {
+      "keyword": "DIRECTORY",
+      "token": 238,
+      "type": "io",
+      "category": "io",
+      "syntax": "DIRECTORY [\"pattern\"] [,U unit]",
+      "description": "Lists the directory of the disk in the specified drive. Supports * and ? wildcards in the pattern.",
+      "parameters": [
+        {
+          "name": "pattern",
+          "type": "string",
+          "optional": true,
+          "description": "Filename pattern with optional wildcards"
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "optional": true,
+          "description": "IEEE-488 device number"
+        }
+      ],
+      "example": "DIRECTORY\nDIRECTORY \"G*\"\nDIRECTORY \"*\", U9"
+    },
+    {
+      "keyword": "DLOAD",
+      "token": 240,
+      "type": "io",
+      "category": "io",
+      "syntax": "DLOAD \"filename\" [,U unit]",
+      "description": "Loads a PRG file from disk.",
+      "parameters": [
+        {
+          "name": "filename",
+          "type": "string"
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "optional": true,
+          "description": "IEEE-488 device number. Defaults to unit 8."
+        }
+      ],
+      "example": "DLOAD \"MYPROG\"\nDLOAD \"TEST\", U9"
+    },
+    {
+      "keyword": "DO",
+      "token": 235,
+      "type": "command",
+      "category": "loop",
+      "syntax": "DO",
+      "description": "Marks the beginning of a DO...LOOP block. The block repeats until a LOOP UNTIL or LOOP WHILE condition terminates it, or EXIT is used.",
+      "example": "10 I = 0\n20 DO\n30   I = I + 1\n40   PRINT I\n50 LOOP UNTIL I >= 10"
+    },
+    {
+      "keyword": "DRAW",
+      "token": 229,
+      "type": "graphics",
+      "category": "graphics",
+      "syntax": "DRAW color, x1, y1 [TO x2, y2 [TO ...]]",
+      "description": "Draws a point or a sequence of connected lines on the graphics screen. Each TO clause extends the line to a new coordinate.",
+      "parameters": [
+        {
+          "name": "color",
+          "type": "integer",
+          "range": "0-15"
+        },
+        {
+          "name": "x1",
+          "type": "integer",
+          "description": "Starting X coordinate"
+        },
+        {
+          "name": "y1",
+          "type": "integer",
+          "description": "Starting Y coordinate"
+        },
+        {
+          "name": "x2",
+          "type": "integer",
+          "description": "Next X coordinate",
+          "optional": true
+        },
+        {
+          "name": "y2",
+          "type": "integer",
+          "description": "Next Y coordinate",
+          "optional": true
+        }
+      ],
+      "example": "GRAPHIC 1,1\nDRAW 1, 0, 0 TO 319, 199\nDRAW 1, 0, 199 TO 319, 0"
+    },
+    {
+      "keyword": "DSAVE",
+      "token": 239,
+      "type": "io",
+      "category": "io",
+      "syntax": "DSAVE \"filename\" [,U unit]",
+      "description": "Saves the BASIC program in memory to a PRG file on disk.",
+      "parameters": [
+        {
+          "name": "filename",
+          "type": "string"
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "optional": true,
+          "description": "IEEE-488 device number. Defaults to unit 8."
+        }
+      ],
+      "example": "DSAVE \"MYPROG\"\nDSAVE \"BACKUP\", U9"
+    },
+    {
+      "keyword": "ELSE",
+      "token": 213,
+      "type": "conditional",
+      "category": "flow",
+      "syntax": "IF condition THEN statements : ELSE statements",
+      "description": "Introduces the alternative branch of an IF...THEN statement. In BASIC 3.5, ELSE is a proper token (unlike BASIC 2.0 where it was treated as a label).",
+      "example": "10 IF X > 5 THEN PRINT \"BIG\" : ELSE PRINT \"SMALL\""
+    },
+    {
+      "keyword": "ERR$",
+      "token": 211,
+      "type": "function",
+      "category": "system",
+      "syntax": "ERR$(error_number)",
+      "description": "Returns the text description of the BASIC error with the given number. The reserved variable ER holds the current error number inside a TRAP handler.",
+      "parameters": [
+        {
+          "name": "error_number",
+          "type": "integer",
+          "range": "1-41",
+          "description": "BASIC error number. Use ER inside a TRAP handler."
+        }
+      ],
+      "example": "10 TRAP 100\n20 X = 1/0\n30 PRINT \"OK\"\n40 END\n100 PRINT ERR$(ER); \" IN LINE\"; EL\n110 RESUME 30"
+    },
+    {
+      "keyword": "EXIT",
+      "token": 237,
+      "type": "command",
+      "category": "loop",
+      "syntax": "EXIT",
+      "description": "Immediately exits the current DO...LOOP block and continues execution after the LOOP statement.",
+      "example": "10 I = 0\n20 DO\n30   I = I + 1\n40   IF I = 5 THEN EXIT\n50 LOOP WHILE I < 100\n60 PRINT \"EXITED AT\"; I"
+    },
+    {
+      "keyword": "GRAPHIC",
+      "token": 222,
+      "type": "graphics",
+      "category": "graphics",
+      "syntax": "GRAPHIC mode [, clear_flag]",
+      "description": "Sets the graphics display mode. Mode 0 returns to text mode. Mode 1 enables high-resolution bitmap (320x200). Mode 2 enables multicolor bitmap (160x200). Modes 3 and 4 are split-screen variants.",
+      "parameters": [
+        {
+          "name": "mode",
+          "type": "integer",
+          "range": "0-4",
+          "description": "0=text, 1=hires bitmap, 2=multicolor bitmap, 3=split-screen hires, 4=split-screen multicolor"
+        },
+        {
+          "name": "clear_flag",
+          "type": "integer",
+          "range": "0-1",
+          "description": "1=clear screen after switching mode",
+          "optional": true
+        }
+      ],
+      "example": "GRAPHIC 1, 1 : REM HIRES, CLEAR SCREEN\nGRAPHIC 0 : REM RETURN TO TEXT"
+    },
+    {
+      "keyword": "GSHAPE",
+      "token": 227,
+      "type": "graphics",
+      "category": "graphics",
+      "syntax": "GSHAPE dest$, x1, y1, x2, y2",
+      "description": "Copies a rectangular region of the current graphics screen into a string variable for later use with SSHAPE.",
+      "parameters": [
+        {
+          "name": "dest$",
+          "type": "string",
+          "description": "String variable to store the captured shape data"
+        },
+        {
+          "name": "x1",
+          "type": "integer",
+          "description": "Left column of the region to capture"
+        },
+        {
+          "name": "y1",
+          "type": "integer",
+          "description": "Top row of the region to capture"
+        },
+        {
+          "name": "x2",
+          "type": "integer",
+          "description": "Right column of the region to capture"
+        },
+        {
+          "name": "y2",
+          "type": "integer",
+          "description": "Bottom row of the region to capture"
+        }
+      ],
+      "example": "GSHAPE S$, 0, 0, 63, 63\nREM RESTORE LATER WITH: SSHAPE S$, 100, 50"
+    },
+    {
+      "keyword": "HEADER",
+      "token": 241,
+      "type": "io",
+      "category": "io",
+      "syntax": "HEADER \"diskname\", I\"id\" [,U unit]",
+      "description": "Formats a disk. This is a destructive operation that erases all data. The disk name may be up to 16 characters and the ID is 2 characters.",
+      "parameters": [
+        {
+          "name": "diskname",
+          "type": "string",
+          "description": "Name to assign to the disk (up to 16 characters)"
+        },
+        {
+          "name": "id",
+          "type": "string",
+          "description": "Two-character disk ID (e.g. I\"AB\")"
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "optional": true,
+          "description": "IEEE-488 device number"
+        }
+      ],
+      "example": "HEADER \"MY DISK\", I\"MD\""
+    },
+    {
+      "keyword": "HELP",
+      "token": 234,
+      "type": "command",
+      "category": "system",
+      "syntax": "HELP",
+      "description": "Displays the line in the current BASIC program where the most recent error occurred, with the offending portion highlighted."
+    },
+    {
+      "keyword": "HEX$",
+      "token": 210,
+      "type": "function",
+      "category": "system",
+      "syntax": "HEX$(numeric_expression)",
+      "description": "Returns a string containing the hexadecimal representation of the integer part of the argument. Always returns exactly 4 uppercase hex digits.",
+      "parameters": [
+        {
+          "name": "numeric_expression",
+          "type": "integer",
+          "range": "0-65535"
+        }
+      ],
+      "example": "PRINT HEX$(255)\nFF\n\nPRINT HEX$(4096)\n1000"
+    },
+    {
+      "keyword": "INSTR",
+      "token": 212,
+      "type": "function",
+      "category": "system",
+      "syntax": "INSTR(haystack$, needle$ [, start])",
+      "description": "Returns the position of the first occurrence of needle$ within haystack$. Returns 0 if not found. The optional start argument specifies the character position to begin the search.",
+      "parameters": [
+        {
+          "name": "haystack$",
+          "type": "string",
+          "description": "The string to search in"
+        },
+        {
+          "name": "needle$",
+          "type": "string",
+          "description": "The string to search for"
+        },
+        {
+          "name": "start",
+          "type": "integer",
+          "description": "Starting character position for the search (1-based)",
+          "optional": true
+        }
+      ],
+      "example": "PRINT INSTR(\"HELLO WORLD\", \"WORLD\")\n7"
+    },
+    {
+      "keyword": "JOY",
+      "token": 207,
+      "type": "function",
+      "category": "system",
+      "syntax": "JOY(port)",
+      "description": "Reads the current state of a joystick port. Returns a bitmask where bits 0-3 indicate direction (up/down/left/right) and bit 4 indicates the fire button.",
+      "parameters": [
+        {
+          "name": "port",
+          "type": "integer",
+          "range": "1-2",
+          "description": "Joystick port number (1 or 2)"
+        }
+      ],
+      "example": "10 J = JOY(1)\n20 IF J AND 16 THEN PRINT \"FIRE!\""
+    },
+    {
+      "keyword": "KEY",
+      "token": 249,
+      "type": "command",
+      "category": "system",
+      "syntax": "KEY n, string$ | KEY LIST",
+      "description": "Assigns a string to one of the programmable function keys (F1-F8). KEY LIST displays all current key assignments.",
+      "parameters": [
+        {
+          "name": "n",
+          "type": "integer",
+          "range": "1-8",
+          "description": "Function key number (1-8 for F1-F8)"
+        },
+        {
+          "name": "string$",
+          "type": "string",
+          "description": "String to execute when the key is pressed"
+        }
+      ],
+      "example": "KEY 1, \"RUN\"+CHR$(13)\nKEY LIST"
+    },
+    {
+      "keyword": "LOCATE",
+      "token": 230,
+      "type": "graphics",
+      "category": "graphics",
+      "syntax": "LOCATE x, y",
+      "description": "Moves the graphics cursor to position (x, y) without drawing. Subsequent DRAW commands begin at this position.",
+      "parameters": [
+        {
+          "name": "x",
+          "type": "integer",
+          "description": "Horizontal pixel coordinate"
+        },
+        {
+          "name": "y",
+          "type": "integer",
+          "description": "Vertical pixel coordinate"
+        }
+      ],
+      "example": "GRAPHIC 1, 1\nLOCATE 160, 100\nDRAW 1, TO 200, 150"
+    },
+    {
+      "keyword": "LOOP",
+      "token": 236,
+      "type": "command",
+      "category": "loop",
+      "syntax": "LOOP [UNTIL condition | WHILE condition]",
+      "description": "Marks the end of a DO...LOOP block. The optional UNTIL or WHILE clause specifies the exit condition. Without a condition the loop is infinite (use EXIT to leave it).",
+      "example": "10 DO\n20   PRINT \"FOREVER\"\n30 LOOP\n\n10 I = 0\n20 DO\n30   I = I + 1\n40 LOOP UNTIL I = 10"
+    },
+    {
+      "keyword": "MONITOR",
+      "token": 250,
+      "type": "command",
+      "category": "system",
+      "syntax": "MONITOR",
+      "description": "Enters the built-in machine language monitor. Type X at the monitor prompt to return to BASIC."
+    },
+    {
+      "keyword": "PAINT",
+      "token": 223,
+      "type": "graphics",
+      "category": "graphics",
+      "syntax": "PAINT color, x, y",
+      "description": "Performs a flood fill starting at pixel (x, y), filling all contiguous pixels of the same color with the specified new color.",
+      "parameters": [
+        {
+          "name": "color",
+          "type": "integer",
+          "range": "0-15",
+          "description": "Fill color"
+        },
+        {
+          "name": "x",
+          "type": "integer",
+          "description": "X coordinate of the seed pixel"
+        },
+        {
+          "name": "y",
+          "type": "integer",
+          "description": "Y coordinate of the seed pixel"
+        }
+      ],
+      "example": "GRAPHIC 1, 1\nBOX 1, 50, 50, 150, 100\nPAINT 2, 100, 75 : REM FILL INSIDE BOX"
+    },
+    {
+      "keyword": "PUDEF",
+      "token": 221,
+      "type": "command",
+      "category": "system",
+      "syntax": "PUDEF format$",
+      "description": "Sets the special characters used by PRINT USING. The format string has 4 characters: fill character (replaces #), comma character, decimal point character, and the currency/unused character.",
+      "parameters": [
+        {
+          "name": "format$",
+          "type": "string",
+          "description": "4-character string defining PRINT USING special characters"
+        }
+      ],
+      "example": "PUDEF \" ,.\"\nPRINT USING \"###,###.##\"; 1234.5"
+    },
+    {
+      "keyword": "RCLR",
+      "token": 205,
+      "type": "function",
+      "category": "screen",
+      "syntax": "RCLR(source, attribute)",
+      "description": "Returns the current color value of a TED color register. Source selects which color source to read (0=background, 1=foreground, 2=multi-color 1, 3=multi-color 2, 4=border).",
+      "parameters": [
+        {
+          "name": "source",
+          "type": "integer",
+          "range": "0-4",
+          "description": "Color source: 0=background, 1=foreground, 2=multi-color 1, 3=multi-color 2, 4=border"
+        },
+        {
+          "name": "attribute",
+          "type": "integer",
+          "range": "0-1",
+          "description": "0=color value, 1=luminance value"
+        }
+      ],
+      "example": "PRINT RCLR(0, 0) : REM CURRENT BACKGROUND COLOR"
+    },
+    {
+      "keyword": "RDOT",
+      "token": 208,
+      "type": "function",
+      "category": "graphics",
+      "syntax": "RDOT(x, y)",
+      "description": "Returns the color index of the pixel at graphics coordinates (x, y) on the current graphics screen.",
+      "parameters": [
+        {
+          "name": "x",
+          "type": "integer",
+          "description": "Horizontal pixel coordinate"
+        },
+        {
+          "name": "y",
+          "type": "integer",
+          "description": "Vertical pixel coordinate"
+        }
+      ],
+      "example": "GRAPHIC 1,1\nDRAW 1, 100, 100\nPRINT RDOT(100, 100) : REM PRINTS 1"
+    },
+    {
+      "keyword": "RENAME",
+      "token": 245,
+      "type": "io",
+      "category": "io",
+      "syntax": "RENAME \"oldname\" TO \"newname\" [,U unit]",
+      "description": "Renames a file on disk.",
+      "parameters": [
+        {
+          "name": "oldname",
+          "type": "string",
+          "description": "Current filename"
+        },
+        {
+          "name": "newname",
+          "type": "string",
+          "description": "New filename"
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "optional": true,
+          "description": "IEEE-488 device number"
+        }
+      ],
+      "example": "RENAME \"DRAFT\" TO \"FINAL\""
+    },
+    {
+      "keyword": "RENUMBER",
+      "token": 248,
+      "type": "command",
+      "category": "editor",
+      "syntax": "RENUMBER [new_start [, increment [, first_line]]]",
+      "description": "Renumbers the lines of the BASIC program in memory, updating all GOTO, GOSUB, and other line number references automatically.",
+      "parameters": [
+        {
+          "name": "new_start",
+          "type": "integer",
+          "description": "New starting line number (default: 10)",
+          "optional": true
+        },
+        {
+          "name": "increment",
+          "type": "integer",
+          "description": "Increment between line numbers (default: 10)",
+          "optional": true
+        },
+        {
+          "name": "first_line",
+          "type": "integer",
+          "description": "First line to renumber (default: first line of program)",
+          "optional": true
+        }
+      ],
+      "example": "RENUMBER\nRENUMBER 100, 5"
+    },
+    {
+      "keyword": "RESUME",
+      "token": 214,
+      "type": "command",
+      "category": "flow",
+      "syntax": "RESUME [line | NEXT]",
+      "description": "Resumes normal program execution after handling an error in a TRAP routine. RESUME alone re-executes the statement that caused the error. RESUME NEXT continues with the statement after the error. RESUME line jumps to the specified line.",
+      "parameters": [
+        {
+          "name": "line",
+          "type": "integer",
+          "description": "Line number to jump to after the error handler",
+          "optional": true
+        },
+        {
+          "name": "NEXT",
+          "description": "Resume execution at the statement following the one that caused the error",
+          "optional": true
+        }
+      ],
+      "example": "10 TRAP 100\n20 PRINT 1/0\n30 PRINT \"RESUMED\"\n40 END\n100 PRINT ERR$(ER)\n110 RESUME NEXT"
+    },
+    {
+      "keyword": "RGR",
+      "token": 204,
+      "type": "function",
+      "category": "graphics",
+      "syntax": "RGR(n)",
+      "description": "Returns the current graphics mode as set by the GRAPHIC command. n must be 0. Returns 0=text, 1=hires, 2=multicolor, 3=split hires, 4=split multicolor.",
+      "parameters": [
+        {
+          "name": "n",
+          "type": "integer",
+          "range": "0",
+          "description": "Must be 0"
+        }
+      ],
+      "example": "IF RGR(0) = 0 THEN PRINT \"TEXT MODE\""
+    },
+    {
+      "keyword": "RLUM",
+      "token": 206,
+      "type": "function",
+      "category": "screen",
+      "syntax": "RLUM(source)",
+      "description": "Returns the current luminance (brightness) value of the specified TED color source register.",
+      "parameters": [
+        {
+          "name": "source",
+          "type": "integer",
+          "range": "0-4",
+          "description": "Color source: 0=background, 1=foreground, 2=multi-color 1, 3=multi-color 2, 4=border"
+        }
+      ],
+      "example": "PRINT RLUM(1) : REM FOREGROUND LUMINANCE"
+    },
+    {
+      "keyword": "SCALE",
+      "token": 233,
+      "type": "graphics",
+      "category": "graphics",
+      "syntax": "SCALE x_flag [, y_flag]",
+      "description": "Enables or disables scaled graphics coordinates. When enabled, graphics coordinates are treated as fractions of the screen size rather than absolute pixel positions.",
+      "parameters": [
+        {
+          "name": "x_flag",
+          "type": "integer",
+          "range": "0-1",
+          "description": "0=disable scaled coordinates, 1=enable scaled coordinates"
+        },
+        {
+          "name": "y_flag",
+          "type": "integer",
+          "range": "0-1",
+          "description": "Y scaling flag (if different from X)",
+          "optional": true
+        }
+      ],
+      "example": "SCALE 1\nDRAW 1, 0, 0 TO 100, 100 : REM 100% = FULL SCREEN"
+    },
+    {
+      "keyword": "SCNCLR",
+      "token": 232,
+      "type": "graphics",
+      "category": "graphics",
+      "syntax": "SCNCLR [screen_number]",
+      "description": "Clears the current text or graphics screen. If a screen number is specified, clears that screen.",
+      "parameters": [
+        {
+          "name": "screen_number",
+          "type": "integer",
+          "description": "Screen to clear (optional)",
+          "optional": true
+        }
+      ],
+      "example": "SCNCLR : REM CLEAR CURRENT SCREEN"
+    },
+    {
+      "keyword": "SCRATCH",
+      "token": 242,
+      "type": "io",
+      "category": "io",
+      "syntax": "SCRATCH \"filename\" [,U unit]",
+      "description": "Deletes a file from disk. Supports * and ? wildcards.",
+      "parameters": [
+        {
+          "name": "filename",
+          "type": "string",
+          "description": "Filename to delete. Wildcards * and ? are supported."
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "optional": true,
+          "description": "IEEE-488 device number"
+        }
+      ],
+      "example": "SCRATCH \"TEMPFILE\"\nSCRATCH \"OLD*\", U9"
+    },
+    {
+      "keyword": "SOUND",
+      "token": 218,
+      "type": "sound",
+      "category": "sound",
+      "syntax": "SOUND voice, frequency, duration [, direction, minimum, step]",
+      "description": "Plays a sound on the TED chip. The Plus/4 and C16 use the TED's two built-in tone generators rather than a SID chip.",
+      "parameters": [
+        {
+          "name": "voice",
+          "type": "integer",
+          "range": "1-2",
+          "description": "TED voice number (1 or 2)"
+        },
+        {
+          "name": "frequency",
+          "type": "integer",
+          "range": "0-1023",
+          "description": "Frequency value for the TED tone generator"
+        },
+        {
+          "name": "duration",
+          "type": "integer",
+          "range": "0-255",
+          "description": "Duration in jiffies (1/60th second)"
+        },
+        {
+          "name": "direction",
+          "type": "integer",
+          "range": "0-2",
+          "description": "Sweep direction: 0=none, 1=up, 2=down",
+          "optional": true
+        },
+        {
+          "name": "minimum",
+          "type": "integer",
+          "description": "Minimum frequency for sweep",
+          "optional": true
+        },
+        {
+          "name": "step",
+          "type": "integer",
+          "description": "Frequency step per jiffy for sweep",
+          "optional": true
+        }
+      ],
+      "example": "SOUND 1, 512, 60 : REM PLAY TONE ON VOICE 1 FOR 1 SECOND"
+    },
+    {
+      "keyword": "SSHAPE",
+      "token": 228,
+      "type": "graphics",
+      "category": "graphics",
+      "syntax": "SSHAPE src$, x, y",
+      "description": "Pastes a shape previously captured by GSHAPE onto the current graphics screen at position (x, y).",
+      "parameters": [
+        {
+          "name": "src$",
+          "type": "string",
+          "description": "String variable containing shape data from a previous GSHAPE call"
+        },
+        {
+          "name": "x",
+          "type": "integer",
+          "description": "X coordinate of the upper-left corner of the destination"
+        },
+        {
+          "name": "y",
+          "type": "integer",
+          "description": "Y coordinate of the upper-left corner of the destination"
+        }
+      ],
+      "example": "GSHAPE S$, 0, 0, 63, 63 : REM CAPTURE\nSSHAPE S$, 100, 50 : REM PASTE AT NEW POSITION"
+    },
+    {
+      "keyword": "TRAP",
+      "token": 215,
+      "type": "command",
+      "category": "flow",
+      "syntax": "TRAP [line]",
+      "description": "Sets an error handler. When a BASIC error occurs, execution branches to the specified line instead of stopping. Inside the handler, ER contains the error number and EL contains the line where the error occurred. TRAP with no argument clears the error handler.",
+      "parameters": [
+        {
+          "name": "line",
+          "type": "integer",
+          "description": "Line number of the error handler subroutine. Omit to clear the handler.",
+          "optional": true
+        }
+      ],
+      "example": "10 TRAP 1000\n20 PRINT 1/0 : REM CAUSES ERROR\n30 PRINT \"NORMAL\"\n40 END\n1000 PRINT \"ERROR\"; ER; \"AT LINE\"; EL\n1010 RESUME NEXT"
+    },
+    {
+      "keyword": "TROFF",
+      "token": 217,
+      "type": "command",
+      "category": "system",
+      "syntax": "TROFF",
+      "description": "Disables program trace mode. Trace mode was enabled with TRON."
+    },
+    {
+      "keyword": "TRON",
+      "token": 216,
+      "type": "command",
+      "category": "system",
+      "syntax": "TRON",
+      "description": "Enables program trace mode. While TRON is active, the number of each BASIC line is displayed in brackets as it executes. Use TROFF to disable."
+    },
+    {
+      "keyword": "UNTIL",
+      "token": 252,
+      "type": "command",
+      "category": "loop",
+      "syntax": "LOOP UNTIL condition",
+      "description": "Terminates a DO...LOOP when the condition becomes true. The condition is evaluated at the bottom of the loop so the loop body always executes at least once.",
+      "example": "10 I = 0\n20 DO\n30   I = I + 1\n40 LOOP UNTIL I >= 10\n50 PRINT I"
+    },
+    {
+      "keyword": "USING",
+      "token": 251,
+      "type": "command",
+      "category": "system",
+      "syntax": "PRINT [#channel,] USING format$; expression [, expression ...]",
+      "description": "Formats numeric output using a template string. In the format, # represents a digit position, . is the decimal point, and , is the thousands separator. Use PUDEF to change these special characters.",
+      "example": "PRINT USING \"###.##\"; 3.14159\n  3.14\n\nPRINT USING \"$####.##\"; 1234.5\n$1234.50"
+    },
+    {
+      "keyword": "VOL",
+      "token": 219,
+      "type": "sound",
+      "category": "sound",
+      "syntax": "VOL n",
+      "description": "Sets the TED chip master volume level.",
+      "parameters": [
+        {
+          "name": "n",
+          "type": "integer",
+          "range": "0-8",
+          "description": "Volume level (0=off, 8=maximum)"
+        }
+      ],
+      "example": "VOL 8 : REM FULL VOLUME\nVOL 0 : REM SILENCE"
+    },
+    {
+      "keyword": "WHILE",
+      "token": 253,
+      "type": "command",
+      "category": "loop",
+      "syntax": "LOOP WHILE condition",
+      "description": "Continues repeating a DO...LOOP as long as the condition is true. The condition is evaluated at the bottom of the loop so the loop body always executes at least once.",
+      "example": "10 I = 0\n20 DO\n30   I = I + 1\n40 LOOP WHILE I < 10\n50 PRINT I"
+    }
+  ]
+}

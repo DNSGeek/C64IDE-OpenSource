@@ -1,0 +1,389 @@
+{
+  "name": "Commodore PET BASIC 4",
+  "version": "1.0",
+  "author": "Thomas Knox",
+  "description": "BASIC 4.0 for the Commodore PET 4000 and 8000 series. Extends BASIC 2.0 with disk management commands for the IEEE-488 bus and CBM disk drives. Token values sourced from the authoritative petcat cbm-basic-tokens.txt. Note: CATALOG ($D7) and DIRECTORY ($DA) are synonyms for listing the disk directory; both tokens exist in the ROM.",
+  "url": "https://www.c64-wiki.com/wiki/Commodore_BASIC",
+  "extendsBasicV2": true,
+  "loadAddress": 1025,
+  "requiresSYSStub": true,
+  "keywords": [
+    {
+      "keyword": "APPEND",
+      "token": 212,
+      "type": "io",
+      "category": "io",
+      "syntax": "APPEND #channel, \"filename\" [,U unit]",
+      "description": "Opens a sequential file for appending. Data written to the channel is added after existing file content.",
+      "parameters": [
+        {
+          "name": "#channel",
+          "type": "integer",
+          "range": "1-15",
+          "description": "Logical file number"
+        },
+        {
+          "name": "filename",
+          "type": "string"
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "optional": true,
+          "description": "IEEE-488 device number"
+        }
+      ],
+      "example": "APPEND #2, \"LOGFILE\"\nPRINT #2, \"NEW ENTRY\"\nCLOSE #2"
+    },
+    {
+      "keyword": "BACKUP",
+      "token": 210,
+      "type": "io",
+      "category": "io",
+      "syntax": "BACKUP U source TO U target",
+      "description": "Copies all files from one disk to another. Both disk drives must be connected to the same IEEE-488 bus.",
+      "parameters": [
+        {
+          "name": "source",
+          "type": "integer",
+          "range": "8-11",
+          "description": "Device number of the source drive"
+        },
+        {
+          "name": "target",
+          "type": "integer",
+          "range": "8-11",
+          "description": "Device number of the destination drive"
+        }
+      ],
+      "example": "BACKUP U8 TO U9"
+    },
+    {
+      "keyword": "CATALOG",
+      "token": 215,
+      "type": "io",
+      "category": "io",
+      "syntax": "CATALOG [\"pattern\"] [,U unit]",
+      "description": "Lists the disk directory. Synonym for DIRECTORY (both tokens exist in BASIC 4). Supports * and ? wildcards in the optional filename pattern.",
+      "parameters": [
+        {
+          "name": "pattern",
+          "type": "string",
+          "optional": true,
+          "description": "Filename filter with optional wildcards"
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "optional": true,
+          "description": "IEEE-488 device number"
+        }
+      ],
+      "example": "CATALOG\nCATALOG \"P*\", U9"
+    },
+    {
+      "keyword": "COLLECT",
+      "token": 209,
+      "type": "io",
+      "category": "io",
+      "syntax": "COLLECT [U unit]",
+      "description": "Validates a disk and collects unclosed (splat) files, reclaiming their blocks. Equivalent to VALIDATE on CBM drives. Use with caution: splat files that were written but not closed will be permanently lost.",
+      "parameters": [
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "optional": true,
+          "description": "IEEE-488 device number. Defaults to current unit."
+        }
+      ],
+      "example": "COLLECT U8"
+    },
+    {
+      "keyword": "CONCAT",
+      "token": 204,
+      "type": "io",
+      "category": "io",
+      "syntax": "CONCAT \"source\" TO \"target\" [,U unit]",
+      "description": "Appends the contents of the source file to the end of the target file. The source file is unchanged. The target file must already exist.",
+      "parameters": [
+        {
+          "name": "source",
+          "type": "string",
+          "description": "The filename to append from"
+        },
+        {
+          "name": "target",
+          "type": "string",
+          "description": "The filename to append to"
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "optional": true,
+          "description": "IEEE-488 device number"
+        }
+      ],
+      "example": "CONCAT \"PART2\" TO \"PART1\""
+    },
+    {
+      "keyword": "COPY",
+      "token": 211,
+      "type": "io",
+      "category": "io",
+      "syntax": "COPY \"source\" [,U unit] TO \"target\" [,U unit]",
+      "description": "Copies a file to another file on the same or a different disk drive.",
+      "parameters": [
+        {
+          "name": "source",
+          "type": "string",
+          "description": "Source filename"
+        },
+        {
+          "name": "target",
+          "type": "string",
+          "description": "Destination filename"
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "optional": true,
+          "description": "IEEE-488 device number"
+        }
+      ],
+      "example": "COPY \"PROGRAM\" TO \"BACKUP\"\nCOPY \"PROG\", U8 TO \"PROG\", U9"
+    },
+    {
+      "keyword": "DCLOSE",
+      "token": 206,
+      "type": "io",
+      "category": "io",
+      "syntax": "DCLOSE #channel",
+      "description": "Closes a disk file opened with DOPEN, flushing any buffered output and releasing the channel.",
+      "parameters": [
+        {
+          "name": "#channel",
+          "type": "integer",
+          "range": "1-15",
+          "description": "Logical file number opened with DOPEN"
+        }
+      ],
+      "example": "DCLOSE #2"
+    },
+    {
+      "keyword": "DIRECTORY",
+      "token": 218,
+      "type": "io",
+      "category": "io",
+      "syntax": "DIRECTORY [\"pattern\"] [,U unit]",
+      "description": "Lists the disk directory. Synonym for CATALOG (both tokens exist in BASIC 4). Supports * and ? wildcards in the optional filename pattern.",
+      "parameters": [
+        {
+          "name": "pattern",
+          "type": "string",
+          "optional": true,
+          "description": "Filename filter with optional wildcards (* and ?)"
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "optional": true,
+          "description": "IEEE-488 device number"
+        }
+      ],
+      "example": "DIRECTORY\nDIRECTORY \"P*\", U9"
+    },
+    {
+      "keyword": "DLOAD",
+      "token": 214,
+      "type": "io",
+      "category": "io",
+      "syntax": "DLOAD \"filename\" [,U unit]",
+      "description": "Loads a PRG file from disk into memory at the address stored in the file header. Equivalent to LOAD\"name\",8 but avoids specifying the device number each time.",
+      "parameters": [
+        {
+          "name": "filename",
+          "type": "string",
+          "description": "The file to load"
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "optional": true,
+          "description": "IEEE-488 device number. Defaults to current unit (usually 8)."
+        }
+      ],
+      "example": "DLOAD \"MYPROG\"\nDLOAD \"TEST\", U9"
+    },
+    {
+      "keyword": "DOPEN",
+      "token": 205,
+      "type": "io",
+      "category": "io",
+      "syntax": "DOPEN #channel, \"filename\" [,W] [,U unit]",
+      "description": "Opens a sequential or relative disk file on the specified channel. Use the W flag to open for writing. Use DCLOSE to close when done.",
+      "parameters": [
+        {
+          "name": "#channel",
+          "type": "integer",
+          "range": "1-15",
+          "description": "Logical file number"
+        },
+        {
+          "name": "filename",
+          "type": "string"
+        },
+        {
+          "name": "W",
+          "description": "Open for writing (creates new file or overwrites)",
+          "optional": true
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "optional": true,
+          "description": "IEEE-488 device number"
+        }
+      ],
+      "example": "DOPEN #2, \"MYDATA\"\nINPUT #2, A$\nDCLOSE #2"
+    },
+    {
+      "keyword": "DSAVE",
+      "token": 213,
+      "type": "io",
+      "category": "io",
+      "syntax": "DSAVE \"filename\" [,U unit]",
+      "description": "Saves the BASIC program in memory to a PRG file on disk. The two-byte load address header is written automatically.",
+      "parameters": [
+        {
+          "name": "filename",
+          "type": "string",
+          "description": "The name to save the program as"
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "optional": true,
+          "description": "IEEE-488 device number. Defaults to current unit (usually 8)."
+        }
+      ],
+      "example": "DSAVE \"MYPROG\"\nDSAVE \"BACKUP\", U9"
+    },
+    {
+      "keyword": "HEADER",
+      "token": 208,
+      "type": "io",
+      "category": "io",
+      "syntax": "HEADER \"diskname\", I\"id\" [,U unit]",
+      "description": "Formats a disk, erasing all data, and writes the given disk name and ID. This is a destructive operation that cannot be undone.",
+      "notes": "Destructive — erases all data on the disk",
+      "parameters": [
+        {
+          "name": "diskname",
+          "type": "string",
+          "description": "The name to give the disk (up to 16 characters)"
+        },
+        {
+          "name": "id",
+          "type": "string",
+          "description": "Two-character disk ID, e.g. I\"AB\""
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "optional": true,
+          "description": "IEEE-488 device number"
+        }
+      ],
+      "example": "HEADER \"MY DISK\", I\"MD\", U8"
+    },
+    {
+      "keyword": "RECORD",
+      "token": 207,
+      "type": "io",
+      "category": "io",
+      "syntax": "RECORD #channel, record_number [, byte_offset]",
+      "description": "Positions the read/write pointer in a relative (random access) file to the specified record number. An optional byte offset selects a position within the record.",
+      "parameters": [
+        {
+          "name": "#channel",
+          "type": "integer",
+          "description": "Logical file number for a previously opened relative file"
+        },
+        {
+          "name": "record_number",
+          "type": "integer",
+          "range": "1-65535",
+          "description": "The 1-based record number to seek to"
+        },
+        {
+          "name": "byte_offset",
+          "type": "integer",
+          "description": "Byte position within the record (1-based)",
+          "optional": true
+        }
+      ],
+      "example": "OPEN 8, 8, 8, \"DATAFILE,L,\" CHR$(64)\nRECORD #8, 5\nPRINT #8, \"ROW 5 DATA\"\nCLOSE 8"
+    },
+    {
+      "keyword": "RENAME",
+      "token": 216,
+      "type": "io",
+      "category": "io",
+      "syntax": "RENAME \"oldname\" TO \"newname\" [,U unit]",
+      "description": "Renames a file on disk.",
+      "parameters": [
+        {
+          "name": "oldname",
+          "type": "string",
+          "description": "Current filename"
+        },
+        {
+          "name": "newname",
+          "type": "string",
+          "description": "New filename"
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "optional": true,
+          "description": "IEEE-488 device number"
+        }
+      ],
+      "example": "RENAME \"DRAFT\" TO \"FINAL\""
+    },
+    {
+      "keyword": "SCRATCH",
+      "token": 217,
+      "type": "io",
+      "category": "io",
+      "syntax": "SCRATCH \"filename\" [,U unit]",
+      "description": "Deletes (scratches) a file from disk. Wildcards (* and ?) are supported in the filename pattern.",
+      "parameters": [
+        {
+          "name": "filename",
+          "type": "string",
+          "description": "The file to delete. Supports * and ? wildcards."
+        },
+        {
+          "name": "unit",
+          "type": "integer",
+          "range": "8-11",
+          "optional": true,
+          "description": "IEEE-488 device number"
+        }
+      ],
+      "example": "SCRATCH \"OLDFILE\"\nSCRATCH \"TEMP*\", U9"
+    }
+  ]
+}

@@ -1,0 +1,485 @@
+{
+  "name": "VIC-20 Super Expander",
+  "version": "1.0",
+  "author": "Thomas Knox",
+  "description": "BASIC 2.0 with the VIC-1211A Super Expander cartridge for the Commodore VIC-20. Adds graphics (hires/multicolor bitmap via character-cell tricks, 160x160 effective resolution), sound control for all four VIC chip voices, joystick and lightpen input, and function key assignment. The cartridge also includes 3KB of RAM, which shifts the BASIC program start address from $1001 to $0401. Coordinates for drawing commands use a 1024x1024 virtual coordinate space scaled to the actual screen resolution. Token values sourced from the authoritative petcat cbm-basic-tokens.txt.",
+  "url": "https://en.wikipedia.org/wiki/VIC-20#Super_Expander",
+  "extendsBasicV2": true,
+  "loadAddress": 1025,
+  "requiresSYSStub": true,
+  "keywords": [
+    {
+      "keyword": "KEY",
+      "token": 204,
+      "type": "command",
+      "category": "system",
+      "syntax": "KEY n, string$",
+      "description": "Assigns a string to one of the VIC-20's function keys. When the function key is pressed, the assigned string is automatically typed as if entered from the keyboard. By default the function keys are assigned to common Super Expander commands.",
+      "parameters": [
+        {
+          "name": "n",
+          "type": "integer",
+          "range": "1-8",
+          "description": "Function key number (1=f1, 2=f2, ..., 8=f8)"
+        },
+        {
+          "name": "string$",
+          "type": "string",
+          "description": "String to type when the key is pressed"
+        }
+      ],
+      "example": "KEY 1, \"GRAPHIC 1\"\nKEY 2, \"COLOR 0,2,1,3\""
+    },
+    {
+      "keyword": "GRAPHIC",
+      "token": 205,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "GRAPHIC mode",
+      "description": "Sets the VIC-20 display mode. Mode 0 (or mode 4) returns to normal text mode. Mode 1 enables high-resolution graphics (160x160 pixels, 2 colors). Mode 2 enables multicolor graphics (80x160 pixels, 4 colors). Modes 1 and 2 can be mixed on screen simultaneously. The Super Expander implements graphics using custom character definitions rather than a true bitmap mode.",
+      "parameters": [
+        {
+          "name": "mode",
+          "type": "integer",
+          "range": "0-4",
+          "description": "0 or 4=text (normal), 1=high-resolution (2 color, 160x160), 2=multicolor (4 color, 80x160), 3=mixed hires+text, 4=return to text"
+        }
+      ],
+      "example": "GRAPHIC 1 : REM ENTER HIRES MODE\nGRAPHIC 0 : REM RETURN TO TEXT"
+    },
+    {
+      "keyword": "SCNCLR",
+      "token": 206,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "SCNCLR",
+      "description": "Clears the current graphics screen, setting all pixels to the background (screen) color. Must be in a graphics mode (set with GRAPHIC) before calling SCNCLR.",
+      "example": "GRAPHIC 1\nSCNCLR\nDRAW 1, 0, 0 TO 1023, 1023"
+    },
+    {
+      "keyword": "CIRCLE",
+      "token": 207,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "CIRCLE color, cx, cy, rx [, ry [, start_angle [, end_angle]]]",
+      "description": "Draws a circle or ellipse in the current graphics mode. Coordinates use the 1024x1024 virtual space. To draw a circle, specify equal horizontal and vertical radii. For an arc, specify start and end angles in units where 100 = one full circle (not degrees). The VIC-20's non-square pixels will make equal-radius circles appear as ellipses on screen.",
+      "parameters": [
+        {
+          "name": "color",
+          "type": "integer",
+          "range": "0-7",
+          "description": "Color register index"
+        },
+        {
+          "name": "cx",
+          "type": "integer",
+          "range": "0-1023",
+          "description": "Center X coordinate in 1024x1024 virtual space"
+        },
+        {
+          "name": "cy",
+          "type": "integer",
+          "range": "0-1023",
+          "description": "Center Y coordinate in 1024x1024 virtual space"
+        },
+        {
+          "name": "rx",
+          "type": "integer",
+          "description": "Horizontal radius in virtual units"
+        },
+        {
+          "name": "ry",
+          "type": "integer",
+          "description": "Vertical radius in virtual units (defaults to rx for a circle)",
+          "optional": true
+        },
+        {
+          "name": "start_angle",
+          "type": "integer",
+          "range": "0-100",
+          "description": "Starting angle (100 = full circle, not degrees)",
+          "optional": true
+        },
+        {
+          "name": "end_angle",
+          "type": "integer",
+          "range": "0-100",
+          "description": "Ending angle for arc drawing",
+          "optional": true
+        }
+      ],
+      "example": "GRAPHIC 1\nCOLOR 0,5,3,0\nCIRCLE 1, 512, 512, 300, 300 : REM CIRCLE AT CENTER"
+    },
+    {
+      "keyword": "DRAW",
+      "token": 208,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "DRAW color, x1, y1 [TO x2, y2 [TO ...]]",
+      "description": "Draws a point or a connected series of line segments in the current graphics mode. Coordinates use the 1024x1024 virtual space. Each TO clause extends the line to the next point. Multiple TO clauses draw a polyline.",
+      "parameters": [
+        {
+          "name": "color",
+          "type": "integer",
+          "range": "0-7",
+          "description": "Color register index"
+        },
+        {
+          "name": "x1",
+          "type": "integer",
+          "range": "0-1023",
+          "description": "Starting X coordinate in 1024x1024 virtual space"
+        },
+        {
+          "name": "y1",
+          "type": "integer",
+          "range": "0-1023",
+          "description": "Starting Y coordinate in 1024x1024 virtual space"
+        },
+        {
+          "name": "x2",
+          "type": "integer",
+          "range": "0-1023",
+          "description": "Next X coordinate (TO clause)",
+          "optional": true
+        },
+        {
+          "name": "y2",
+          "type": "integer",
+          "range": "0-1023",
+          "description": "Next Y coordinate (TO clause)",
+          "optional": true
+        }
+      ],
+      "example": "GRAPHIC 1\nCOLOR 0,5,3,0\nREM DRAW A TRIANGLE:\nDRAW 1, 512,250 TO 712,750 TO 312,750 TO 512,250"
+    },
+    {
+      "keyword": "REGION",
+      "token": 209,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "REGION color, x1, y1, x2, y2",
+      "description": "Fills a rectangular region of the graphics screen with the specified color. Coordinates use the 1024x1024 virtual space.",
+      "parameters": [
+        {
+          "name": "color",
+          "type": "integer",
+          "range": "0-7",
+          "description": "Color register index"
+        },
+        {
+          "name": "x1",
+          "type": "integer",
+          "range": "0-1023",
+          "description": "Left X coordinate in 1024x1024 virtual space"
+        },
+        {
+          "name": "y1",
+          "type": "integer",
+          "range": "0-1023",
+          "description": "Top Y coordinate in 1024x1024 virtual space"
+        },
+        {
+          "name": "x2",
+          "type": "integer",
+          "range": "0-1023",
+          "description": "Right X coordinate"
+        },
+        {
+          "name": "y2",
+          "type": "integer",
+          "range": "0-1023",
+          "description": "Bottom Y coordinate"
+        }
+      ],
+      "example": "GRAPHIC 1\nREGION 1, 0, 0, 512, 512 : REM FILL TOP-LEFT QUADRANT"
+    },
+    {
+      "keyword": "COLOR",
+      "token": 210,
+      "type": "command",
+      "category": "screen",
+      "syntax": "COLOR screen, border, char, aux",
+      "description": "Sets the four VIC chip color registers. Screen is the background color. Border is the border/frame color. Char is the foreground character (text/drawing) color. Aux is the auxiliary multicolor used in multicolor graphics mode. Color values are VIC-20 color codes 0-7.",
+      "parameters": [
+        {
+          "name": "screen",
+          "type": "integer",
+          "range": "0-7",
+          "description": "Background/screen color (0=black, 1=white, 2=red, 3=cyan, 4=purple, 5=green, 6=blue, 7=yellow)"
+        },
+        {
+          "name": "border",
+          "type": "integer",
+          "range": "0-7",
+          "description": "Border color"
+        },
+        {
+          "name": "char",
+          "type": "integer",
+          "range": "0-7",
+          "description": "Character/foreground color"
+        },
+        {
+          "name": "aux",
+          "type": "integer",
+          "range": "0-7",
+          "description": "Auxiliary color (used in multicolor mode)"
+        }
+      ],
+      "example": "COLOR 0, 5, 3, 0 : REM BLACK BG, GREEN BORDER, CYAN TEXT, BLACK AUX"
+    },
+    {
+      "keyword": "POINT",
+      "token": 211,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "POINT color, x, y",
+      "description": "Plots a single pixel at the specified coordinates in the current graphics mode. Coordinates use the 1024x1024 virtual space.",
+      "parameters": [
+        {
+          "name": "color",
+          "type": "integer",
+          "range": "0-7",
+          "description": "Color register index"
+        },
+        {
+          "name": "x",
+          "type": "integer",
+          "range": "0-1023",
+          "description": "X coordinate in 1024x1024 virtual space"
+        },
+        {
+          "name": "y",
+          "type": "integer",
+          "range": "0-1023",
+          "description": "Y coordinate in 1024x1024 virtual space"
+        }
+      ],
+      "example": "GRAPHIC 1\nPOINT 1, 512, 512 : REM PLOT A PIXEL AT CENTER"
+    },
+    {
+      "keyword": "SOUND",
+      "token": 212,
+      "type": "command",
+      "category": "sound",
+      "syntax": "SOUND voice1, voice2, voice3, noise, volume",
+      "description": "Sets all VIC chip sound registers simultaneously. Each voice takes a frequency value (higher = higher pitch). The noise voice sets the noise channel. Volume sets the master volume. To silence a voice, set its value to 0.",
+      "parameters": [
+        {
+          "name": "voice1",
+          "type": "integer",
+          "range": "128-255",
+          "description": "Voice 1 (soprano) frequency. 128 = lowest audible tone, 255 = highest. 0 = silent."
+        },
+        {
+          "name": "voice2",
+          "type": "integer",
+          "range": "128-255",
+          "description": "Voice 2 (alto) frequency. 0 = silent."
+        },
+        {
+          "name": "voice3",
+          "type": "integer",
+          "range": "128-255",
+          "description": "Voice 3 (bass) frequency. 0 = silent."
+        },
+        {
+          "name": "noise",
+          "type": "integer",
+          "range": "0-255",
+          "description": "Noise channel register value. Controls noise frequency and enables noise."
+        },
+        {
+          "name": "volume",
+          "type": "integer",
+          "range": "0-15",
+          "description": "Master volume (0=silent, 15=maximum)"
+        }
+      ],
+      "example": "SOUND 200, 0, 0, 0, 15 : REM VOICE 1 TONE, FULL VOLUME\nFOR D=1 TO 500: NEXT D : REM DELAY\nSOUND 0, 0, 0, 0, 0 : REM SILENCE"
+    },
+    {
+      "keyword": "CHAR",
+      "token": 213,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "CHAR col, row, string$",
+      "description": "Displays a text string at the specified character cell position on the current screen. Unlike the drawing commands, CHAR uses text (column, row) coordinates rather than the 1024x1024 virtual graphics coordinates. Works in both text and graphics modes.",
+      "parameters": [
+        {
+          "name": "col",
+          "type": "integer",
+          "range": "0-21",
+          "description": "Text column (0-21 for the VIC-20's default 22-column display)"
+        },
+        {
+          "name": "row",
+          "type": "integer",
+          "range": "0-22",
+          "description": "Text row (0-22 for the VIC-20's default 23-row display)"
+        },
+        {
+          "name": "string$",
+          "type": "string",
+          "description": "Text to display"
+        }
+      ],
+      "example": "GRAPHIC 1\nCOLOR 0,5,3,0\nCHAR 5, 11, \"HELLO!\""
+    },
+    {
+      "keyword": "PAINT",
+      "token": 214,
+      "type": "command",
+      "category": "graphics",
+      "syntax": "PAINT color, x, y",
+      "description": "Performs a flood fill starting at the seed pixel (x, y), filling all connected pixels of the same color with the specified color. Coordinates use the 1024x1024 virtual space. The fill stops at pixels of a different color, so use DRAW or CIRCLE to create an enclosed region first.",
+      "parameters": [
+        {
+          "name": "color",
+          "type": "integer",
+          "range": "0-7",
+          "description": "Fill color register index"
+        },
+        {
+          "name": "x",
+          "type": "integer",
+          "range": "0-1023",
+          "description": "Seed X coordinate in 1024x1024 virtual space"
+        },
+        {
+          "name": "y",
+          "type": "integer",
+          "range": "0-1023",
+          "description": "Seed Y coordinate in 1024x1024 virtual space"
+        }
+      ],
+      "example": "GRAPHIC 1\nCIRCLE 1, 512, 512, 200, 200\nPAINT 1, 512, 512 : REM FILL INSIDE CIRCLE"
+    },
+    {
+      "keyword": "RPOT",
+      "token": 215,
+      "type": "function",
+      "category": "io",
+      "syntax": "RPOT(n)",
+      "description": "Reads the current position of a potentiometer (paddle controller) connected to the VIC-20's joystick port. Returns a value from 0 to 255.",
+      "parameters": [
+        {
+          "name": "n",
+          "type": "integer",
+          "range": "1-4",
+          "description": "Paddle number: 1=port1 paddle A, 2=port1 paddle B, 3=port2 paddle A, 4=port2 paddle B"
+        }
+      ],
+      "example": "P = RPOT(1)\nPRINT \"PADDLE 1:\"; P"
+    },
+    {
+      "keyword": "RPEN",
+      "token": 216,
+      "type": "function",
+      "category": "io",
+      "syntax": "RPEN(axis)",
+      "description": "Reads the lightpen position. Returns the X or Y raster position where the lightpen triggered.",
+      "parameters": [
+        {
+          "name": "axis",
+          "type": "integer",
+          "range": "0-1",
+          "description": "0=X position, 1=Y position"
+        }
+      ],
+      "example": "PX = RPEN(0)\nPY = RPEN(1)\nPRINT \"LIGHTPEN AT:\"; PX; \",\"; PY"
+    },
+    {
+      "keyword": "RSND",
+      "token": 217,
+      "type": "function",
+      "category": "sound",
+      "syntax": "RSND(n)",
+      "description": "Reads a VIC chip sound register value. Returns the current frequency or control value for the specified sound channel.",
+      "parameters": [
+        {
+          "name": "n",
+          "type": "integer",
+          "range": "1-4",
+          "description": "Sound register: 1=voice 1 frequency, 2=voice 2 frequency, 3=voice 3 frequency, 4=noise/volume register"
+        }
+      ],
+      "example": "V = RSND(1)\nPRINT \"VOICE 1 FREQ:\"; V"
+    },
+    {
+      "keyword": "RCOLR",
+      "token": 218,
+      "type": "function",
+      "category": "screen",
+      "syntax": "RCOLR(n)",
+      "description": "Reads the current value of a VIC chip color register as set by the COLOR command.",
+      "parameters": [
+        {
+          "name": "n",
+          "type": "integer",
+          "range": "0-3",
+          "description": "Color register: 0=screen/background, 1=border, 2=character/foreground, 3=auxiliary"
+        }
+      ],
+      "example": "PRINT \"BG COLOR:\"; RCOLR(0)\nPRINT \"BORDER:\"; RCOLR(1)"
+    },
+    {
+      "keyword": "RGR",
+      "token": 219,
+      "type": "function",
+      "category": "graphics",
+      "syntax": "RGR(0)",
+      "description": "Returns the current graphics display mode as set by the GRAPHIC command. Returns 0 for text mode, 1 for high-resolution, 2 for multicolor.",
+      "parameters": [
+        {
+          "name": "0",
+          "type": "integer",
+          "range": "0",
+          "description": "Must be 0"
+        }
+      ],
+      "example": "IF RGR(0) = 0 THEN PRINT \"TEXT MODE\" ELSE PRINT \"GRAPHICS MODE\""
+    },
+    {
+      "keyword": "RJOY",
+      "token": 220,
+      "type": "function",
+      "category": "io",
+      "syntax": "RJOY(port)",
+      "description": "Reads the state of a joystick connected to the VIC-20. Returns a bitmask where individual bits represent directions and the fire button. Bit 0=up, bit 1=down, bit 2=left, bit 3=right, bit 4=fire.",
+      "parameters": [
+        {
+          "name": "port",
+          "type": "integer",
+          "range": "1-2",
+          "description": "Joystick port number"
+        }
+      ],
+      "example": "J = RJOY(1)\nIF J AND 16 THEN PRINT \"FIRE!\"\nIF J AND 1 THEN PRINT \"UP\"\nIF J AND 2 THEN PRINT \"DOWN\""
+    },
+    {
+      "keyword": "RDOT",
+      "token": 221,
+      "type": "function",
+      "category": "graphics",
+      "syntax": "RDOT(x, y)",
+      "description": "Returns the color value of the pixel at the specified position in 1024x1024 virtual coordinates. Returns 0 if the pixel is the background color, or the color register index if it is set.",
+      "parameters": [
+        {
+          "name": "x",
+          "type": "integer",
+          "range": "0-1023",
+          "description": "X coordinate in 1024x1024 virtual space"
+        },
+        {
+          "name": "y",
+          "type": "integer",
+          "range": "0-1023",
+          "description": "Y coordinate in 1024x1024 virtual space"
+        }
+      ],
+      "example": "POINT 1, 500, 500\nPRINT RDOT(500, 500) : REM PRINTS 1"
+    }
+  ]
+}
