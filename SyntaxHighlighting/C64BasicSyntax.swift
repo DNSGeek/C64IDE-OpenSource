@@ -90,7 +90,9 @@ struct C64BasicSyntax {
     /// All C64 BASIC V2 keywords (statements/commands).
     static let keywords: Set<String> = [
         // Program flow
-        "GOTO", "GOSUB", "RETURN", "IF", "THEN", "ELSE",
+        "GOTO", "GOSUB", "RETURN", "IF", "THEN",
+        // Note: ELSE is NOT a BASIC V2 token. Token $CB is GO (the "GO TO" alternate form).
+        // ELSE first appeared in BASIC 3.5 (C16/Plus/4). Do not add it here.
         "FOR", "TO", "STEP", "NEXT",
         "ON", "RUN", "STOP", "END", "CONT",
 
@@ -121,7 +123,10 @@ struct C64BasicSyntax {
         "STR$", "VAL",
 
         // Other functions
-        "FRE", "POS", "PEEK", "TAB", "SPC",
+        // Note: PEEK, TAB, and SPC are listed in `keywords` above. Because the tokenizer
+        // checks `keywords` before `functions`, listing them here is dead code. They live
+        // in `keywords` to get their special highlight treatment (.poke / .keyword).
+        "FRE", "POS",
     ]
 
     /// Logical and bitwise operators.
@@ -169,9 +174,9 @@ struct C64BasicSyntax {
             keyword: "GOSUB",
             category: .statement,
             syntax: "GOSUB line_number",
-            description: "Calls a subroutine at the specified line number. Pushes the return address onto the stack. Use RETURN to come back.",
+            description: "Calls a subroutine at the specified line number. Pushes the return address onto the BASIC runtime stack. Use RETURN to come back.",
             example: "GOSUB 5000",
-            notes: "Maximum nesting depth is limited by the 256-byte stack. Deep recursion will cause ?OUT OF MEMORY."
+            notes: "GOSUB frames are stored in the BASIC heap (not the 256-byte hardware stack). Nesting depth is therefore limited by available program memory -- each frame consumes a small number of bytes. Deep or unbounded recursion will eventually cause ?OUT OF MEMORY ERROR."
         ),
         "RETURN": C64CommandRef(
             keyword: "RETURN",
@@ -184,10 +189,10 @@ struct C64BasicSyntax {
         "IF": C64CommandRef(
             keyword: "IF",
             category: .statement,
-            syntax: "IF expression THEN statement(s) [ELSE statement(s)]",
+            syntax: "IF expression THEN statement(s)",
             description: "Conditional execution. If expression is true (non-zero), executes the THEN clause. BASIC V2 evaluates 0 as false, any non-zero as true.",
             example: "IF X > 10 THEN PRINT \"BIG\" : GOTO 200",
-            notes: "C64 BASIC V2 does NOT support ELSE. Use IF/GOTO patterns instead. ELSE was added in later dialects like C128 BASIC V7."
+            notes: "C64 BASIC V2 does NOT support ELSE -- it is not a token in the V2 table. Use IF/GOTO patterns instead: IF X=0 THEN GOTO 300. ELSE first appeared in BASIC 3.5 (C16/Plus/4) and was carried into BASIC 7.0 (C128)."
         ),
         "THEN": C64CommandRef(
             keyword: "THEN",
@@ -351,7 +356,7 @@ struct C64BasicSyntax {
             syntax: "GET# file#, variable",
             description: "Reads a single character from an open file.",
             example: "GET#2, A$",
-            notes: "Check ST (status variable) after each read. ST=64 means end of file."
+            notes: "Check ST (status variable) after each read. ST=64 means end of file. Note: unlike INPUT# ($84) and PRINT# ($98), GET# is not a distinct token in the BASIC V2 table -- the ROM tokenizes it as GET ($A1) followed by the file number. It is listed here for documentation completeness."
         ),
         "INPUT#": C64CommandRef(
             keyword: "INPUT#",
@@ -394,6 +399,14 @@ struct C64BasicSyntax {
             description: "Defines a user function. Function names must start with FN followed by a valid variable name.",
             example: "DEF FN SQ(X) = X*X",
             notes: "Only single-argument functions are supported. The function body is a single expression."
+        ),
+        "FN": C64CommandRef(
+            keyword: "FN",
+            category: .function,
+            syntax: "FN name(argument)",
+            description: "Calls a user-defined function previously declared with DEF FN. The argument is passed to the function's parameter variable and the expression is evaluated.",
+            example: "DEF FN SQ(X) = X*X\nPRINT FN SQ(7)  : REM PRINTS 49",
+            notes: "FN is its own token ($A5), distinct from DEF ($96). The name after FN must match a prior DEF FN definition. Only single-argument functions are supported in BASIC V2. Attempting to call an undefined function causes ?UNDEFINED FUNCTION ERROR."
         ),
         "POKE": C64CommandRef(
             keyword: "POKE",
@@ -547,9 +560,9 @@ struct C64BasicSyntax {
             keyword: "RND",
             category: .function,
             syntax: "RND(number)",
-            description: "Returns a pseudo-random number between 0 and 1. If number > 0, uses the hardware clock. If number = 0, repeats the last value. If number < 0, seeds the generator from the hardware clock.",
+            description: "Returns a pseudo-random float in the range 0 to (but not including) 1. The argument controls behavior: if positive, advances and returns the next value from the PRNG sequence; if zero, derives a value from the CIA hardware timer registers (true randomness); if negative, seeds the PRNG from the argument's absolute value and returns the first value of that deterministic sequence.",
             example: "X = INT(RND(1)*6)+1 : REM DICE ROLL",
-            notes: "RND(>0) is the standard way to get random numbers. RND(0) repeats the sequence. RND(<0) seeds but subsequent calls still repeat."
+            notes: "RND(1) (or any positive value) is the standard usage. RND(0) is useful for seeding from hardware entropy before a game starts. RND(-n) resets to a known sequence -- handy for reproducing test cases. Typical game pattern: RND(-TI) once at startup to seed from the clock, then RND(1) for all subsequent calls."
         ),
         "SGN": C64CommandRef(
             keyword: "SGN",

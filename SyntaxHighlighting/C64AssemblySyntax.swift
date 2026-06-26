@@ -86,14 +86,31 @@ struct C64AssemblySyntax {
 
     /// Standard ca65 assembler directives.
     static let directives: Set<String> = [
-        ".BYTE", ".WORD", ".DB", ".DW", ".DS", ".RES", ".ASC", ".ASCIZ",
+        // Data
+        // Note: .DB and .DW are NOT native ca65 directives (they come from DASM/MASM traditions).
+        // ca65 uses .BYTE and .WORD. Including them here for highlighter tolerance only.
+        ".BYTE", ".WORD", ".DB", ".DW",
+        // Note: .DS is not the canonical ca65 storage reservation directive -- .RES is.
+        // .DS may work as an alias in some ca65 builds; included for compatibility.
+        ".DS", ".RES",
+        // Note: ca65 string directives use .ASCIIZ (two i's), not .ASCIZ (one i).
+        // .ASC is also not a standard ca65 directive; .BYTE "string" is the ca65 idiom.
+        ".ASCIIZ",
+        // Segment / scope
         ".ORG", ".SEGMENT", ".PROC", ".ENDPROC", ".SCOPE", ".ENDSCOPE",
+        // Macros / defines
         ".MACRO", ".ENDMACRO", ".DEFINE", ".UNDEFINE",
+        // Conditionals
         ".IF", ".IFDEF", ".IFNDEF", ".ELSE", ".ELSEIF", ".ENDIF",
+        // Repeat
         ".REPEAT", ".ENDREP",
+        // File ops
         ".INCLUDE", ".INCBIN", ".IMPORT", ".EXPORT", ".EXPORTZP", ".IMPORTZP",
+        // Symbol scope
         ".LOCAL", ".LOCALCHAR",
+        // Address/data helpers
         ".ADDR", ".FARADDR", ".LOBYTES", ".HIBYTES",
+        // Miscellaneous
         ".ALIGN", ".ASSERT", ".CHARMAP", ".CONDES",
         ".CONSTRUCTOR", ".DESTRUCTOR", ".INTERRUPTOR",
         ".ENUM", ".ENDENUM", ".STRUCT", ".ENDSTRUCT", ".UNION", ".ENDUNION",
@@ -103,7 +120,9 @@ struct C64AssemblySyntax {
         ".LINECONT", ".LIST", ".LISTBYTES",
         ".P02", ".P816", ".PC02", ".PSC02",
         ".POPSEG", ".PUSHSEG",
-        ".RELOC", ".RODATA",
+        // Note: .RODATA is a segment NAME defined in the default ld65 linker config,
+        // NOT a ca65 assembler directive. Removed.
+        ".RELOC",
         ".SETCPU", ".SMART",
         ".TAG", ".ZEROPAGE",
     ]
@@ -201,9 +220,9 @@ struct C64AssemblySyntax {
             description: "Subtracts 1 from the value at a memory location.", flags: "N, Z", cycles: "5-7",
             addressingModes: "Zero Page, ZP X, Absolute, Abs X"),
         "DEX": OpcodeRef(mnemonic: "DEX", fullName: "Decrement X Register",
-            description: "Subtracts 1 to the X register.", flags: "N, Z", cycles: "2", addressingModes: "Implied"),
+            description: "Subtracts 1 from the X register.", flags: "N, Z", cycles: "2", addressingModes: "Implied"),
         "DEY": OpcodeRef(mnemonic: "DEY", fullName: "Decrement Y Register",
-            description: "Subtracts 1 to the Y register.", flags: "N, Z", cycles: "2", addressingModes: "Implied"),
+            description: "Subtracts 1 from the Y register.", flags: "N, Z", cycles: "2", addressingModes: "Implied"),
 
         // ── Logic ────────────────────────────────────────────────
         "AND": OpcodeRef(mnemonic: "AND", fullName: "Logical AND",
@@ -244,28 +263,28 @@ struct C64AssemblySyntax {
         // ── Branch ───────────────────────────────────────────────
         "BCC": OpcodeRef(mnemonic: "BCC", fullName: "Branch if Carry Clear",
             description: "Branches if the carry flag is 0. Used after CMP/SBC for 'less than' (unsigned).",
-            flags: "None", cycles: "2-4", addressingModes: "Relative (±127 bytes)"),
+            flags: "None", cycles: "2-4", addressingModes: "Relative (-128 to +127 bytes from next instruction)"),
         "BCS": OpcodeRef(mnemonic: "BCS", fullName: "Branch if Carry Set",
             description: "Branches if the carry flag is 1. Used after CMP/SBC for 'greater than or equal' (unsigned).",
-            flags: "None", cycles: "2-4", addressingModes: "Relative (±127 bytes)"),
+            flags: "None", cycles: "2-4", addressingModes: "Relative (-128 to +127 bytes from next instruction)"),
         "BEQ": OpcodeRef(mnemonic: "BEQ", fullName: "Branch if Equal (Zero Set)",
             description: "Branches if the zero flag is 1. Used after CMP for equality, or after LDA/DEC/etc. to test for zero.",
-            flags: "None", cycles: "2-4", addressingModes: "Relative (±127 bytes)"),
+            flags: "None", cycles: "2-4", addressingModes: "Relative (-128 to +127 bytes from next instruction)"),
         "BMI": OpcodeRef(mnemonic: "BMI", fullName: "Branch if Minus",
             description: "Branches if the negative flag is 1 (bit 7 of result was set).",
-            flags: "None", cycles: "2-4", addressingModes: "Relative (±127 bytes)"),
+            flags: "None", cycles: "2-4", addressingModes: "Relative (-128 to +127 bytes from next instruction)"),
         "BNE": OpcodeRef(mnemonic: "BNE", fullName: "Branch if Not Equal (Zero Clear)",
-            description: "Branches if the zero flag is 0. The workhorse branch — used in loops and inequality tests.",
-            flags: "None", cycles: "2-4", addressingModes: "Relative (±127 bytes)"),
+            description: "Branches if the zero flag is 0. The workhorse branch -- used in loops and inequality tests.",
+            flags: "None", cycles: "2-4", addressingModes: "Relative (-128 to +127 bytes from next instruction)"),
         "BPL": OpcodeRef(mnemonic: "BPL", fullName: "Branch if Plus",
             description: "Branches if the negative flag is 0 (bit 7 of result was clear). Often used to wait for raster line.",
-            flags: "None", cycles: "2-4", addressingModes: "Relative (±127 bytes)"),
+            flags: "None", cycles: "2-4", addressingModes: "Relative (-128 to +127 bytes from next instruction)"),
         "BVC": OpcodeRef(mnemonic: "BVC", fullName: "Branch if Overflow Clear",
             description: "Branches if the overflow flag is 0. Rarely used in C64 game code.",
-            flags: "None", cycles: "2-4", addressingModes: "Relative (±127 bytes)"),
+            flags: "None", cycles: "2-4", addressingModes: "Relative (-128 to +127 bytes from next instruction)"),
         "BVS": OpcodeRef(mnemonic: "BVS", fullName: "Branch if Overflow Set",
             description: "Branches if the overflow flag is 1.",
-            flags: "None", cycles: "2-4", addressingModes: "Relative (±127 bytes)"),
+            flags: "None", cycles: "2-4", addressingModes: "Relative (-128 to +127 bytes from next instruction)"),
 
         // ── Jump/Call ────────────────────────────────────────────
         "JMP": OpcodeRef(mnemonic: "JMP", fullName: "Jump",
@@ -319,8 +338,8 @@ struct C64AssemblySyntax {
 
         // ── Other ────────────────────────────────────────────────
         "BRK": OpcodeRef(mnemonic: "BRK", fullName: "Break / Software Interrupt",
-            description: "Triggers a software interrupt. Pushes PC+2 and status to stack, loads IRQ vector. The B flag is set in the pushed status to distinguish from hardware IRQ.",
-            flags: "B=1, I=1", cycles: "7", addressingModes: "Implied"),
+            description: "Triggers a software interrupt. Pushes PC+2 and status to stack, loads IRQ vector ($FFFE/$FFFF). The B flag is set in the pushed status byte to distinguish a software BRK from a hardware IRQ -- B is NOT set in the live processor register, only in the copy on the stack.",
+            flags: "I=1 (live); B=1 (pushed copy of P only)", cycles: "7", addressingModes: "Implied"),
         "NOP": OpcodeRef(mnemonic: "NOP", fullName: "No Operation",
             description: "Does nothing for 2 cycles. Useful for timing alignment and patching code.",
             flags: "None", cycles: "2", addressingModes: "Implied"),
