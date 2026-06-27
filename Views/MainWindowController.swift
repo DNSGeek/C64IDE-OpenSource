@@ -949,6 +949,43 @@ class MainWindowController: NSWindowController, NSToolbarDelegate {
             }
         }
 
+        // PRG files need content-based routing: tokenized BASIC goes to the
+        // editor (detokenized), ML goes to the disassembler. Extension alone
+        // isn't enough — both types share the .prg extension.
+        if url.pathExtension.lowercased() == "prg" {
+            guard let data = try? Data(contentsOf: url) else {
+                let alert = NSAlert()
+                alert.messageText = "Could not read \"\(url.lastPathComponent)\""
+                alert.informativeText = "The file could not be read from disk."
+                alert.runModal()
+                return
+            }
+
+            if BasicTokenizer.isTokenizedBASIC(data) {
+                // Tokenized BASIC PRG: detokenize and open as editable source.
+                guard let source = BasicTokenizer.detokenize(data) else {
+                    let alert = NSAlert()
+                    alert.messageText = "Could not detokenize \"\(url.lastPathComponent)\""
+                    alert.informativeText = "The file appears to be a BASIC program but could not be detokenized."
+                    alert.runModal()
+                    return
+                }
+                // Write to a temp .bas file so loadDocument picks up the right
+                // file type on re-entry. Same pattern used by the disk browser.
+                let baseName = url.deletingPathExtension().lastPathComponent
+                let tempURL  = FileManager.default.temporaryDirectory
+                                   .appendingPathComponent("\(baseName).bas")
+                try? source.write(to: tempURL, atomically: true, encoding: .utf8)
+                loadDocument(from: tempURL)     // re-enters with .bas, skips PRG block
+            } else {
+                // Machine language PRG: open in the disassembler.
+                if let appDelegate = NSApp.delegate as? AppDelegate {
+                    appDelegate.openDisassemblerWith(url: url)
+                }
+            }
+            return
+        }
+
         do {
             let doc = try C64Document(url: url)
 
