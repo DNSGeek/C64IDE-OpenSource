@@ -128,7 +128,7 @@ struct C64ROMSymbols {
             // ── Expression Evaluation ────────────────────
             Symbol(address: 0xAD9E, name: "FRMEVL",      description: "Evaluate expression — main entry", category: .basicInternal),
             Symbol(address: 0xAE83, name: "GETVAL",      description: "Get arithmetic element (number, variable, function)", category: .basicInternal),
-            Symbol(address: 0xAEFF, name: "CHKCOM",      description: "Check for and skip expected character in A", category: .basicInternal),
+            Symbol(address: 0xAEFF, name: "CHKCOM",      description: "Check for comma ($2C) in BASIC text; ?SYNTAX ERROR if absent", category: .basicInternal),
             Symbol(address: 0xAF08, name: "SYNERR",      description: "Syntax error — print ?SYNTAX ERROR", category: .basicInternal),
             Symbol(address: 0xAF28, name: "GETVAR",      description: "Get value of variable", category: .basicInternal),
 
@@ -172,7 +172,7 @@ struct C64ROMSymbols {
             // ── Floating Point Math ──────────────────────
             // These are the workhorses that BasicCompiler.swift JSRs into
             Symbol(address: 0xB849, name: "FADDH",       description: "Add 0.5 to FAC (rounding)", category: .floatingPoint),
-            Symbol(address: 0xB850, name: "FSUB",        description: "Subtract: FAC = MEM - FAC", category: .floatingPoint),
+            Symbol(address: 0xB850, name: "FSUB",        description: "Subtract: load float at A/Y into ARG, then FAC = ARG - FAC", category: .floatingPoint),
             Symbol(address: 0xB853, name: "FSUBT",       description: "Subtract: FAC = ARG - FAC (entry after ARG load)", category: .floatingPoint),
             Symbol(address: 0xB867, name: "FADD_AY",     description: "Add: FAC = FAC + float at A/Y", category: .floatingPoint),
             Symbol(address: 0xB86A, name: "FADD",        description: "Add: FAC = FAC + ARG", category: .floatingPoint),
@@ -187,22 +187,22 @@ struct C64ROMSymbols {
             Symbol(address: 0xBB0F, name: "FDIV_AY",     description: "Divide: FAC = MEM(A/Y) / FAC", category: .floatingPoint),
             Symbol(address: 0xBB12, name: "FDIV",        description: "Divide: FAC = ARG / FAC", category: .floatingPoint),
             Symbol(address: 0xBBA2, name: "LDFAC_AY",    description: "Load FAC from 5-byte float at address A/Y", category: .floatingPoint),
-            Symbol(address: 0xBBD0, name: "STFAC_XY",    description: "Store FAC to 5-byte float at address X/Y", category: .floatingPoint),
+            Symbol(address: 0xBBD0, name: "STFAC_XY",    description: "Store FAC to 5-byte float at address in X(lo)/Y(hi)", category: .floatingPoint),
             Symbol(address: 0xBBFC, name: "LDFAC_ARG",   description: "Copy ARG to FAC", category: .floatingPoint),
             Symbol(address: 0xBC0C, name: "STFAC_ARG",   description: "Copy FAC to ARG", category: .floatingPoint),
             Symbol(address: 0xBC1B, name: "FACSGN",      description: "Get sign of FAC into A ($FF=neg, $00=zero, $01=pos)", category: .floatingPoint),
-            Symbol(address: 0xBC2B, name: "FCOMP",       description: "Compare FAC with float at A/Y", category: .floatingPoint),
+            Symbol(address: 0xBC2B, name: "FCOMP",       description: "Compare FAC with 5-byte float at A/Y; result in A: 0=equal, +1=FAC>mem, $FF=FAC<mem", category: .floatingPoint),
             Symbol(address: 0xBC39, name: "FN_SGN",      description: "SGN() function", category: .basicFunction),
-            Symbol(address: 0xBC3C, name: "FLOAT_A",     description: "Convert signed byte in A to FAC", category: .floatingPoint),
-            Symbol(address: 0xBC44, name: "FLOAT_XA",    description: "Convert signed 16-bit X(hi)/A(lo) to FAC", category: .floatingPoint),
-            Symbol(address: 0xBC4F, name: "FLOAT_YA",    description: "Convert unsigned 16-bit Y(hi)/A(lo) to FAC", category: .floatingPoint),
+            Symbol(address: 0xBC3C, name: "FLOAT_A",     description: "Convert unsigned byte in A to FAC (result 0-255)", category: .floatingPoint),
+            Symbol(address: 0xBC44, name: "FLOAT_XA",    description: "Convert integer in X(hi)/A(lo) to FAC", category: .floatingPoint),
+            Symbol(address: 0xBC4F, name: "GIVAYF",      description: "GIVAYF: convert unsigned 16-bit Y(hi)/A(lo) integer to FAC", category: .floatingPoint),
             Symbol(address: 0xBC58, name: "FN_ABS",      description: "ABS() function", category: .basicFunction),
-            Symbol(address: 0xBC5B, name: "FCOMPARE",    description: "Compare FAC with float at address A/Y; result in A", category: .floatingPoint),
+
             Symbol(address: 0xBC9B, name: "FAC2INT",     description: "Convert FAC to 2-byte integer in $64/$65", category: .floatingPoint),
             Symbol(address: 0xBCCC, name: "FN_INT",      description: "INT() function — truncate to integer", category: .basicFunction),
             Symbol(address: 0xBCF3, name: "ASCFLT",      description: "Convert ASCII string to FAC (BASIC input)", category: .floatingPoint),
             Symbol(address: 0xBDC2, name: "INTPRT",      description: "Print integer in A/X", category: .floatingPoint),
-            Symbol(address: 0xBDCD, name: "FLTPRT",      description: "Print positive integer in X/A", category: .floatingPoint),
+            Symbol(address: 0xBDCD, name: "FLTPRT",      description: "Print FAC as floating-point decimal string (setup for FACPRT)", category: .floatingPoint),
             Symbol(address: 0xBDDD, name: "FACPRT",      description: "Print FAC as decimal string", category: .floatingPoint),
             Symbol(address: 0xBDDF, name: "FACSTR",      description: "Convert FAC to ASCII string at $0100", category: .floatingPoint),
             Symbol(address: 0xBF71, name: "FN_SQR",      description: "SQR() function — square root", category: .basicFunction),
@@ -215,9 +215,6 @@ struct C64ROMSymbols {
             Symbol(address: 0xA3FB, name: "STKSPC",      description: "Check for 2*A bytes free on stack", category: .memoryManage),
             Symbol(address: 0xA408, name: "ARRCHK",      description: "Array area overflow check", category: .memoryManage),
             Symbol(address: 0xA38A, name: "FNDFOR",      description: "Search for FOR blocks on stack", category: .basicInternal),
-
-            // ── Polynomial Evaluator (used by trig functions) ─
-            Symbol(address: 0xE043, name: "POLYEVAL",    description: "Evaluate polynomial (coefficients at A/Y)", category: .floatingPoint),
 
             // ── KERNAL Jump Table ($FF81-$FFF3) ──────────
             // KERNAL entry points used by the disassembler for annotation

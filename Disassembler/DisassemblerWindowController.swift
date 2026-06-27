@@ -363,6 +363,18 @@ class DisassemblerViewController: NSViewController {
                     attributes: [.font: font, .foregroundColor: cycleColor]))
             }
 
+            // PETSCII hint column — pad to a fixed position then show |xxx|.
+            // Lets you spot string data that the disassembler decoded as (illegal) opcodes:
+            // a run of |HEL|, |LO | etc. down the right edge stands out immediately.
+            let petsciiTargetCol = 72
+            let petsciiPad = max(2, petsciiTargetCol - (result.length - lineStart))
+            result.append(NSAttributedString(
+                string: String(repeating: " ", count: petsciiPad),
+                attributes: [.font: font, .foregroundColor: operandColor]))
+            result.append(NSAttributedString(
+                string: line.petsciiHint,
+                attributes: [.font: font, .foregroundColor: hexColor]))
+
             result.append(NSAttributedString(string: "\n",
                 attributes: [.font: font, .foregroundColor: operandColor]))
 

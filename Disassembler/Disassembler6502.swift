@@ -76,23 +76,62 @@ struct DisassembledLine {
     /// Additional cycles if page boundary crossed or branch taken
     let pageCrossPenalty: Int
 
-    /// Formats the line for display: "0810  A9 00     LDA #$00    ; comment"
+    // MARK: - PETSCII hint
+
+    /// Returns the displayable character for a byte in the PETSCII hint column,
+    /// following the same logic a hex editor's ASCII column does but PETSCII-aware.
+    ///
+    /// Mapping:
+    ///   $20-$7E  printable ASCII-overlap range (A-Z at $41-$5A, digits, punctuation)
+    ///   $A0      reverse-space -- shown as a regular space
+    ///   $C1-$DA  PETSCII shifted uppercase A-Z (same glyphs, different code points)
+    ///   everything else -> '.'
+    private static func petsciiChar(_ byte: UInt8) -> Character {
+        switch byte {
+        case 0x20...0x7E: return Character(UnicodeScalar(byte))
+        case 0xA0:        return " "
+        case 0xC1...0xDA: return Character(UnicodeScalar(byte - 0x80))  // $C1 -> 'A' ... $DA -> 'Z'
+        default:          return "."
+        }
+    }
+
+    /// Three-character PETSCII hint for the instruction bytes, always padded to three
+    /// characters so the column stays at a fixed position regardless of instruction length.
+    ///
+    /// Example: bytes $48 $45 $4C -> "HEL", bytes $EA -> "...  "
+    ///
+    /// This lets you scan down and spot sequences that are really string data rather
+    /// than genuine code -- even if the disassembler has decoded them as illegal opcodes.
+    var petsciiHint: String {
+        let chars = String(bytes.prefix(3).map { Self.petsciiChar($0) })
+        return "|" + chars.padding(toLength: 3, withPad: " ", startingAt: 0) + "|"
+    }
+
+    // MARK: - Formatted output
+
+    /// Formats the line for display:
+    ///   "$0810  A9 00 EA  LDA #$00        ; comment  |...|"
+    ///
+    /// The rightmost column is a PETSCII hint for the raw bytes -- useful for
+    /// spotting string data that the disassembler has decoded as (illegal) opcodes.
     var formatted: String {
         let addrStr = String(format: "$%04X", address)
         let hexBytes = bytes.map { String(format: "%02X", $0) }.joined(separator: " ")
         let hexPadded = hexBytes.padding(toLength: 9, withPad: " ", startingAt: 0)
 
         if isData {
-            return "\(addrStr)  \(hexPadded)  \(mnemonic) \(operand)"
+            return "\(addrStr)  \(hexPadded)  \(mnemonic) \(operand)  \(petsciiHint)"
         }
 
+        // Always use instPadded (14 chars) so the PETSCII column stays at a fixed
+        // offset regardless of whether this line has a comment.
         let inst = operand.isEmpty ? mnemonic : "\(mnemonic) \(operand)"
         let instPadded = inst.padding(toLength: 14, withPad: " ", startingAt: 0)
 
         if let comment = comment {
-            return "\(addrStr)  \(hexPadded)  \(instPadded) ; \(comment)"
+            return "\(addrStr)  \(hexPadded)  \(instPadded) ; \(comment)  \(petsciiHint)"
         }
-        return "\(addrStr)  \(hexPadded)  \(inst)"
+        return "\(addrStr)  \(hexPadded)  \(instPadded)  \(petsciiHint)"
     }
 
     /// Formats the line as reassemblable source: "    LDA #$00    ; comment"
@@ -336,47 +375,150 @@ class Disassembler6502 {
     }
 
     private func loadIOLabels() {
-        // VIC-II registers
+        // VIC-II registers ($D000-$D3FF) -- full register set
         let vicLabels: [(UInt16, String)] = [
-            (0xD000, "VIC_SPR0X"), (0xD001, "VIC_SPR0Y"),
-            (0xD010, "VIC_SPRXMSB"), (0xD011, "VIC_CR1"),
-            (0xD012, "VIC_RASTER"), (0xD015, "VIC_SPREN"),
-            (0xD016, "VIC_CR2"), (0xD018, "VIC_MEMCTL"),
-            (0xD019, "VIC_IRR"), (0xD01A, "VIC_IMR"),
+            // Sprite X/Y positions
+            (0xD000, "VIC_SPR0X"),  (0xD001, "VIC_SPR0Y"),
+            (0xD002, "VIC_SPR1X"),  (0xD003, "VIC_SPR1Y"),
+            (0xD004, "VIC_SPR2X"),  (0xD005, "VIC_SPR2Y"),
+            (0xD006, "VIC_SPR3X"),  (0xD007, "VIC_SPR3Y"),
+            (0xD008, "VIC_SPR4X"),  (0xD009, "VIC_SPR4Y"),
+            (0xD00A, "VIC_SPR5X"),  (0xD00B, "VIC_SPR5Y"),
+            (0xD00C, "VIC_SPR6X"),  (0xD00D, "VIC_SPR6Y"),
+            (0xD00E, "VIC_SPR7X"),  (0xD00F, "VIC_SPR7Y"),
+            // Control registers
+            (0xD010, "VIC_SPRXMSB"),  // MSB of sprite X coords
+            (0xD011, "VIC_CR1"),      // vertical scroll, screen height, bitmap, blank, raster bit 8
+            (0xD012, "VIC_RASTER"),   // current raster line (write=IRQ trigger line)
+            (0xD013, "VIC_LIGHTX"),   // light pen X (latched)
+            (0xD014, "VIC_LIGHTY"),   // light pen Y (latched)
+            (0xD015, "VIC_SPREN"),    // sprite enable
+            (0xD016, "VIC_CR2"),      // horizontal scroll, screen width, multicolor
+            (0xD017, "VIC_SPRYE"),    // sprite Y expansion
+            (0xD018, "VIC_MEMCTL"),   // VIC memory bank and character/bitmap pointer
+            (0xD019, "VIC_IRR"),      // interrupt request register
+            (0xD01A, "VIC_IMR"),      // interrupt mask register
+            (0xD01B, "VIC_SPRBG"),    // sprite-background priority
+            (0xD01C, "VIC_SPRMC"),    // sprite multicolor enable
+            (0xD01D, "VIC_SPRXE"),    // sprite X expansion
+            (0xD01E, "VIC_SPRSPR"),   // sprite-sprite collision (cleared on read)
+            (0xD01F, "VIC_SPRBGCOL"), // sprite-background collision (cleared on read)
+            // Color registers
             (0xD020, "VIC_BORDERCOLOR"), (0xD021, "VIC_BGCOLOR0"),
-            (0xD022, "VIC_BGCOLOR1"), (0xD023, "VIC_BGCOLOR2"),
-            (0xD024, "VIC_BGCOLOR3"), (0xD025, "VIC_SPRMCOL0"),
-            (0xD026, "VIC_SPRMCOL1"), (0xD027, "VIC_SPR0COL"),
+            (0xD022, "VIC_BGCOLOR1"),    (0xD023, "VIC_BGCOLOR2"),
+            (0xD024, "VIC_BGCOLOR3"),    // multicolor extra background
+            (0xD025, "VIC_SPRMCOL0"),   (0xD026, "VIC_SPRMCOL1"),
+            // Sprite individual colors
+            (0xD027, "VIC_SPR0COL"), (0xD028, "VIC_SPR1COL"),
+            (0xD029, "VIC_SPR2COL"), (0xD02A, "VIC_SPR3COL"),
+            (0xD02B, "VIC_SPR4COL"), (0xD02C, "VIC_SPR5COL"),
+            (0xD02D, "VIC_SPR6COL"), (0xD02E, "VIC_SPR7COL"),
         ]
         for (addr, name) in vicLabels { labels[addr] = name }
 
-        // SID registers
+        // SID registers ($D400-$D41C) -- all three voices, filters, read-only regs
         let sidLabels: [(UInt16, String)] = [
+            // Voice 1
             (0xD400, "SID_V1FREQ_LO"), (0xD401, "SID_V1FREQ_HI"),
-            (0xD402, "SID_V1PW_LO"), (0xD403, "SID_V1PW_HI"),
-            (0xD404, "SID_V1CR"), (0xD405, "SID_V1AD"),
-            (0xD406, "SID_V1SR"), (0xD418, "SID_VOLUME"),
+            (0xD402, "SID_V1PW_LO"),   (0xD403, "SID_V1PW_HI"),
+            (0xD404, "SID_V1CR"),      // waveform, ring mod, sync, gate
+            (0xD405, "SID_V1AD"),      // attack/decay
+            (0xD406, "SID_V1SR"),      // sustain/release
+            // Voice 2
+            (0xD407, "SID_V2FREQ_LO"), (0xD408, "SID_V2FREQ_HI"),
+            (0xD409, "SID_V2PW_LO"),   (0xD40A, "SID_V2PW_HI"),
+            (0xD40B, "SID_V2CR"),
+            (0xD40C, "SID_V2AD"),
+            (0xD40D, "SID_V2SR"),
+            // Voice 3
+            (0xD40E, "SID_V3FREQ_LO"), (0xD40F, "SID_V3FREQ_HI"),
+            (0xD410, "SID_V3PW_LO"),   (0xD411, "SID_V3PW_HI"),
+            (0xD412, "SID_V3CR"),
+            (0xD413, "SID_V3AD"),
+            (0xD414, "SID_V3SR"),
+            // Filter
+            (0xD415, "SID_FILTFREQ_LO"), // filter cutoff low 3 bits
+            (0xD416, "SID_FILTFREQ_HI"), // filter cutoff high 8 bits
+            (0xD417, "SID_FILTRESON"),   // filter resonance and voice routing
+            (0xD418, "SID_MODVOL"),      // filter mode (LP/BP/HP/3OFF) and master volume
+            // Read-only: paddles and voice 3 oscillator/envelope
+            (0xD419, "SID_POTX"),   // paddle X (ADC)
+            (0xD41A, "SID_POTY"),   // paddle Y (ADC)
+            (0xD41B, "SID_OSC3"),   // voice 3 oscillator output (read-only)
+            (0xD41C, "SID_ENV3"),   // voice 3 envelope output (read-only)
         ]
         for (addr, name) in sidLabels { labels[addr] = name }
 
-        // CIA registers
-        let ciaLabels: [(UInt16, String)] = [
-            (0xDC00, "CIA1_PRA"), (0xDC01, "CIA1_PRB"),
-            (0xDC02, "CIA1_DDRA"), (0xDC03, "CIA1_DDRB"),
-            (0xDC04, "CIA1_TALO"), (0xDC05, "CIA1_TAHI"),
-            (0xDC0D, "CIA1_ICR"), (0xDC0E, "CIA1_CRA"),
-            (0xDD00, "CIA2_PRA"), (0xDD01, "CIA2_PRB"),
-            (0xDD0D, "CIA2_ICR"), (0xDD0E, "CIA2_CRA"),
+        // CIA 1 registers ($DC00-$DC0F)
+        let cia1Labels: [(UInt16, String)] = [
+            (0xDC00, "CIA1_PRA"),   // port A (keyboard columns, joystick 2)
+            (0xDC01, "CIA1_PRB"),   // port B (keyboard rows, joystick 1, light pen)
+            (0xDC02, "CIA1_DDRA"),  // data direction A
+            (0xDC03, "CIA1_DDRB"),  // data direction B
+            (0xDC04, "CIA1_TALO"),  // timer A low byte
+            (0xDC05, "CIA1_TAHI"),  // timer A high byte
+            (0xDC06, "CIA1_TBLO"),  // timer B low byte
+            (0xDC07, "CIA1_TBHI"),  // timer B high byte
+            (0xDC08, "CIA1_TODTS"), // TOD tenths of seconds
+            (0xDC09, "CIA1_TODSC"), // TOD seconds
+            (0xDC0A, "CIA1_TODMN"), // TOD minutes
+            (0xDC0B, "CIA1_TODHR"), // TOD hours + AM/PM flag
+            (0xDC0C, "CIA1_SDR"),   // serial shift register
+            (0xDC0D, "CIA1_ICR"),   // interrupt control register
+            (0xDC0E, "CIA1_CRA"),   // control register A
+            (0xDC0F, "CIA1_CRB"),   // control register B
         ]
-        for (addr, name) in ciaLabels { labels[addr] = name }
+        for (addr, name) in cia1Labels { labels[addr] = name }
 
-        // Common zero page / system addresses
-        let zpLabels: [(UInt16, String)] = [
-            (0x0001, "CPU_PORT"), (0x0314, "IRQ_VECTOR"),
-            (0x0316, "BRK_VECTOR"), (0x0318, "NMI_VECTOR"),
-            (0x0400, "SCREEN_RAM"), (0xD800, "COLOR_RAM"),
+        // CIA 2 registers ($DD00-$DD0F)
+        let cia2Labels: [(UInt16, String)] = [
+            (0xDD00, "CIA2_PRA"),   // port A (VIC bank select bits 0-1, serial bus, user port)
+            (0xDD01, "CIA2_PRB"),   // port B (user port)
+            (0xDD02, "CIA2_DDRA"),  // data direction A
+            (0xDD03, "CIA2_DDRB"),  // data direction B
+            (0xDD04, "CIA2_TALO"),  // timer A low byte
+            (0xDD05, "CIA2_TAHI"),  // timer A high byte
+            (0xDD06, "CIA2_TBLO"),  // timer B low byte
+            (0xDD07, "CIA2_TBHI"),  // timer B high byte
+            (0xDD08, "CIA2_TODTS"), // TOD tenths of seconds
+            (0xDD09, "CIA2_TODSC"), // TOD seconds
+            (0xDD0A, "CIA2_TODMN"), // TOD minutes
+            (0xDD0B, "CIA2_TODHR"), // TOD hours + AM/PM flag
+            (0xDD0C, "CIA2_SDR"),   // serial shift register
+            (0xDD0D, "CIA2_ICR"),   // interrupt control register
+            (0xDD0E, "CIA2_CRA"),   // control register A
+            (0xDD0F, "CIA2_CRB"),   // control register B
         ]
-        for (addr, name) in zpLabels { labels[addr] = name }
+        for (addr, name) in cia2Labels { labels[addr] = name }
+
+        // System addresses (CPU port, screen, color RAM, patchable KERNAL vectors)
+        let sysLabels: [(UInt16, String)] = [
+            // 6510 CPU I/O port
+            (0x0000, "CPU_IODIR"),   // 6510 data direction register
+            (0x0001, "CPU_PORT"),    // 6510 data port (bank switching, cassette)
+            // Default screen and color RAM locations
+            (0x0400, "SCREEN_RAM"),
+            (0xD800, "COLOR_RAM"),
+            // Patchable KERNAL I/O vectors ($0314-$0333)
+            // Replace these to redirect KERNAL I/O to custom routines.
+            (0x0314, "CINV"),    // IRQ handler vector    (default: $EA31 IRQ_MAIN)
+            (0x0316, "CBINV"),   // BRK handler vector    (default: $FE66)
+            (0x0318, "NMINV"),   // NMI handler vector    (default: $FE47)
+            (0x031A, "IOPEN"),   // OPEN vector           (default: $F34A OPEN_INT)
+            (0x031C, "ICLOSE"),  // CLOSE vector          (default: $F291 CLOSE_INT)
+            (0x031E, "ICHKIN"),  // CHKIN vector          (default: $F20E CHKIN_INT)
+            (0x0320, "ICKOUT"),  // CHKOUT vector         (default: $F250 CHKOUT_INT)
+            (0x0322, "ICLRCH"),  // CLRCHN vector         (default: $F333 CLRCHN_INT)
+            (0x0324, "IBASIN"),  // BASIN/CHRIN vector    (default: $F157 CHRIN_INT)
+            (0x0326, "IBSOUT"),  // BSOUT/CHROUT vector   (default: $F1CA CHROUT_INT)
+            (0x0328, "ISTOP"),   // STOP vector           (default: $F6ED STOP_INT)
+            (0x032A, "IGETIN"),  // GETIN vector          (default: $F13E GETIN_INT)
+            (0x032C, "ICLALL"),  // CLALL vector          (default: $F32F)
+            (0x032E, "USRCMD"), // User function vector   (default: $FE66)
+            (0x0330, "ILOAD"),   // LOAD vector           (default: $F49E LOAD_INT)
+            (0x0332, "ISAVE"),   // SAVE vector           (default: $F5DD SAVE_INT)
+        ]
+        for (addr, name) in sysLabels { labels[addr] = name }
     }
 
     /// Adds a custom label to the disassembler's annotation map.
@@ -632,6 +774,147 @@ class Disassembler6502 {
         t[0xF9] = OpcodeInfo("SBC", ABY, 4, pageCross: 1)
         t[0xFD] = OpcodeInfo("SBC", ABX, 4, pageCross: 1)
         t[0xFE] = OpcodeInfo("INC", ABX, 7)
+
+        // ── Illegal / undocumented opcodes (NMOS 6502) ──────────
+        // These are used in commercial C64 software and must be decoded
+        // correctly to avoid misaligning the disassembly stream.
+
+        // JAM (KIL/HLT): halt processor; requires reset to recover
+        // All odd-column $x2 opcodes (except $02 which is the same pattern)
+        t[0x02] = OpcodeInfo("JAM", IMP, 2, illegal: true)
+        t[0x12] = OpcodeInfo("JAM", IMP, 2, illegal: true)
+        t[0x22] = OpcodeInfo("JAM", IMP, 2, illegal: true)
+        t[0x32] = OpcodeInfo("JAM", IMP, 2, illegal: true)
+        t[0x42] = OpcodeInfo("JAM", IMP, 2, illegal: true)
+        t[0x52] = OpcodeInfo("JAM", IMP, 2, illegal: true)
+        t[0x62] = OpcodeInfo("JAM", IMP, 2, illegal: true)
+        t[0x72] = OpcodeInfo("JAM", IMP, 2, illegal: true)
+        t[0x92] = OpcodeInfo("JAM", IMP, 2, illegal: true)
+        t[0xB2] = OpcodeInfo("JAM", IMP, 2, illegal: true)
+        t[0xD2] = OpcodeInfo("JAM", IMP, 2, illegal: true)
+        t[0xF2] = OpcodeInfo("JAM", IMP, 2, illegal: true)
+
+        // NOP variants: consume operand bytes without doing anything
+        // Single-byte imm NOPs
+        t[0x80] = OpcodeInfo("NOP", IMM, 2, illegal: true)
+        t[0x82] = OpcodeInfo("NOP", IMM, 2, illegal: true)
+        t[0x89] = OpcodeInfo("NOP", IMM, 2, illegal: true)
+        t[0xC2] = OpcodeInfo("NOP", IMM, 2, illegal: true)
+        t[0xE2] = OpcodeInfo("NOP", IMM, 2, illegal: true)
+        // Zero-page NOPs
+        t[0x04] = OpcodeInfo("NOP", ZP,  3, illegal: true)
+        t[0x44] = OpcodeInfo("NOP", ZP,  3, illegal: true)
+        t[0x64] = OpcodeInfo("NOP", ZP,  3, illegal: true)
+        // Zero-page,X NOPs
+        t[0x14] = OpcodeInfo("NOP", ZPX, 4, illegal: true)
+        t[0x34] = OpcodeInfo("NOP", ZPX, 4, illegal: true)
+        t[0x54] = OpcodeInfo("NOP", ZPX, 4, illegal: true)
+        t[0x74] = OpcodeInfo("NOP", ZPX, 4, illegal: true)
+        t[0xD4] = OpcodeInfo("NOP", ZPX, 4, illegal: true)
+        t[0xF4] = OpcodeInfo("NOP", ZPX, 4, illegal: true)
+        // Absolute NOP
+        t[0x0C] = OpcodeInfo("NOP", ABS, 4, illegal: true)
+        // Absolute,X NOPs (page-cross penalty applies)
+        t[0x1C] = OpcodeInfo("NOP", ABX, 4, pageCross: 1, illegal: true)
+        t[0x3C] = OpcodeInfo("NOP", ABX, 4, pageCross: 1, illegal: true)
+        t[0x5C] = OpcodeInfo("NOP", ABX, 4, pageCross: 1, illegal: true)
+        t[0x7C] = OpcodeInfo("NOP", ABX, 4, pageCross: 1, illegal: true)
+        t[0xDC] = OpcodeInfo("NOP", ABX, 4, pageCross: 1, illegal: true)
+        t[0xFC] = OpcodeInfo("NOP", ABX, 4, pageCross: 1, illegal: true)
+
+        // SLO (ASL memory, then ORA result into A)
+        t[0x03] = OpcodeInfo("SLO", IZX, 8, illegal: true)
+        t[0x07] = OpcodeInfo("SLO", ZP,  5, illegal: true)
+        t[0x0F] = OpcodeInfo("SLO", ABS, 6, illegal: true)
+        t[0x13] = OpcodeInfo("SLO", IZY, 8, illegal: true)
+        t[0x17] = OpcodeInfo("SLO", ZPX, 6, illegal: true)
+        t[0x1B] = OpcodeInfo("SLO", ABY, 7, illegal: true)
+        t[0x1F] = OpcodeInfo("SLO", ABX, 7, illegal: true)
+
+        // RLA (ROL memory, then AND result into A)
+        t[0x23] = OpcodeInfo("RLA", IZX, 8, illegal: true)
+        t[0x27] = OpcodeInfo("RLA", ZP,  5, illegal: true)
+        t[0x2F] = OpcodeInfo("RLA", ABS, 6, illegal: true)
+        t[0x33] = OpcodeInfo("RLA", IZY, 8, illegal: true)
+        t[0x37] = OpcodeInfo("RLA", ZPX, 6, illegal: true)
+        t[0x3B] = OpcodeInfo("RLA", ABY, 7, illegal: true)
+        t[0x3F] = OpcodeInfo("RLA", ABX, 7, illegal: true)
+
+        // SRE (LSR memory, then EOR result into A)
+        t[0x43] = OpcodeInfo("SRE", IZX, 8, illegal: true)
+        t[0x47] = OpcodeInfo("SRE", ZP,  5, illegal: true)
+        t[0x4F] = OpcodeInfo("SRE", ABS, 6, illegal: true)
+        t[0x53] = OpcodeInfo("SRE", IZY, 8, illegal: true)
+        t[0x57] = OpcodeInfo("SRE", ZPX, 6, illegal: true)
+        t[0x5B] = OpcodeInfo("SRE", ABY, 7, illegal: true)
+        t[0x5F] = OpcodeInfo("SRE", ABX, 7, illegal: true)
+
+        // RRA (ROR memory, then ADC result into A)
+        t[0x63] = OpcodeInfo("RRA", IZX, 8, illegal: true)
+        t[0x67] = OpcodeInfo("RRA", ZP,  5, illegal: true)
+        t[0x6F] = OpcodeInfo("RRA", ABS, 6, illegal: true)
+        t[0x73] = OpcodeInfo("RRA", IZY, 8, illegal: true)
+        t[0x77] = OpcodeInfo("RRA", ZPX, 6, illegal: true)
+        t[0x7B] = OpcodeInfo("RRA", ABY, 7, illegal: true)
+        t[0x7F] = OpcodeInfo("RRA", ABX, 7, illegal: true)
+
+        // SAX (store A AND X into memory -- no flags affected)
+        t[0x83] = OpcodeInfo("SAX", IZX, 6, illegal: true)
+        t[0x87] = OpcodeInfo("SAX", ZP,  3, illegal: true)
+        t[0x8F] = OpcodeInfo("SAX", ABS, 4, illegal: true)
+        t[0x97] = OpcodeInfo("SAX", ZPY, 4, illegal: true)
+
+        // LAX (load A and X from same memory byte)
+        t[0xA3] = OpcodeInfo("LAX", IZX, 6, illegal: true)
+        t[0xA7] = OpcodeInfo("LAX", ZP,  3, illegal: true)
+        t[0xAB] = OpcodeInfo("LAX", IMM, 2, illegal: true)  // highly unstable
+        t[0xAF] = OpcodeInfo("LAX", ABS, 4, illegal: true)
+        t[0xB3] = OpcodeInfo("LAX", IZY, 5, pageCross: 1, illegal: true)
+        t[0xB7] = OpcodeInfo("LAX", ZPY, 4, illegal: true)
+        t[0xBF] = OpcodeInfo("LAX", ABY, 4, pageCross: 1, illegal: true)
+
+        // DCP (DEC memory, then CMP result with A)
+        t[0xC3] = OpcodeInfo("DCP", IZX, 8, illegal: true)
+        t[0xC7] = OpcodeInfo("DCP", ZP,  5, illegal: true)
+        t[0xCF] = OpcodeInfo("DCP", ABS, 6, illegal: true)
+        t[0xD3] = OpcodeInfo("DCP", IZY, 8, illegal: true)
+        t[0xD7] = OpcodeInfo("DCP", ZPX, 6, illegal: true)
+        t[0xDB] = OpcodeInfo("DCP", ABY, 7, illegal: true)
+        t[0xDF] = OpcodeInfo("DCP", ABX, 7, illegal: true)
+
+        // ISB (INC memory, then SBC result from A; also called ISC)
+        t[0xE3] = OpcodeInfo("ISB", IZX, 8, illegal: true)
+        t[0xE7] = OpcodeInfo("ISB", ZP,  5, illegal: true)
+        t[0xEF] = OpcodeInfo("ISB", ABS, 6, illegal: true)
+        t[0xF3] = OpcodeInfo("ISB", IZY, 8, illegal: true)
+        t[0xF7] = OpcodeInfo("ISB", ZPX, 6, illegal: true)
+        t[0xFB] = OpcodeInfo("ISB", ABY, 7, illegal: true)
+        t[0xFF] = OpcodeInfo("ISB", ABX, 7, illegal: true)
+
+        // Single-byte combinatoric illegals
+        t[0x0B] = OpcodeInfo("ANC", IMM, 2, illegal: true)  // AND imm, copy N to C
+        t[0x2B] = OpcodeInfo("ANC", IMM, 2, illegal: true)  // same behaviour as $0B
+        t[0x4B] = OpcodeInfo("ALR", IMM, 2, illegal: true)  // AND imm, then LSR A
+        t[0x6B] = OpcodeInfo("ARR", IMM, 2, illegal: true)  // AND imm, then ROR A (complex flags)
+        t[0x8B] = OpcodeInfo("XAA", IMM, 2, illegal: true)  // A = X AND imm (very chip-dependent)
+        t[0xCB] = OpcodeInfo("SBX", IMM, 2, illegal: true)  // X = (A AND X) - imm (also AXS)
+        t[0xEB] = OpcodeInfo("SBC", IMM, 2, illegal: true)  // alternate SBC #imm (identical to $E9)
+
+        // Implied single-byte NOPs (1-byte, no operand consumed)
+        t[0x1A] = OpcodeInfo("NOP", IMP, 2, illegal: true)
+        t[0x3A] = OpcodeInfo("NOP", IMP, 2, illegal: true)
+        t[0x5A] = OpcodeInfo("NOP", IMP, 2, illegal: true)
+        t[0x7A] = OpcodeInfo("NOP", IMP, 2, illegal: true)
+        t[0xDA] = OpcodeInfo("NOP", IMP, 2, illegal: true)
+        t[0xFA] = OpcodeInfo("NOP", IMP, 2, illegal: true)
+
+        // Rare/exotic illegals
+        t[0x9B] = OpcodeInfo("TAS", ABY, 5, illegal: true)  // SP = A AND X; mem = SP AND (addrHi+1)
+        t[0x9C] = OpcodeInfo("SHY", ABX, 5, illegal: true)  // mem = Y AND (addrHi+1)
+        t[0x9E] = OpcodeInfo("SHX", ABY, 5, illegal: true)  // mem = X AND (addrHi+1)
+        t[0x93] = OpcodeInfo("SHA", IZY, 6, illegal: true)  // mem = A AND X AND (addrHi+1)
+        t[0x9F] = OpcodeInfo("SHA", ABY, 5, illegal: true)  // mem = A AND X AND (addrHi+1)
+        t[0xBB] = OpcodeInfo("LAS", ABY, 4, pageCross: 1, illegal: true) // A,X,SP = mem AND SP
 
         return t
     }()
