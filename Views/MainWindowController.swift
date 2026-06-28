@@ -1,5 +1,6 @@
 import Cocoa
 import SwiftUI
+import UniformTypeIdentifiers
 
 // MARK: - Main Window Controller
 
@@ -44,6 +45,7 @@ class MainWindowController: NSWindowController, NSToolbarDelegate {
     private(set) var buildConfig: BuildConfiguration!
     private(set) var buildManager: BuildManager!
     private var lastBuildResult: BuildResult?
+    private var asmToDataDialog: AsmToDataDialog?
 
     // MARK: - Layout Constants
 
@@ -1151,6 +1153,120 @@ class MainWindowController: NSWindowController, NSToolbarDelegate {
             bottomPanelController.appendBuildOutput("Only assembly files can be built.", type: .warning)
         }
     }
+
+    // MARK: - Compile Assembly to DATA
+
+    @objc func compileAssemblyToData(_ sender: Any?) {
+        guard let fileURL = editorViewController.document.fileURL else {
+            bottomPanelController.appendBuildOutput("Save the file first.", type: .warning)
+            editorViewController.saveDocumentAs()
+            return
+        }
+
+        guard editorViewController.document.fileType.usesAssemblyHighlighting else {
+            bottomPanelController.appendBuildOutput(
+                "Compile Assembly to DATA requires an assembly source file.", type: .warning)
+            return
+        }
+
+        let dialog = AsmToDataDialog()
+        asmToDataDialog = dialog          // retain the controller for the sheet's lifetime
+        guard let sheet = dialog.window, let parentWindow = window else { return }
+
+        parentWindow.beginSheet(sheet) { _ in }
+
+        dialog.completionHandler = { [weak self] params in
+            self?.asmToDataDialog = nil   // release once the sheet is done
+            guard let self, let params else { return }
+            self.runAsmToDataPipeline(sourceFile: fileURL, params: params)
+        }
+    }
+
+    // MARK: - Import PRG as DATA
+
+    @objc func importPRGAsData(_ sender: Any?) {
+        guard let parentWindow = window else { return }
+
+        // Step 1: pick the PRG file
+        let panel = NSOpenPanel()
+        panel.title                   = "Choose a PRG File"
+        panel.allowedContentTypes     = [UTType(filenameExtension: "prg") ?? .data]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories    = false
+
+        panel.beginSheetModal(for: parentWindow) { [weak self] response in
+            guard let self, response == .OK, let prgURL = panel.url else { return }
+
+            // Step 2: show the parameter dialog
+            let dialog = AsmToDataDialog()
+            self.asmToDataDialog = dialog
+            guard let sheet = dialog.window else { return }
+
+            parentWindow.beginSheet(sheet) { _ in }
+
+            dialog.completionHandler = { [weak self] params in
+                self?.asmToDataDialog = nil
+                guard let self, let params else { return }
+
+                // Step 3: feed the PRG directly to the generator - no build needed
+                self.generateDataTab(
+                    from: prgURL,
+                    sourceName: prgURL.lastPathComponent,
+                    params: params
+                )
+            }
+        }
+    }
+
+    private func runAsmToDataPipeline(sourceFile: URL, params: AsmToDataParams) {
+        bottomPanelController.selectTab(.build)
+        bottomPanelController.clearBuildOutput()
+        bottomPanelController.appendBuildOutput("Compiling assembly for DATA export...", type: .info)
+
+        // Use a one-shot NotificationCenter observer rather than swapping onBuildComplete.
+        // Swapping the callback is fragile - buildAndRun uses the same pattern internally
+        // and a stale interceptor in the chain causes re-entrancy crashes.
+        //
+        // The observer self-removes on first fire. BuildManager posts .asmToDataBuildComplete
+        // for both success and failure so the token is never leaked by a failed build.
+        var token: NSObjectProtocol?
+        token = NotificationCenter.default.addObserver(
+            forName: .asmToDataBuildComplete,
+            object: buildManager,
+            queue: .main
+        ) { [weak self] note in
+            if let t = token { NotificationCenter.default.removeObserver(t) }
+            token = nil
+
+            guard let self else { return }
+            guard let result = note.userInfo?["result"] as? BuildResult,
+                  result.success,
+                  let prgURL = result.outputFile else { return }
+            self.generateDataTab(from: prgURL, sourceName: sourceFile.lastPathComponent, params: params)
+        }
+
+        buildManager.build(sourceFile: sourceFile, type: .assemblyToData)
+    }
+
+    private func generateDataTab(from prgURL: URL, sourceName: String, params: AsmToDataParams) {
+        switch AsmToDataGenerator.generate(from: prgURL, sourceName: sourceName, params: params) {
+        case .success(let basicText):
+            let doc = C64Document(fileType: .basic, content: basicText)
+            let baseName = (sourceName as NSString).deletingPathExtension
+            doc.customTitle = "\(baseName)_data.bas"
+            let editor = addNewTab(with: doc)
+            // Output is generated, not user-typed - don't prompt to save unless they edit it
+            editor.document.isModified = false
+            updateWindowTitle()
+
+            let lineCount = basicText.components(separatedBy: "\n").count
+            bottomPanelController.appendBuildOutput(
+                "DATA export complete - \(lineCount) lines generated.", type: .success)
+
+        case .failure(let error):
+            bottomPanelController.appendBuildOutput("DATA export failed: \(error.localizedDescription)", type: .error)
+        }
+    }
 }
 
 // MARK: - NSSplitViewDelegate
@@ -1263,17 +1379,5 @@ extension MainWindowController: ClaudeIDEContextProvider {
     }
 }
 
-// MARK: - NSTextField shake animation
-
-private extension NSTextField {
-    /// Brief horizontal shake animation for invalid input feedback.
-    func shake() {
-        let animation = CAKeyframeAnimation(keyPath: "transform.translation.x")
-        animation.timingFunction = CAMediaTimingFunction(name: .linear)
-        animation.duration = 0.35
-        animation.values = [0, -8, 8, -6, 6, -3, 3, 0]
-        layer?.add(animation, forKey: "shake")
-        wantsLayer = true
-    }
-}
+// NSTextField.shake() is defined in NSTextField+Shake.swift
 

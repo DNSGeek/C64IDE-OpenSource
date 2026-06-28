@@ -147,6 +147,18 @@ extension AppDelegate {
         let compileBasic = NSMenuItem(title: "Compile BASIC to ASM", action: #selector(compileBASIC(_:)), keyEquivalent: "g")
         compileBasic.keyEquivalentModifierMask = [.command, .shift]
         menu.addItem(compileBasic)
+        let asmToData = NSMenuItem(
+            title: "Compile Assembly to DATA...",
+            action: #selector(MainWindowController.compileAssemblyToData(_:)),
+            keyEquivalent: ""
+        )
+        menu.addItem(asmToData)
+        let prgToData = NSMenuItem(
+            title: "Import PRG as DATA...",
+            action: #selector(MainWindowController.importPRGAsData(_:)),
+            keyEquivalent: ""
+        )
+        menu.addItem(prgToData)
         menu.addItem(.separator())
         let u64Run = NSMenuItem(title: "Run on U64", action: #selector(U64BuildPipeline.runOnHardware), keyEquivalent: "r")
         u64Run.keyEquivalentModifierMask = [.control, .command]

@@ -18,6 +18,11 @@ extension Notification.Name {
     /// Posted on the main queue when the active debuggable emulator target changes.
     /// Observers should read `EmulatorCoordinator.shared.debuggable` for the new state.
     static let debuggerTargetDidChange = Notification.Name("C64IDE.debuggerTargetDidChange")
+
+    /// Posted on the main queue when an assemblyToData build completes (success or failure).
+    /// The notification's `object` is the posting `BuildManager`.
+    /// `userInfo["result"]` contains the `BuildResult`.
+    static let asmToDataBuildComplete = Notification.Name("C64IDE.asmToDataBuildComplete")
 }
 
 // MARK: - Build Result
@@ -49,12 +54,13 @@ struct BuildResult {
 
 /// Specifies the build output format and memory layout strategy.
 enum BuildType {
-    case assemblyPrg       // .asm → .o → .prg (with BASIC stub)
-    case assemblyRaw       // .asm → .o → .prg (no stub, SYS to load address)
-    case assemblyUpperRAM  // .asm → .o → .prg (at $C000)
+    case assemblyPrg       // .asm -> .o -> .prg (with BASIC stub)
+    case assemblyRaw       // .asm -> .o -> .prg (no stub, SYS to load address)
+    case assemblyUpperRAM  // .asm -> .o -> .prg (at $C000)
+    case assemblyToData    // .asm -> .o -> .prg -> BASIC DATA tab (no run)
     // Future:
-    // case basicTokenize  // .bas → tokenized .prg
-    // case cCompile       // .c → .s → .o → .prg
+    // case basicTokenize  // .bas -> tokenized .prg
+    // case cCompile       // .c -> .s -> .o -> .prg
 }
 
 // MARK: - Build Manager
@@ -76,8 +82,22 @@ class BuildManager {
     }
 
     /// Thread-safe wrapper that dispatches completion to the main queue.
+    /// Also posts .asmToDataBuildComplete when the build type is .assemblyToData,
+    /// so that the DATA tab pipeline can observe completion without swapping onBuildComplete.
     func emitComplete(_ result: BuildResult) {
-        DispatchQueue.main.async { [weak self] in self?.onBuildComplete?(result) }
+        let isDataBuild = currentBuildType == .assemblyToData
+        currentBuildType = nil
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            if isDataBuild {
+                NotificationCenter.default.post(
+                    name: .asmToDataBuildComplete,
+                    object: self,
+                    userInfo: ["result": result]
+                )
+            }
+            self.onBuildComplete?(result)
+        }
     }
 
     /// Emits a shell-style command echo for logging and reproducibility.
@@ -91,6 +111,9 @@ class BuildManager {
 
     /// Currently running build process (used for cancellation).
     var currentProcess: Process?
+
+    /// Build type of the currently executing build. Set at start of _buildSync, cleared on completion.
+    private var currentBuildType: BuildType?
 
     init(config: BuildConfiguration) {
         self.config = config
@@ -112,6 +135,7 @@ class BuildManager {
 
     /// Synchronous build pipeline execution. Runs on a background queue.
     private func _buildSync(sourceFile: URL, type: BuildType, runTarget: RunTarget? = nil) {
+        currentBuildType = type
         // Validate paths first. Target-aware: we don't error on a missing emulator
         // binary if we're about to launch a different one.
         let errors = config.validatePaths(for: runTarget)
@@ -196,7 +220,8 @@ class BuildManager {
 
         let linkerConfig: String
         switch type {
-        case .assemblyPrg:      linkerConfig = LinkerConfigs.c64Prg
+        case .assemblyPrg,
+             .assemblyToData:   linkerConfig = LinkerConfigs.c64Prg
         case .assemblyRaw:      linkerConfig = LinkerConfigs.c64Raw
         case .assemblyUpperRAM: linkerConfig = LinkerConfigs.c64UpperRAM
         }
@@ -269,13 +294,16 @@ class BuildManager {
 
         emitOutput("Build succeeded in \(String(format: "%.2f", assembleTime + linkTime))s", .success)
 
-        // Post-build tasks on main queue
-        DispatchQueue.main.async { @MainActor [self] in
-            if let appDelegate = NSApp.delegate as? AppDelegate,
-               let w = appDelegate.mainWindowController?.window {
-                bundleDisksWithRecovery(outputPRG: outputFile, buildDir: outputFile.deletingLastPathComponent(), parentWindow: w)
-            } else {
-                _ = bundleDisks(outputPRG: outputFile, buildDir: outputFile.deletingLastPathComponent())
+        // Post-build tasks on main queue.
+        // Skip disk bundling for DATA export - the PRG is consumed directly by the generator.
+        if type != .assemblyToData {
+            DispatchQueue.main.async { @MainActor [self] in
+                if let appDelegate = NSApp.delegate as? AppDelegate,
+                   let w = appDelegate.mainWindowController?.window {
+                    bundleDisksWithRecovery(outputPRG: outputFile, buildDir: outputFile.deletingLastPathComponent(), parentWindow: w)
+                } else {
+                    _ = bundleDisks(outputPRG: outputFile, buildDir: outputFile.deletingLastPathComponent())
+                }
             }
         }
 
@@ -296,8 +324,9 @@ class BuildManager {
             NotificationCenter.default.post(name: .buildDidProduceMemoryMap, object: self)
         }
 
-        emitComplete(BuildResult(success: true, outputFile: outputFile, diagnostics: allDiagnostics,
-            assembleTime: assembleTime, linkTime: linkTime))
+        let successResult = BuildResult(success: true, outputFile: outputFile, diagnostics: allDiagnostics,
+            assembleTime: assembleTime, linkTime: linkTime)
+        emitComplete(successResult)
     }
 
     // MARK: - State & Cancellation
