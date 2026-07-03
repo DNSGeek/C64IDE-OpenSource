@@ -94,6 +94,13 @@ struct BasicCodeGen {
     /// space ($20) on files but a cursor-right ($1D) on screen, exactly as
     /// the ROM does at $AB3B.
     private var printingToFile = false
+    /// FOR variables whose limit/step could not be resolved to constants
+    /// in at least one loop, and therefore still need runtime storage.
+    private var forLimitNeeded: Set<String> = []
+    private var forStepNeeded: Set<String> = []
+    /// Runtime routines emitted only when some expression needs them.
+    private var needsMul16 = false
+    private var needsDiv16 = false
 
     // First-pass collection:
     private var dataBytes: [UInt8] = []
@@ -129,6 +136,10 @@ struct BasicCodeGen {
         userFunctions = [:]
         warnings = []
         printingToFile = false
+        forLimitNeeded = []
+        forStepNeeded = []
+        needsMul16 = false
+        needsDiv16 = false
 
         // Build line → label map
         for line in lines {
@@ -614,42 +625,89 @@ struct BasicCodeGen {
     }
 
     // MARK: - FOR / NEXT
-    private var forStack: [(name: String, bodyLabel: String, doneLabel: String)] = []
+    /// One active FOR loop during code generation. constStep/constLimit
+    /// are set when the values are compile-time constants usable by the
+    /// specialized NEXT paths; when constStep is nil the loop entry stores
+    /// both values and NEXT takes the generic runtime path.
+    private struct ForEntry {
+        let name: String
+        let bodyLabel: String
+        let doneLabel: String
+        let constStep: Int?
+        let constLimit: Int?
+    }
+    private var forStack: [ForEntry] = []
 
     private mutating func genFor(varName: String, from: Expr, to: Expr, step: Expr?) {
         let varType = table[varName]
         let bodyLabel = "for_\(asm(varName))_\(labelCounter)"
         let doneLabel = "fordn_\(asm(varName))_\(labelCounter)"
         labelCounter += 1
-        forStack.append((name: varName, bodyLabel: bodyLabel, doneLabel: doneLabel))
+
+        let stepExpr = step ?? .intLit(1)
+        // Compile-time step/limit unlock the specialized NEXT paths and
+        // let the loop entry skip storing them (literals have no side
+        // effects, so skipping their evaluation is safe).
+        var cStep = constIntValue(stepExpr)
+        var cLimit = constIntValue(to)
+        switch varType.width {
+        case .byte:
+            // Unsigned byte loops only: the analyser types any loop with
+            // a negative step as signed, so a byte-width unsigned loop
+            // always counts up. Signed byte loops keep the generic path.
+            if varType.isSigned { cStep = nil }
+            if let k = cStep, !(1...255).contains(k) { cStep = nil }
+            if let l = cLimit, !(0...255).contains(l) { cLimit = nil }
+        case .word:
+            if let k = cStep, k == 0 || k < -32768 || k > 65535 { cStep = nil }
+            if let l = cLimit, !(0...65535).contains(l) { cLimit = nil }
+        default:
+            cStep = nil
+            cLimit = nil
+        }
+        // The specialized NEXT paths key on constStep; a const limit with
+        // a runtime step would leave the generic path reading a
+        // _for_limit that was never stored.
+        if cStep == nil { cLimit = nil }
+
+        forStack.append(ForEntry(name: varName, bodyLabel: bodyLabel,
+                                 doneLabel: doneLabel,
+                                 constStep: cStep, constLimit: cLimit))
 
         switch varType.width {
         case .byte:
             genExprToByte(from)
             emit("    sta var_\(asm(varName))")
-            genExprToByte(to)
-            emit("    sta _for_limit_\(asm(varName))")
-            if let s = step { genExprToByte(s); emit("    sta _for_step_\(asm(varName))") }
-            else { emit("    lda #1"); emit("    sta _for_step_\(asm(varName))") }
+            if cLimit == nil {
+                genExprToByte(to)
+                emit("    sta _for_limit_\(asm(varName))")
+                forLimitNeeded.insert(varName)
+            }
+            if cStep == nil {
+                genExprToByte(stepExpr)
+                emit("    sta _for_step_\(asm(varName))")
+                forStepNeeded.insert(varName)
+            }
         case .word:
             genExprToWord(from)
             emit("    sta var_\(asm(varName))")
             emit("    stx var_\(asm(varName))+1")
-            genExprToWord(to)
-            emit("    sta _for_limit_\(asm(varName))")
-            emit("    stx _for_limit_\(asm(varName))+1")
-            if let s = step {
-                genExprToWord(s)
+            if cLimit == nil {
+                genExprToWord(to)
+                emit("    sta _for_limit_\(asm(varName))")
+                emit("    stx _for_limit_\(asm(varName))+1")
+                forLimitNeeded.insert(varName)
+            }
+            if cStep == nil {
+                genExprToWord(stepExpr)
                 emit("    sta _for_step_\(asm(varName))")
                 emit("    stx _for_step_\(asm(varName))+1")
-            } else {
-                emit("    lda #1"); emit("    sta _for_step_\(asm(varName))")
-                emit("    lda #0"); emit("    sta _for_step_\(asm(varName))+1")
+                forStepNeeded.insert(varName)
             }
         default:
             genExprToFloat(from); genStoreFloatNamed("_for_start_\(asm(varName))")
             genExprToFloat(to);   genStoreFloatNamed("_for_limit_\(asm(varName))")
-            genExprToFloat(step ?? .intLit(1)); genStoreFloatNamed("_for_step_\(asm(varName))")
+            genExprToFloat(stepExpr); genStoreFloatNamed("_for_step_\(asm(varName))")
             genLoadFloatNamed("_for_start_\(asm(varName))")
             genStoreFloat(varName)
         }
@@ -657,7 +715,7 @@ struct BasicCodeGen {
     }
 
     private mutating func genNext(varName: String?) {
-        let entry: (name: String, bodyLabel: String, doneLabel: String)
+        let entry: ForEntry
         if let name = varName,
            let idx = forStack.lastIndex(where: { $0.name == name }) {
             entry = forStack.remove(at: idx)
@@ -677,9 +735,51 @@ struct BasicCodeGen {
         emit("\(entry.doneLabel):")
     }
 
-    private mutating func genNextByte(_ e: (name: String, bodyLabel: String, doneLabel: String)) {
+    private mutating func genNextByte(_ e: ForEntry) {
         let n = asm(e.name)
         let signed = table[e.name].isSigned
+
+        // -- Specialized path: unsigned byte loop, compile-time constant
+        //    positive step. NOT an exact-hit equality test: FOR I=5 TO 3
+        //    legally runs its body once and overshoots past limit+step,
+        //    so the compare must be a magnitude test. --
+        if !signed, let k = e.constStep {
+            if k == 1 {
+                emit("    inc var_\(n)")
+                // Counting up, var can only become 0 by wrapping 255 -> 0,
+                // and inc sets Z.
+                emit("    beq \(e.doneLabel)")
+                if e.constLimit == 255 {
+                    emit("    jmp \(e.bodyLabel)")  // only the wrap ends it
+                    return
+                }
+                emit("    lda var_\(n)")
+            } else {
+                emit("    lda var_\(n)")
+                emit("    clc")
+                emit("    adc #\(k)")
+                emit("    sta var_\(n)")
+                emit("    bcs \(e.doneLabel)")      // wrapped past 255
+                if e.constLimit == 255 {
+                    emit("    jmp \(e.bodyLabel)")
+                    return
+                }
+            }
+            if let lim = e.constLimit {
+                // Continue while var <= lim, i.e. var < lim+1.
+                emit("    cmp #\(lim + 1)")
+                emit("    bcs \(e.doneLabel)")
+                emit("    jmp \(e.bodyLabel)")
+            } else {
+                let go = newLabel("nbg")
+                emit("    cmp _for_limit_\(n)")
+                emit("    beq \(go)")               // == limit: continue
+                emit("    bcs \(e.doneLabel)")      // >  limit: done
+                emit("\(go):")
+                emit("    jmp \(e.bodyLabel)")
+            }
+            return
+        }
 
         if !signed {
             emit("    lda var_\(n)")
@@ -723,8 +823,78 @@ struct BasicCodeGen {
         }
     }
 
-    private mutating func genNextWord(_ e: (name: String, bodyLabel: String, doneLabel: String)) {
+    private mutating func genNextWord(_ e: ForEntry) {
         let n = asm(e.name)
+
+        // -- Specialized path: compile-time constant step. The sign test
+        //    disappears (sign is known), the add uses immediates or a
+        //    16-bit inc, and a constant limit compares against immediates.
+        //    Magnitude compares throughout: exact-hit equality breaks on
+        //    degenerate loops like FOR I=5 TO 3 (body runs once,
+        //    overshoot skips the equality). --
+        if let k = e.constStep {
+            if k == 1 {
+                let c = newLabel("nwi")
+                emit("    inc var_\(n)")
+                emit("    bne \(c)")
+                emit("    inc var_\(n)+1")
+                emit("    beq \(e.doneLabel)")      // wrapped past $FFFF
+                emit("\(c):")
+            } else {
+                let kk = k & 0xFFFF
+                emit("    lda var_\(n)")
+                emit("    clc")
+                emit("    adc #<\(kk)")
+                emit("    sta var_\(n)")
+                emit("    lda var_\(n)+1")
+                emit("    adc #>\(kk)")
+                emit("    sta var_\(n)+1")
+                if k > 0 {
+                    emit("    bcs \(e.doneLabel)")  // wrapped past $FFFF
+                } else {
+                    emit("    bcc \(e.doneLabel)")  // borrowed below 0
+                }
+            }
+            let limLo: String
+            let limHi: String
+            if let lim = e.constLimit {
+                if k > 0 && lim == 65535 || k < 0 && lim == 0 {
+                    // Only the wrap/borrow check above can end this loop.
+                    emit("    jmp \(e.bodyLabel)")
+                    return
+                }
+                limLo = "#<\(lim)"
+                limHi = "#>\(lim)"
+            } else {
+                limLo = "_for_limit_\(n)"
+                limHi = "_for_limit_\(n)+1"
+            }
+            let go = newLabel("nwg")
+            if k > 0 {
+                // Continue while var <= limit.
+                emit("    lda var_\(n)+1")
+                emit("    cmp \(limHi)")
+                emit("    bcc \(go)")               // hi <  : continue
+                emit("    bne \(e.doneLabel)")      // hi >  : done
+                emit("    lda var_\(n)")
+                emit("    cmp \(limLo)")
+                emit("    beq \(go)")               // ==    : continue
+                emit("    bcs \(e.doneLabel)")      // lo >  : done
+            } else {
+                // Continue while var >= limit.
+                emit("    lda var_\(n)+1")
+                emit("    cmp \(limHi)")
+                emit("    bcc \(e.doneLabel)")      // hi <  : done
+                emit("    bne \(go)")               // hi >  : continue
+                emit("    lda var_\(n)")
+                emit("    cmp \(limLo)")
+                emit("    bcc \(e.doneLabel)")      // lo <  : done
+            }
+            emit("\(go):")
+            emit("    jmp \(e.bodyLabel)")
+            return
+        }
+
         let negPath = newLabel("nwneg")
 
         // Runtime sign test on the step's high byte: STEP can be any
@@ -776,7 +946,7 @@ struct BasicCodeGen {
         emit("    jmp \(e.bodyLabel)")
     }
 
-    private mutating func genNextFloat(_ e: (name: String, bodyLabel: String, doneLabel: String)) {
+    private mutating func genNextFloat(_ e: ForEntry) {
         let n = asm(e.name)
         genLoadFloat(e.name)
         emit("    lda #<_for_step_\(n)")
@@ -1291,6 +1461,38 @@ struct BasicCodeGen {
 
     // MARK: - Array Write
     private mutating func genArrayWrite(name: String, indices: [Expr], rhs: Expr) {
+        if let off = constArrayByteOffset(name: name, indices: indices) {
+            // Constant subscripts: direct absolute stores. No element
+            // pointer exists, so nothing needs saving around the RHS.
+            let addr = "arr_\(asm(name))+\(off)"
+            if name.hasSuffix("$") {
+                genStrPtr(rhs)
+                emit("    lda #<(\(addr))")
+                emit("    sta $FD")
+                emit("    lda #>(\(addr))")
+                emit("    sta $FE")
+                let lbl = newLabel("awc")
+                emit("    ldy #0")
+                emit("\(lbl):")
+                emit("    lda ($FB),y")
+                emit("    sta ($FD),y")
+                emit("    beq \(lbl)_done")
+                emit("    iny")
+                emit("    bne \(lbl)")
+                emit("\(lbl)_done:")
+            } else if name.hasSuffix("%") {
+                genExprToWord(rhs)
+                emit("    sta \(addr)")
+                emit("    stx \(addr)+1")
+            } else {
+                genExprToFloat(rhs)
+                emit("    ldx #<(\(addr))")
+                emit("    ldy #>(\(addr))")
+                emit("    jsr \(ROM.MOVMF)")
+            }
+            return
+        }
+
         genArrayElementPtr(name: name, indices: indices)
         if name.hasSuffix("$") {
             // genStrPtr never touches _arr_ptr, so no save needed here.
@@ -1348,6 +1550,48 @@ struct BasicCodeGen {
         }
     }
 
+    /// Multiplies the 16-bit _arr_idx accumulator in place by a
+    /// compile-time constant using inline shift-add. Replaces the old
+    /// _rt_mul8 calls, which were both slow (~170 cycles vs ~10-30 here)
+    /// and WRONG for arrays larger than 255 elements: they fed only the
+    /// LOW byte of the accumulated index into an 8-bit multiply, so
+    /// A(260) indexed off 260 mod 256.
+    private mutating func emitIdxMulConst(_ k: Int) {
+        if k == 1 { return }
+        if k == 0 {
+            emit("    lda #0")
+            emit("    sta _arr_idx_lo")
+            emit("    sta _arr_idx_hi")
+            return
+        }
+        // Multi-bit constants need the original value saved for the adds.
+        if k.nonzeroBitCount > 1 {
+            emit("    lda _arr_idx_lo")
+            emit("    sta _arr_mul_lo")
+            emit("    lda _arr_idx_hi")
+            emit("    sta _arr_mul_hi")
+        }
+        // MSB-first: accumulator already holds x (the top set bit), then
+        // for each lower bit: double, and add the saved original if set.
+        var bit = 1
+        while bit << 1 <= k { bit <<= 1 }
+        bit >>= 1
+        while bit >= 1 {
+            emit("    asl _arr_idx_lo")
+            emit("    rol _arr_idx_hi")
+            if k & bit != 0 {
+                emit("    lda _arr_idx_lo")
+                emit("    clc")
+                emit("    adc _arr_mul_lo")
+                emit("    sta _arr_idx_lo")
+                emit("    lda _arr_idx_hi")
+                emit("    adc _arr_mul_hi")
+                emit("    sta _arr_idx_hi")
+            }
+            bit >>= 1
+        }
+    }
+
     private mutating func genArrayElementPtr(name: String, indices: [Expr]) {
         let dims = arrayDims.first(where: { $0.name == name })?.dims ?? [11]
         let bytesPerElem: Int
@@ -1361,23 +1605,17 @@ struct BasicCodeGen {
 
         for (i, idx) in indices.enumerated() {
             if i > 0 {
-                let stride = dims[i]
-                emit("    lda _arr_idx_lo")
-                emit("    ldx #\(stride)")
-                emit("    jsr _rt_mul8")
-                emit("    lda _arr_mul_lo")
-                emit("    sta _arr_idx_lo")
-                emit("    lda _arr_mul_hi")
-                emit("    sta _arr_idx_hi")
+                emitIdxMulConst(dims[i])
             }
-            genExprToByte(idx)
+            // Full 16-bit add of the subscript: the old genExprToByte call
+            // truncated subscripts over 255, so A(300) indexed element 44.
+            genExprToWord(idx)
             emit("    clc")
             emit("    adc _arr_idx_lo")
             emit("    sta _arr_idx_lo")
-            emit("    bcc @ainc\(labelCounter)")
-            emit("    inc _arr_idx_hi")
-            emit("@ainc\(labelCounter):")
-            labelCounter += 1
+            emit("    txa")
+            emit("    adc _arr_idx_hi")
+            emit("    sta _arr_idx_hi")
         }
 
         if bytesPerElem == 256 {
@@ -1386,13 +1624,7 @@ struct BasicCodeGen {
             emit("    lda #0")
             emit("    sta _arr_idx_lo")
         } else if bytesPerElem > 1 {
-            emit("    lda _arr_idx_lo")
-            emit("    ldx #\(bytesPerElem)")
-            emit("    jsr _rt_mul8")
-            emit("    lda _arr_mul_lo")
-            emit("    sta _arr_idx_lo")
-            emit("    lda _arr_mul_hi")
-            emit("    sta _arr_idx_hi")
+            emitIdxMulConst(bytesPerElem)
         }
 
         emit("    lda #<arr_\(asm(name))")
@@ -1439,20 +1671,34 @@ struct BasicCodeGen {
             genStrPtr(args[0])
             emit("    jsr _rt_strlen")
         case .binaryOp("AND", let l, let r):
-            genExprToByte(l); emit("    sta _cmp_tmp"); genExprToByte(r); emit("    and _cmp_tmp")
+            let s = newLabel("bas"); emitByteScratch(s)
+            genExprToByte(l); emit("    sta \(s)"); genExprToByte(r); emit("    and \(s)")
         case .binaryOp("OR", let l, let r):
-            genExprToByte(l); emit("    sta _cmp_tmp"); genExprToByte(r); emit("    ora _cmp_tmp")
+            let s = newLabel("bos"); emitByteScratch(s)
+            genExprToByte(l); emit("    sta \(s)"); genExprToByte(r); emit("    ora \(s)")
         case .binaryOp("+", let l, let r):
             genExprToByte(l)
             if let k = constByteValue(r) { emit("    clc"); emit("    adc #\(k)") }
-            else { emit("    sta _cmp_tmp"); genExprToByte(r); emit("    clc"); emit("    adc _cmp_tmp") }
+            else {
+                // Per-node scratch: a shared temp here breaks right-nested
+                // expressions like A-(B-C), whose inner node reuses it.
+                let s = newLabel("bps"); emitByteScratch(s)
+                emit("    sta \(s)"); genExprToByte(r); emit("    clc"); emit("    adc \(s)")
+            }
         case .binaryOp("-", let l, let r):
             genExprToByte(l)
             if let k = constByteValue(r) { emit("    sec"); emit("    sbc #\(k)") }
             else {
-                emit("    sta _cmp_tmp"); genExprToByte(r); emit("    sta _arith_tmp")
-                emit("    lda _cmp_tmp"); emit("    sec"); emit("    sbc _arith_tmp")
+                let s = newLabel("bss"); emitByteScratch(s)
+                emit("    sta \(s)"); genExprToByte(r); emit("    sta _arith_tmp")
+                emit("    lda \(s)"); emit("    sec"); emit("    sbc _arith_tmp")
             }
+        case .binaryOp("*", _, _), .binaryOp("/", _, _):
+            // Word math; the result's low byte is already in A. Keeps
+            // byte-context products and quotients out of the float path.
+            // (A possibly-signed divide still falls to float inside
+            // genExprToWord, which is exactly what we want.)
+            genExprToWord(expr)
         case .unaryMinus(let e):
             genExprToByte(e); emit("    eor #$FF"); emit("    clc"); emit("    adc #1")
         case .funcCall("CHR$", _):
@@ -1486,26 +1732,180 @@ struct BasicCodeGen {
         case .intVar(let name):
             emit("    lda var_\(asm(name))"); emit("    ldx var_\(asm(name))+1")
         case .binaryOp("+", let l, let r):
-            genExprToWord(l); emit("    sta _word_lo"); emit("    stx _word_hi")
-            if let k = constWordValue(r) {
-                emit("    lda _word_lo"); emit("    clc"); emit("    adc #<\(k)"); emit("    sta _word_lo")
-                emit("    lda _word_hi"); emit("    adc #>\(k)"); emit("    tax"); emit("    lda _word_lo")
+            // Constant on either side stays register-only.
+            if let k = constWordValue(r) ?? constWordValue(l) {
+                genExprToWord(constWordValue(r) != nil ? l : r)
+                emit("    clc")
+                emit("    adc #<\(k)")
+                emit("    tay")
+                emit("    txa")
+                emit("    adc #>\(k)")
+                emit("    tax")
+                emit("    tya")
             } else {
-                genExprToWord(r); emit("    sta _arith_tmp")
-                emit("    clc"); emit("    lda _word_lo"); emit("    adc _arith_tmp"); emit("    sta _word_lo")
-                emit("    txa"); emit("    adc _word_hi"); emit("    tax"); emit("    lda _word_lo")
+                // Per-node scratch: the old shared _word_lo/_word_hi save
+                // slot broke right-nested expressions (A + B*C evaluates
+                // B*C while A sits in the slot the inner node reuses).
+                let s = newLabel("was"); emitWordScratch(s)
+                genExprToWord(l)
+                emit("    sta \(s)")
+                emit("    stx \(s)+1")
+                genExprToWord(r)
+                emit("    clc")
+                emit("    adc \(s)")
+                emit("    tay")
+                emit("    txa")
+                emit("    adc \(s)+1")
+                emit("    tax")
+                emit("    tya")
             }
         case .binaryOp("-", let l, let r):
-            genExprToWord(l); emit("    sta _word_lo"); emit("    stx _word_hi")
             if let k = constWordValue(r) {
-                emit("    lda _word_lo"); emit("    sec"); emit("    sbc #<\(k)"); emit("    sta _word_lo")
-                emit("    lda _word_hi"); emit("    sbc #>\(k)"); emit("    tax"); emit("    lda _word_lo")
+                genExprToWord(l)
+                emit("    sec")
+                emit("    sbc #<\(k)")
+                emit("    tay")
+                emit("    txa")
+                emit("    sbc #>\(k)")
+                emit("    tax")
+                emit("    tya")
             } else {
-                genExprToWord(r); emit("    sta _arith_tmp")
-                emit("    sec"); emit("    lda _word_lo"); emit("    sbc _arith_tmp"); emit("    sta _word_lo")
-                emit("    txa"); emit("    sbc _word_hi"); emit("    tax"); emit("    lda _word_lo")
+                let s = newLabel("wss"); emitWordScratch(s)
+                genExprToWord(l)
+                emit("    sta \(s)")
+                emit("    stx \(s)+1")
+                genExprToWord(r)
+                // r's evaluation is complete here, so these shared temps
+                // are safe: nothing evaluates between the store and use.
+                emit("    sta _arith_tmp")
+                emit("    stx _word_hi_tmp")
+                emit("    lda \(s)")
+                emit("    sec")
+                emit("    sbc _arith_tmp")
+                emit("    tay")
+                emit("    lda \(s)+1")
+                emit("    sbc _word_hi_tmp")
+                emit("    tax")
+                emit("    tya")
+            }
+        case .binaryOp("*", let l, let r):
+            // Word multiply is mod 65536; two's complement makes the low
+            // 16 bits correct for signed operands too. Float contexts are
+            // untouched (products above 65535 still compute exactly
+            // there). Note the old behavior for a word-context product
+            // over 65535 was a GETADR ILLEGAL QUANTITY stop; wrapping is
+            // both faster and more useful for address math.
+            if let k = constWordValue(r) ?? constWordValue(l) {
+                let varSide = constWordValue(r) != nil ? l : r
+                genExprToWord(varSide)
+                if k == 0 {
+                    emit("    lda #0")
+                    emit("    tax")
+                } else if k > 1 {
+                    // Inline shift-add, MSB-first over the bits of k.
+                    let s = newLabel("wms"); emitWordScratch(s)
+                    let s2 = newLabel("wmo")
+                    let multiBit = k.nonzeroBitCount > 1
+                    if multiBit { emitWordScratch(s2) }
+                    emit("    sta \(s)")
+                    emit("    stx \(s)+1")
+                    if multiBit {
+                        emit("    sta \(s2)")
+                        emit("    stx \(s2)+1")
+                    }
+                    var bit = 1
+                    while bit << 1 <= k { bit <<= 1 }
+                    bit >>= 1
+                    while bit >= 1 {
+                        emit("    asl \(s)")
+                        emit("    rol \(s)+1")
+                        if k & bit != 0 {
+                            emit("    lda \(s)")
+                            emit("    clc")
+                            emit("    adc \(s2)")
+                            emit("    sta \(s)")
+                            emit("    lda \(s)+1")
+                            emit("    adc \(s2)+1")
+                            emit("    sta \(s)+1")
+                        }
+                        bit >>= 1
+                    }
+                    emit("    lda \(s)")
+                    emit("    ldx \(s)+1")
+                }
+                // k == 1: value already in A/X.
+            } else {
+                needsMul16 = true
+                let s = newLabel("wml"); emitWordScratch(s)
+                genExprToWord(l)
+                emit("    sta \(s)")
+                emit("    stx \(s)+1")
+                genExprToWord(r)
+                emit("    sta _mul_b")
+                emit("    stx _mul_b+1")
+                emit("    lda \(s)")
+                emit("    sta _mul_a")
+                emit("    lda \(s)+1")
+                emit("    sta _mul_a+1")
+                emit("    jsr _rt_mul16")
+            }
+        case .binaryOp("/", let l, let r) where !exprMaybeSigned(l) && !exprMaybeSigned(r):
+            // Unsigned integer division floors exactly like BASIC does in
+            // an integer context, so results match the old float path for
+            // non-negative operands. Possibly-signed operands fall through
+            // to the float default (floor(-7/2) is -4; truncation says -3).
+            if let k = constWordValue(r) {
+                if k == 0 {
+                    warn("division by constant zero; program will stop here")
+                    genExprToWord(l)
+                    emit("    jmp _program_end")
+                } else if k == 1 {
+                    genExprToWord(l)
+                } else if k.nonzeroBitCount == 1 {
+                    let s = newLabel("wds"); emitWordScratch(s)
+                    genExprToWord(l)
+                    emit("    sta \(s)")
+                    emit("    stx \(s)+1")
+                    var q = k
+                    while q > 1 {
+                        emit("    lsr \(s)+1")
+                        emit("    ror \(s)")
+                        q >>= 1
+                    }
+                    emit("    lda \(s)")
+                    emit("    ldx \(s)+1")
+                } else {
+                    needsDiv16 = true
+                    genExprToWord(l)
+                    emit("    sta _div_n")
+                    emit("    stx _div_n+1")
+                    emit("    lda #<\(k)")
+                    emit("    sta _div_d")
+                    emit("    lda #>\(k)")
+                    emit("    sta _div_d+1")
+                    emit("    jsr _rt_div16")
+                }
+            } else {
+                needsDiv16 = true
+                let s = newLabel("wdl"); emitWordScratch(s)
+                genExprToWord(l)
+                emit("    sta \(s)")
+                emit("    stx \(s)+1")
+                genExprToWord(r)
+                emit("    sta _div_d")
+                emit("    stx _div_d+1")
+                emit("    lda \(s)")
+                emit("    sta _div_n")
+                emit("    lda \(s)+1")
+                emit("    sta _div_n+1")
+                emit("    jsr _rt_div16")
             }
         case .arrayRead(let name, let idxs) where name.hasSuffix("%"):
+            if let off = constArrayByteOffset(name: name, indices: idxs) {
+                emit("    lda arr_\(asm(name))+\(off)")
+                emit("    ldx arr_\(asm(name))+\(off)+1")
+                break
+            }
             // Direct 2-byte load. Going through the float path would send
             // negative elements into GETADR's ILLEGAL QUANTITY check.
             genArrayElementPtr(name: name, indices: idxs)
@@ -1717,6 +2117,20 @@ struct BasicCodeGen {
         case .funcCall(let fn, let args):
             genFuncCallToFloat(fn: fn, args: args)
         case .arrayRead(let name, let idxs):
+            if let off = constArrayByteOffset(name: name, indices: idxs) {
+                // All subscripts constant: the element address is a ca65
+                // expression, no runtime pointer math at all.
+                if name.hasSuffix("%") {
+                    emit("    lda arr_\(asm(name))+\(off)+1")   // hi
+                    emit("    ldy arr_\(asm(name))+\(off)")     // lo
+                    emit("    jsr \(ROM.INTFAC)")
+                } else {
+                    emit("    lda #<(arr_\(asm(name))+\(off))")
+                    emit("    ldy #>(arr_\(asm(name))+\(off))")
+                    emit("    jsr \(ROM.MOVFM)")
+                }
+                break
+            }
             genArrayElementPtr(name: name, indices: idxs)
             if name.hasSuffix("%") {
                 // 2-byte signed element (little-endian). GIVAYF's signed
@@ -1829,6 +2243,11 @@ struct BasicCodeGen {
             // unhandled, so PRINT A$(I) fell into the float path and
             // printed a 5-byte reinterpretation of the text. Modern art,
             // but not what anyone asked for.
+            if let off = constArrayByteOffset(name: name, indices: idxs) {
+                emit("    lda #<(arr_\(asm(name))+\(off))"); emit("    sta $FB")
+                emit("    lda #>(arr_\(asm(name))+\(off))"); emit("    sta $FC")
+                break
+            }
             genArrayElementPtr(name: name, indices: idxs)
             emit("    lda _arr_ptr_lo"); emit("    sta $FB")
             emit("    lda _arr_ptr_hi"); emit("    sta $FC")
@@ -1964,9 +2383,76 @@ struct BasicCodeGen {
         if case .intLit(let n) = expr, n >= 0, n <= 255 { return n }
         return nil
     }
+    /// Compile-time integer value of an expression, negatives included
+    /// (STEP -1 parses as unaryMinus(intLit(1))). Float literals qualify
+    /// when integral.
+    private func constIntValue(_ e: Expr) -> Int? {
+        switch e {
+        case .intLit(let n): return n
+        case .floatLit(let f):
+            guard f == f.rounded(.towardZero), abs(f) <= 65536 else { return nil }
+            return Int(f)
+        case .unaryMinus(let inner):
+            guard let v = constIntValue(inner) else { return nil }
+            return -v
+        default: return nil
+        }
+    }
+
     private func constWordValue(_ expr: Expr) -> Int? {
-        if case .intLit(let n) = expr, n >= 0, n <= 65535 { return n }
-        return nil
+        guard let v = constIntValue(expr), v >= 0, v <= 65535 else { return nil }
+        return v
+    }
+
+    /// Conservatively: could this word-context expression hold a negative
+    /// value? Gates the fast unsigned divide: for non-negative operands,
+    /// unsigned integer division and BASIC's floor agree exactly; for
+    /// negative ones they differ (-7/2 floors to -4, truncates to -3), so
+    /// possibly-signed operands keep the float path.
+    private func exprMaybeSigned(_ e: Expr) -> Bool {
+        switch e {
+        case .intLit(let n): return n < 0
+        case .floatLit(let f): return f < 0
+        case .strLit, .strVar: return false
+        case .intVar: return true                       // % vars are signed
+        case .tiVar, .stVar: return false
+        case .floatVar(let name):
+            if name == "TI" || name == "ST" { return false }
+            return table[name].width == .float || table[name].isSigned
+        case .unaryMinus, .notOp, .compareOp: return true
+        case .binaryOp("-", _, _): return true          // may underflow
+        case .binaryOp("+", let l, let r),
+             .binaryOp("*", let l, let r),
+             .binaryOp("/", let l, let r),
+             .binaryOp("AND", let l, let r),
+             .binaryOp("OR", let l, let r):
+            return exprMaybeSigned(l) || exprMaybeSigned(r)
+        case .binaryOp: return true
+        case .arrayRead: return true                    // element sign unknown
+        case .funcCall(let fn, _):
+            return !["PEEK", "LEN", "ASC", "POS", "FRE", "RND", "ABS", "SQR"].contains(fn)
+        default: return true
+        }
+    }
+
+    /// Byte offset into an array's storage for an access whose subscripts
+    /// are all compile-time constants, or nil to use runtime indexing.
+    /// Mirrors genArrayElementPtr's row-major math exactly.
+    private mutating func constArrayByteOffset(name: String, indices: [Expr]) -> Int? {
+        guard let dims = arrayDims.first(where: { $0.name == name })?.dims,
+              indices.count == dims.count else { return nil }
+        let bpe = name.hasSuffix("$") ? 256 : (name.hasSuffix("%") ? 2 : 5)
+        var total = 0
+        for (i, idx) in indices.enumerated() {
+            guard let v = constIntValue(idx), v >= 0 else { return nil }
+            guard v < dims[i] else {
+                warn("\(name): constant subscript \(v) out of range (max \(dims[i] - 1)); using runtime indexing")
+                return nil
+            }
+            if i > 0 { total *= dims[i] }
+            total += v
+        }
+        return total * bpe
     }
     private func exprWidth(_ expr: Expr) -> NumWidth? {
         switch expr {
@@ -2208,15 +2694,84 @@ struct BasicCodeGen {
         emit("    jsr _rt_spc"); emit("    rts")
         emit("")
 
-        emit("_rt_mul8:")
-        emit("    sta _arr_mul_lo"); emit("    lda #0"); emit("    sta _arr_mul_hi")
-        emit("    ldy #8"); emit("@ml:")
-        emit("    asl _arr_mul_lo"); emit("    rol _arr_mul_hi"); emit("    bcc @mn")
-        emit("    txa"); emit("    clc"); emit("    adc _arr_mul_lo"); emit("    sta _arr_mul_lo")
-        emit("    lda _arr_mul_hi"); emit("    adc #0"); emit("    sta _arr_mul_hi")
-        emit("@mn:"); emit("dey"); emit("bne @ml")
-        emit("    rts")
-        emit("")
+        if needsMul16 {
+            // 16 x 16 -> low 16 bits, MSB-first shift-add.
+            // ~350 cycles average vs ~2000+ for the float round trip.
+            emit("_rt_mul16:")
+            emit("    lda #0")
+            emit("    sta _mul_r")
+            emit("    sta _mul_r+1")
+            emit("    ldy #16")
+            emit("@ml:")
+            emit("    asl _mul_r")
+            emit("    rol _mul_r+1")
+            emit("    asl _mul_b")
+            emit("    rol _mul_b+1")
+            emit("    bcc @ms")
+            emit("    lda _mul_r")
+            emit("    clc")
+            emit("    adc _mul_a")
+            emit("    sta _mul_r")
+            emit("    lda _mul_r+1")
+            emit("    adc _mul_a+1")
+            emit("    sta _mul_r+1")
+            emit("@ms:")
+            emit("    dey")
+            emit("    bne @ml")
+            emit("    lda _mul_r")
+            emit("    ldx _mul_r+1")
+            emit("    rts")
+            emit("")
+        }
+
+        if needsDiv16 {
+            // Unsigned 16 / 16 restoring division. Quotient bits build in
+            // _div_n as it shifts out; remainder tracks in _div_r. The
+            // @force branch handles the 17-bit case (rol pushed remainder
+            // bit 16 into carry, so the subtract is guaranteed and sbc
+            // starts with C=1 from that same rol).
+            emit("_rt_div16:")
+            emit("    lda _div_d")
+            emit("    ora _div_d+1")
+            emit("    bne @dv")
+            emit("    jmp _program_end")  // ?DIVISION BY ZERO
+            emit("@dv:")
+            emit("    lda #0")
+            emit("    sta _div_r")
+            emit("    sta _div_r+1")
+            emit("    ldy #16")
+            emit("@dl:")
+            emit("    asl _div_n")
+            emit("    rol _div_n+1")
+            emit("    rol _div_r")
+            emit("    rol _div_r+1")
+            emit("    bcs @force")
+            emit("    sec")
+            emit("    lda _div_r")
+            emit("    sbc _div_d")
+            emit("    tax")
+            emit("    lda _div_r+1")
+            emit("    sbc _div_d+1")
+            emit("    bcc @dn")
+            emit("    bcs @store")
+            emit("@force:")
+            emit("    lda _div_r")
+            emit("    sbc _div_d")
+            emit("    tax")
+            emit("    lda _div_r+1")
+            emit("    sbc _div_d+1")
+            emit("@store:")
+            emit("    sta _div_r+1")
+            emit("    stx _div_r")
+            emit("    inc _div_n")
+            emit("@dn:")
+            emit("    dey")
+            emit("    bne @dl")
+            emit("    lda _div_n")
+            emit("    ldx _div_n+1")
+            emit("    rts")
+            emit("")
+        }
 
         if dataHasString {
             emit("_rt_data_read_str:")
@@ -2247,7 +2802,13 @@ struct BasicCodeGen {
         emit("; ── Scratch storage ──")
         emit("_cmp_tmp:    .res 1"); emit("_cmp_lo:     .res 1"); emit("_cmp_hi:     .res 1")
         emit("_arith_tmp:  .res 1"); emit("_and_tmp:    .res 1"); emit("_xor_tmp:    .res 1")
-        emit("_str_tmp:    .res 1"); emit("_word_lo:    .res 1"); emit("_word_hi:    .res 1")
+        emit("_str_tmp:    .res 1")
+        if needsMul16 {
+            emit("_mul_a:      .res 2"); emit("_mul_b:      .res 2"); emit("_mul_r:      .res 2")
+        }
+        if needsDiv16 {
+            emit("_div_n:      .res 2"); emit("_div_d:      .res 2"); emit("_div_r:      .res 2")
+        }
         emit("_word_hi_tmp: .res 1"); emit("_word_tmp:   .res 1"); emit("_poke_val:   .res 1")
         emit("_poke_lo:    .res 1"); emit("_poke_hi:    .res 1"); emit("_peek_lo:    .res 1")
         emit("_peek_hi:    .res 1"); emit("_sys_lo:     .res 1"); emit("_sys_hi:     .res 1")
@@ -2330,6 +2891,11 @@ struct BasicCodeGen {
     private mutating func emitWordScratch(_ label: String) {
         if floatConstSection.contains(where: { $0.hasPrefix("\(label):") }) { return }
         floatConstSection.append("\(label): .res 2")
+    }
+
+    private mutating func emitByteScratch(_ label: String) {
+        if floatConstSection.contains(where: { $0.hasPrefix("\(label):") }) { return }
+        floatConstSection.append("\(label): .res 1")
     }
 
     /// Encode a Double as a 5-byte C64 float (MFLPT format).
@@ -2417,9 +2983,18 @@ struct BasicCodeGen {
                 }
                 if varType.width == .float {
                     emit("_for_start_\(asm(name)): .res \(bytes)")
+                    emit("_for_limit_\(asm(name)): .res \(bytes)")
+                    emit("_for_step_\(asm(name)):  .res \(bytes)")
+                } else {
+                    // Loops with compile-time step/limit never touch
+                    // these; emit only what some loop actually stores.
+                    if forLimitNeeded.contains(name) {
+                        emit("_for_limit_\(asm(name)): .res \(bytes)")
+                    }
+                    if forStepNeeded.contains(name) {
+                        emit("_for_step_\(asm(name)):  .res \(bytes)")
+                    }
                 }
-                emit("_for_limit_\(asm(name)): .res \(bytes)")
-                emit("_for_step_\(asm(name)):  .res \(bytes)")
             }
         }
 
