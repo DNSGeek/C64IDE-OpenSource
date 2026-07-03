@@ -14,6 +14,13 @@
 
 import Foundation
 
+/// Error describing why PRG-to-DATA generation failed, carrying a
+/// human-readable message for display in the build output panel.
+struct AsmToDataError: LocalizedError {
+    let message: String
+    var errorDescription: String? { message }
+}
+
 struct AsmToDataGenerator {
 
     // MARK: - Entry Point
@@ -29,15 +36,15 @@ struct AsmToDataGenerator {
         from prgURL: URL,
         sourceName: String,
         params: AsmToDataParams
-    ) -> Result<String, String> {
+    ) -> Result<String, AsmToDataError> {
 
         // Read the PRG
         guard let data = try? Data(contentsOf: prgURL) else {
-            return .failure("Could not read PRG file: \(prgURL.lastPathComponent)")
+            return .failure(AsmToDataError(message: "Could not read PRG file: \(prgURL.lastPathComponent)"))
         }
 
         guard data.count >= 2 else {
-            return .failure("PRG file is too short to contain a load address header.")
+            return .failure(AsmToDataError(message: "PRG file is too short to contain a load address header."))
         }
 
         // C64 PRG header: 2-byte little-endian load address
@@ -46,7 +53,7 @@ struct AsmToDataGenerator {
         let byteCount = payload.count
 
         guard byteCount > 0 else {
-            return .failure("PRG file has no payload bytes after the load address header.")
+            return .failure(AsmToDataError(message: "PRG file has no payload bytes after the load address header."))
         }
 
         var output: [String] = []
