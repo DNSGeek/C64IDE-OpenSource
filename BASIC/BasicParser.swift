@@ -56,19 +56,49 @@ public struct BasicParser {
             let content = String(trimmed[charIdx...]).trimmingCharacters(in: .whitespaces)
             tokens = tokenize(content)
             pos = 0
+            pendingStmts = []
 
             let stmts = parseStatementList()
             lines.append(ParsedLine(number: lineNum, stmts: stmts))
         }
 
-        return lines
+        // C64 BASIC keeps its program sorted by line number and typing a
+        // line number again REPLACES the earlier line. Preserving file
+        // order instead meant out-of-order source executed in the wrong
+        // sequence and duplicate numbers produced duplicate ca65 labels
+        // (assembler error). Match the hardware: last definition wins,
+        // then sort.
+        var indexByNumber: [Int: Int] = [:]
+        var deduped: [ParsedLine] = []
+        for line in lines {
+            if let i = indexByNumber[line.number] {
+                deduped[i] = line
+            } else {
+                indexByNumber[line.number] = deduped.count
+                deduped.append(line)
+            }
+        }
+        deduped.sort { $0.number < $1.number }
+        return deduped
     }
 
     // MARK: - Statement List
 
+    /// Statements queued by list-form parsers (NEXT I,J / INPUT A,B,C)
+    /// beyond the first, drained by the statement-list loops. Reset per
+    /// line in parse().
+    private var pendingStmts: [Stmt] = []
+
     private mutating func parseStatementList() -> [Stmt] {
         var stmts: [Stmt] = []
-        while !atEOF {
+        while true {
+            // Drain BEFORE the EOF check: NEXT I,J at line end leaves
+            // pending statements with no tokens remaining.
+            if !pendingStmts.isEmpty {
+                stmts.append(pendingStmts.removeFirst())
+                continue
+            }
+            if atEOF { break }
             // Bare colon is a legal no-op separator in C64 BASIC
             if peek == .colon { advance(); continue }
             if let s = parseOneStatement() {
@@ -267,7 +297,12 @@ public struct BasicParser {
     /// THEN clause unless an ELSE is encountered.
     private mutating func parseIfBody() -> [Stmt] {
         var stmts: [Stmt] = []
-        while !atEOF {
+        while true {
+            if !pendingStmts.isEmpty {
+                stmts.append(pendingStmts.removeFirst())
+                continue
+            }
+            if atEOF { break }
             if case .identifier("ELSE") = peek { break }
             if peek == .colon {
                 advance()
@@ -299,10 +334,22 @@ public struct BasicParser {
 
     private mutating func parseNext() -> Stmt {
         advance() // NEXT
-        switch peek {
-        case .identifier(let v): advance(); return .nextStmt(v)
-        default: return .nextStmt(nil)
+        guard case .identifier(let first) = peek else { return .nextStmt(nil) }
+        advance()
+        // NEXT I,J,K closes multiple loops, innermost first. Extras go
+        // into the pending queue; the statement-list loop emits them as
+        // individual nextStmt in order. Previously ",J" was left in the
+        // token stream to confuse whatever parsed next.
+        while peek == .comma {
+            advance()
+            guard case .identifier(let v) = peek else {
+                recordError("Expected variable name after ',' in NEXT")
+                break
+            }
+            advance()
+            pendingStmts.append(.nextStmt(v))
         }
+        return .nextStmt(first)
     }
 
     private mutating func parseLet() -> Stmt {
@@ -358,6 +405,16 @@ public struct BasicParser {
             if peek == .semicolon { advance() }
         }
         let varName = parseVarName(context: "INPUT")
+        // INPUT A,B,C: each additional variable becomes its own promptless
+        // inputStmt, so the user is re-prompted "? " per value. That is the
+        // interpreter's ?? behavior when values are entered one at a time;
+        // comma-separated entry on a single line is NOT supported (each
+        // response line feeds exactly one variable). Documented deviation.
+        while peek == .comma {
+            advance()
+            let v = parseVarName(context: "INPUT")
+            pendingStmts.append(.inputStmt(nil, v))
+        }
         return .inputStmt(prompt, varName)
     }
 

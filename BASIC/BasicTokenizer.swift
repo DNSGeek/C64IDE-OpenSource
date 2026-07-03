@@ -154,7 +154,13 @@ public class BasicTokenizer {
 
             // 2 (next ptr) + 2 (line num) + content bytes + 1 (null terminator)
             let lineLength = 2 + 2 + tokenizedContent.count + 1
-            let nextAddress = currentAddress + UInt16(lineLength)
+            // Compute in Int: currentAddress + UInt16(lineLength) TRAPS
+            // once the program grows past $FFFF. A program that big cannot
+            // exist in a C64 anyway, so stop emitting lines instead of
+            // crashing the app.
+            let next = Int(currentAddress) + lineLength
+            guard next <= 0xFFFF else { break }
+            let nextAddress = UInt16(next)
 
             output.append(UInt8(nextAddress & 0xFF))
             output.append(UInt8(nextAddress >> 8))
@@ -332,6 +338,16 @@ public class BasicTokenizer {
                 continue
             }
 
+            // ── PI value token ──────────────────────────────────────────
+            // PI crunches to $FF on real hardware. Skipped when the active
+            // dialect declares $FF as a token prefix (MEGA65 BASIC 65
+            // does); the character then falls through to the literal path.
+            if ch == "\u{03C0}" && !BasicDialectManager.shared.isPrefixByte(0xFF) {
+                result.append(0xFF)
+                pos = upper.index(after: pos)
+                continue
+            }
+
             // ── Literal character ──────────────────────────────────────
             result.append(asciiToPetscii(ch))
             pos = upper.index(after: pos)
@@ -375,7 +391,10 @@ public class BasicTokenizer {
     /// - Note: This function is intentionally *not* called for `{$XX}` escape
     ///   sequences — those are already resolved to a raw byte before reaching
     ///   the character-conversion path.
-    private static func asciiToPetscii(_ char: Character) -> UInt8 {
+    /// Internal (not private): BasicCodeGen shares this mapping for
+    /// compiled string literals, so PRINT and the tokenizer agree on
+    /// every character.
+    static func asciiToPetscii(_ char: Character) -> UInt8 {
 
         // ── Tier 1: ASCII-compatible printable range ───────────────────────
         // PETSCII $20–$5B and $5D match ASCII exactly.
@@ -571,10 +590,13 @@ public class BasicTokenizer {
     /// Checks if the provided data conforms to the structure of a tokenized BASIC PRG file.
     public static func isTokenizedBASIC(_ data: Data) -> Bool {
         guard data.count >= 6 else { return false }
-        let loadAddr = UInt16(data[0]) | (UInt16(data[1]) << 8)
+        // All arithmetic in Int: the old UInt16(data.count) TRAPPED for
+        // any file over 64KB, crashing the app on the one input this
+        // function exists to reject gracefully.
+        let loadAddr = Int(data[0]) | (Int(data[1]) << 8)
         guard loadAddr >= 0x0800 && loadAddr <= 0x2100 else { return false }
-        let nextLine = UInt16(data[2]) | (UInt16(data[3]) << 8)
-        guard nextLine > loadAddr && nextLine < loadAddr + UInt16(data.count) else { return false }
+        let nextLine = Int(data[2]) | (Int(data[3]) << 8)
+        guard nextLine > loadAddr && nextLine < loadAddr + data.count else { return false }
         return true
     }
 
@@ -602,9 +624,24 @@ public class BasicTokenizer {
 
             var lineContent = ""
             var inQuotes = false
+            var inREM = false
 
             while offset < bytes.count && bytes[offset] != 0x00 {
                 let byte = bytes[offset]
+
+                // ── REM literal mode ────────────────────────────────────
+                // The ROM never tokenizes anything after REM, so bytes to
+                // end of line are literal text. Decoding them as tokens
+                // turned innocent comment bytes into keyword soup.
+                if inREM {
+                    if byte >= 0x20 && byte <= 0x7E && byte != 0x7B {
+                        lineContent.append(Character(UnicodeScalar(byte)))
+                    } else {
+                        lineContent.append(String(format: "{$%02X}", byte))
+                    }
+                    offset += 1
+                    continue
+                }
 
                 if inQuotes {
                     if byte == 0x22 {
@@ -630,6 +667,7 @@ public class BasicTokenizer {
                 if byte >= 0x80 && byte <= 0xCB {
                     if let keyword = reverseTokenTable[byte] {
                         lineContent.append(keyword)
+                        if byte == 0x8F { inREM = true }   // REM: rest is literal
                     } else {
                         lineContent.append(String(format: "{$%02X}", byte))
                     }
@@ -671,6 +709,11 @@ public class BasicTokenizer {
                     // Not a prefix byte — try single-byte extension lookup.
                     if let kw = manager.lookupSingleByteToken(byte) {
                         lineContent.append(kw.keyword)
+                    } else if byte == 0xFF {
+                        // PI value token. Reached only when no dialect
+                        // claims $FF as a prefix or extension, so the
+                        // MEGA65 case is handled by the checks above.
+                        lineContent.append("\u{03C0}")
                     } else {
                         lineContent.append(String(format: "{$%02X}", byte))
                     }
@@ -679,7 +722,13 @@ public class BasicTokenizer {
                 }
 
                 // ── Regular character ──────────────────────────────────
-                lineContent.append(petsciiToChar(byte))
+                if byte < 0x20 {
+                    // Control codes outside quotes cannot round-trip as
+                    // raw text; escape them.
+                    lineContent.append(String(format: "{$%02X}", byte))
+                } else {
+                    lineContent.append(petsciiToChar(byte))
+                }
                 offset += 1
             }
 

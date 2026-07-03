@@ -79,12 +79,21 @@ struct BasicLexer {
     private var idx: String.Index
     private let matcher: BasicKeywordMatcher
 
+    /// The compiler targets BASIC V2 exclusively, so the lexer matches the
+    /// pure V2 keyword set. Previously this pulled the active dialect's
+    /// unified table, which made COMPILATION depend on which dialect plugin
+    /// happened to be selected in the tokenizer: a dialect keyword could
+    /// split a perfectly valid V2 identifier mid-scan. Built once; matcher
+    /// construction sorts the table and precomputes the sibling set, which
+    /// was previously repeated for every single line.
+    private static let v2Matcher = BasicKeywordMatcher(
+        keywords: BasicKeywordMatcher.basicV2Keywords
+    )
+
     init(_ line: String) {
         self.source = line.uppercased()
         self.idx = source.startIndex
-        self.matcher = BasicKeywordMatcher(
-            keywords: BasicDialectManager.shared.unifiedKeywordStrings
-        )
+        self.matcher = BasicLexer.v2Matcher
     }
 
     /// Returns the complete token stream, including a trailing `.eof`.
@@ -105,10 +114,22 @@ struct BasicLexer {
                 continue
             }
 
+            // PI is a value token on real hardware, and Swift considers
+            // the character a letter, so intercept it before the
+            // identifier branch swallows it into a variable name.
+            if current == "\u{03C0}" {
+                tokens.append(.float(Double.pi))
+                advance()
+                continue
+            }
+
             if current.isLetter {
                 if let kw = tryKeyword() {
                     if kw == "REM" {
                         idx = source.endIndex
+                    } else if kw == "DATA" {
+                        tokens.append(.keyword(kw))
+                        scanDataItems(into: &tokens)
                     } else {
                         tokens.append(.keyword(kw))
                     }
@@ -148,6 +169,51 @@ struct BasicLexer {
     }
 
     // MARK: - Scanners
+
+    /// Scans DATA statement contents in raw mode, called immediately after
+    /// the DATA keyword. The ROM tokeniser never crunches keywords inside
+    /// DATA ($A5AC skips to the next colon or quote), so DATA FORREST,HELLO
+    /// stores two strings. Before this, the lexer shredded unquoted items
+    /// into keyword tokens (FOR + REST) that parseData silently dropped.
+    ///
+    /// Produces value and comma tokens; stops before a statement-separating
+    /// colon. Quoted items keep embedded commas and colons. Unquoted items
+    /// have leading spaces skipped (as the ROM does via CHRGET) and are
+    /// pre-classified: integer if Int() parses (sign included), float if
+    /// Double() parses (handles 1E3, -.5), otherwise a string literal.
+    private mutating func scanDataItems(into tokens: inout [BasicToken]) {
+        while !atEnd {
+            skipSpaces()
+            guard !atEnd else { return }
+            if current == ":" { return }        // next statement; caller emits it
+            if current == "," {
+                tokens.append(.comma)
+                advance()
+                continue
+            }
+            if current == "\"" {
+                tokens.append(scanString())
+                continue
+            }
+            // Unquoted item: raw text up to the next comma or colon.
+            var raw = ""
+            while !atEnd && current != "," && current != ":" {
+                raw.append(current)
+                advance()
+            }
+            let item = String(raw.drop(while: { $0 == " " }))
+            let trimmed = item.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty {
+                tokens.append(.stringLiteral(""))
+            } else if let i = Int(trimmed) {
+                tokens.append(.integer(i))      // sign folded in: DATA -5 works
+            } else if let d = Double(trimmed) {
+                tokens.append(.float(d))
+            } else {
+                tokens.append(.stringLiteral(item))
+            }
+        }
+    }
 
     private mutating func scanString() -> BasicToken {
         advance()
@@ -201,6 +267,10 @@ struct BasicLexer {
             if !name.isEmpty && current.isLetter && keywordStartsHere() {
                 break
             }
+            // PI is a token on real hardware, so it terminates an
+            // identifier just like an embedded keyword does. Without this
+            // break, Swift's isLetter would absorb it into the name.
+            if current == "\u{03C0}" { break }
             name.append(current); advance()
         }
         if !atEnd && current == "$" {

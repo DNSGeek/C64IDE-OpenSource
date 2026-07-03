@@ -44,8 +44,15 @@ struct BasicKeywordMatcher {
             guard source[index...].hasPrefix(kw) else { continue }
             let afterKW = source.index(index, offsetBy: kw.count)
 
-            // Letter-boundary guard: reject matches where a letter follows
-            // and the keyword has a longer sibling starting with the same prefix.
+            // Letter-boundary guard: when a LONGER keyword in the table
+            // shares this prefix (e.g. INPUT# vs INPUT, or a dialect's
+            // PRINTUSING vs PRINT) and a letter follows, skip the short
+            // match so the longer sibling gets its chance on a later
+            // iteration of a wider scan. NOTE: this does NOT stop FOR
+            // from matching inside "FORT" when no longer sibling exists -
+            // and it must not, because the ROM tokeniser greedily crunches
+            // keywords at every position ("FORT" really is FOR + T on
+            // hardware).
             if let lastCh = kw.last, lastCh.isLetter,
                afterKW < source.endIndex, source[afterKW].isLetter,
                longerSiblings.contains(kw) {
