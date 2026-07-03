@@ -186,7 +186,11 @@ struct UnifiedKeywordEntry {
 // MARK: - Plugin Manager
 
 /// Manages loading, activation, and lookup of BASIC dialect plugins.
-/// Provides the unified keyword table consumed by the tokenizer and lexer.
+/// Provides the unified keyword table consumed by the tokenizer (and
+/// syntax highlighting / reference panel lookups). The compiler's
+/// BasicLexer deliberately does NOT consume this table: it uses the
+/// fixed BasicKeywordMatcher.basicV2Keywords set so that compilation
+/// is independent of whichever dialect plugin is active.
 class BasicDialectManager {
 
     static let shared = BasicDialectManager()
