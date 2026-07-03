@@ -13,6 +13,7 @@ DerivedData/
 *.d64
 *.lst
 *.dbg
+*.reu
 
 # OS junk
 .DS_Store
