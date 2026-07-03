@@ -190,6 +190,17 @@ struct BasicLexer {
     private mutating func scanIdentifier() -> BasicToken {
         var name = ""
         while !atEnd && (current.isLetter || current.isNumber) {
+            // C64 ROM compatibility: the $A57C tokeniser looks for keywords
+            // at EVERY character position, so an embedded keyword terminates
+            // the variable name. "ATOB" lexes as A TO B and "BTHEN10" as
+            // B THEN 10, exactly as on real hardware. (This also means
+            // "LIFE" is L IF E and errors, again matching the hardware.)
+            // The check is skipped for the first character because
+            // tryKeyword() already failed there before we were called, and
+            // for digits because no keyword starts with a digit.
+            if !name.isEmpty && current.isLetter && keywordStartsHere() {
+                break
+            }
             name.append(current); advance()
         }
         if !atEnd && current == "$" {
@@ -215,6 +226,26 @@ struct BasicLexer {
             return kw
         }
         return nil
+    }
+
+    /// Pseudo-keywords that are NOT tokens in the C64 ROM's $A09E table.
+    /// TI and ST are in our keyword list so the parser can recognize them
+    /// as system variables at expression positions, but the ROM tokeniser
+    /// never crunches them — "LAST" on real hardware is the variable LA,
+    /// not LA + ST. They must therefore not split identifiers. (GO stays:
+    /// it IS a real token, which is why "DRAGON" crunches to DRA GO N on
+    /// actual hardware. Authenticity hurts sometimes.)
+    private static let nonTokenKeywords: Set<String> = ["TI", "ST"]
+
+    /// Non-consuming keyword probe used by scanIdentifier() to detect a
+    /// keyword starting mid-identifier. Same greedy rules as tryKeyword(),
+    /// but does not move the cursor and ignores non-token pseudo-keywords.
+    private func keywordStartsHere() -> Bool {
+        for kw in matcher.sortedKeywords {
+            guard !BasicLexer.nonTokenKeywords.contains(kw) else { continue }
+            if source[idx...].hasPrefix(kw) { return true }
+        }
+        return false
     }
 
     // MARK: - Cursor Helpers

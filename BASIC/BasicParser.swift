@@ -210,6 +210,7 @@ public struct BasicParser {
         // THEN followed directly by a line number → ifGoto
         if case .integer(let n) = peek {
             advance()
+            skipUnreachableThenTail()
             if let elseStmts = parseOptionalElse() {
                 return .ifThen(cond, [.gotoStmt(n)], elseStmts)
             }
@@ -220,6 +221,7 @@ public struct BasicParser {
         if case .keyword("GOTO") = peek {
             advance()
             let n = parseLineNumber(context: "IF...THEN GOTO")
+            skipUnreachableThenTail()
             if let elseStmts = parseOptionalElse() {
                 return .ifThen(cond, [.gotoStmt(n)], elseStmts)
             }
@@ -230,6 +232,22 @@ public struct BasicParser {
         let thenStmts = parseIfBody()
         let elseStmts = parseOptionalElse()
         return .ifThen(cond, thenStmts, elseStmts)
+    }
+
+    /// Discards statements following `THEN <line>` or `THEN GOTO <line>`.
+    ///
+    /// On a real C64, a false IF skips the ENTIRE remainder of the line, and
+    /// a true `THEN <line>` jumps away immediately — so any statements after
+    /// the line-number target are unreachable in both cases and the
+    /// interpreter never executes them. Compiling them as unconditional
+    /// siblings (the previous behavior) made them run whenever the condition
+    /// was false. Stops at ELSE so the extension syntax
+    /// `IF cond THEN 100 ELSE ...` still works.
+    private mutating func skipUnreachableThenTail() {
+        while !atEOF {
+            if case .identifier("ELSE") = peek { return }
+            advance()
+        }
     }
 
     /// Consume and parse an ELSE branch if present. Returns `nil` otherwise.

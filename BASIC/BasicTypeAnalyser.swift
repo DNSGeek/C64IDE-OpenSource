@@ -177,19 +177,37 @@ struct BasicTypeAnalyser {
 
         case .getStmt(let name):
             if name.hasSuffix("$") { t.set(name, .string) }
+            else { t.widen(name, to: .byte) }   // GETIN returns one byte
+
+        case .getHashStmt(let logNum, let name):
+            seedExpr(logNum, into: &t)
+            if name.hasSuffix("$") { t.set(name, .string) }
+            else { t.widen(name, to: .byte) }
 
         case .inputStmt(_, let name):
             if name.hasSuffix("$") { t.set(name, .string) }
-            else if !name.hasSuffix("%") { t.widen(name, to: .word) }
+            else { t.widen(name, to: .word) }
+
+        case .inputHashStmt(let logNum, let names):
+            seedExpr(logNum, into: &t)
+            for n in names {
+                if n.hasSuffix("$") { t.set(n, .string) }
+                else { t.widen(n, to: .word) }
+            }
+
+        case .defFn(_, _, let body):
+            seedExpr(body, into: &t)
 
         case .readStmt(let names):
-            names.forEach { if $0.hasSuffix("$") { t.set($0, .string) }
-                            // Numeric READ targets: we don't know which DATA value
-                            // maps here without a runtime data pointer, so we seed
-                            // conservatively as .byte — the propagation pass will
-                            // widen if needed. The code generator uses dataIsAllByte
-                            // to pick the fast byte path anyway.
-                            else if !$0.hasSuffix("%") { t.widen($0, to: .byte) }
+            names.forEach {
+                if $0.hasSuffix("$") { t.set($0, .string) }
+                else if $0.hasSuffix("%") { t.widen($0, to: .word) }
+                // Numeric READ targets: we don't know which DATA value
+                // maps here without a runtime data pointer, so we seed
+                // conservatively as .byte — the propagation pass will
+                // widen if needed. The code generator uses dataIsAllByte
+                // to pick the fast byte path anyway.
+                else { t.widen($0, to: .byte) }
             }
 
         case .dimStmt(let entries):
@@ -242,6 +260,12 @@ struct BasicTypeAnalyser {
         switch expr {
         case .strVar(let name):   t.set(name, .string)
         case .intVar(let name):   t.widen(name, to: .word)
+        case .floatVar(let name):
+            // Every referenced variable must at least exist in the table,
+            // or emitStorage() never allocates it and the assembly fails
+            // with an undefined var_ symbol (e.g. `10 PRINT A` with A
+            // never assigned). Seed minimal; propagation widens as needed.
+            t.widen(name, to: .byte)
         case .binaryOp(_, let l, let r):
             seedExpr(l, into: &t); seedExpr(r, into: &t)
         case .compareOp(_, let l, let r):

@@ -138,6 +138,14 @@ struct BasicCodeGen {
         for line in lines {
             for stmt in line.stmts { collectStmt(stmt) }
         }
+        // Second walk: register arrays used without DIM (BASIC auto-DIMs
+        // them to subscripts 0-10). Must run AFTER the walk above so an
+        // explicit DIM anywhere in the program wins over the default size;
+        // otherwise `10 A(3)=5 : 20 DIM A(100)` would allocate 11 elements
+        // and emit a duplicate arr_ label.
+        for line in lines {
+            for stmt in line.stmts { collectArrayRefs(stmt) }
+        }
     }
 
     private mutating func collectStmt(_ stmt: Stmt) {
@@ -202,6 +210,84 @@ struct BasicCodeGen {
             t.forEach { collectStmt($0) }
             e?.forEach { collectStmt($0) }
         default: break
+        }
+    }
+
+    // MARK: - Implicit Arrays (second first-pass walk)
+
+    /// Registers an array referenced without a DIM. Real BASIC auto-DIMs
+    /// to 11 elements per dimension (subscripts 0-10); without this, any
+    /// implicit array produced an undefined arr_ symbol at assemble time.
+    private mutating func registerImplicitArray(_ name: String, dimCount: Int) {
+        guard !arrayDims.contains(where: { $0.name == name }) else { return }
+        arrayDims.append((name: name, dims: Array(repeating: 11, count: max(1, dimCount))))
+        if name.hasSuffix("$") { stringVarNames.insert(name) }
+    }
+
+    private mutating func collectArrayRefs(_ stmt: Stmt) {
+        switch stmt {
+        case .letFloat(_, let e), .letStr(_, let e), .letInt(_, let e):
+            collectArrayRefsExpr(e)
+        case .arrayWrite(let name, let idxs, let rhs):
+            registerImplicitArray(name, dimCount: idxs.count)
+            idxs.forEach { collectArrayRefsExpr($0) }
+            collectArrayRefsExpr(rhs)
+        case .ifGoto(let c, _):
+            collectArrayRefsExpr(c)
+        case .ifThen(let c, let t, let e):
+            collectArrayRefsExpr(c)
+            t.forEach { collectArrayRefs($0) }
+            e?.forEach { collectArrayRefs($0) }
+        case .forStmt(_, let from, let to, let step):
+            collectArrayRefsExpr(from)
+            collectArrayRefsExpr(to)
+            if let s = step { collectArrayRefsExpr(s) }
+        case .printStmt(let items):
+            items.forEach { if case .expr(let e) = $0 { collectArrayRefsExpr(e) } }
+        case .printHashStmt(let n, let items):
+            collectArrayRefsExpr(n)
+            items.forEach { if case .expr(let e) = $0 { collectArrayRefsExpr(e) } }
+        case .pokeStmt(let a, let v):
+            collectArrayRefsExpr(a); collectArrayRefsExpr(v)
+        case .sysStmt(let e), .closeStmt(let e), .cmdStmt(let e):
+            collectArrayRefsExpr(e)
+        case .waitStmt(let a, let m, let x):
+            collectArrayRefsExpr(a); collectArrayRefsExpr(m)
+            if let x = x { collectArrayRefsExpr(x) }
+        case .onGoto(let e, _), .onGosub(let e, _):
+            collectArrayRefsExpr(e)
+        case .openStmt(let l, let d, let s, let n):
+            collectArrayRefsExpr(l); collectArrayRefsExpr(d); collectArrayRefsExpr(s)
+            if let n = n { collectArrayRefsExpr(n) }
+        case .loadStmt(let n, let d, let f):
+            collectArrayRefsExpr(n); collectArrayRefsExpr(d)
+            if let f = f { collectArrayRefsExpr(f) }
+        case .saveStmt(let n, let d):
+            collectArrayRefsExpr(n); collectArrayRefsExpr(d)
+        case .inputHashStmt(let n, _), .getHashStmt(let n, _):
+            collectArrayRefsExpr(n)
+        case .dimStmt(let entries):
+            entries.forEach { $0.dims.forEach { collectArrayRefsExpr($0) } }
+        case .defFn(_, _, let body):
+            collectArrayRefsExpr(body)
+        default:
+            break
+        }
+    }
+
+    private mutating func collectArrayRefsExpr(_ expr: Expr) {
+        switch expr {
+        case .arrayRead(let name, let idxs):
+            registerImplicitArray(name, dimCount: idxs.count)
+            idxs.forEach { collectArrayRefsExpr($0) }
+        case .binaryOp(_, let l, let r), .compareOp(_, let l, let r):
+            collectArrayRefsExpr(l); collectArrayRefsExpr(r)
+        case .unaryMinus(let e), .notOp(let e):
+            collectArrayRefsExpr(e)
+        case .funcCall(_, let args):
+            args.forEach { collectArrayRefsExpr($0) }
+        default:
+            break
         }
     }
 
@@ -531,6 +617,10 @@ struct BasicCodeGen {
             emit("    clc")
             emit("    adc _for_step_\(n)")
             emit("    sta var_\(n)")
+            // Carry set = the add wrapped past 255, i.e. we passed the top
+            // of the unsigned range. Without this, FOR I=0 TO 255 loops
+            // forever (255+1 wraps to 0, which is < 255). sta preserves C.
+            emit("    bcs \(e.doneLabel)")
             emit("    cmp _for_limit_\(n)")
             let bSkip = newLabel("nbs")
             emit("    beq \(bSkip)")
@@ -573,6 +663,9 @@ struct BasicCodeGen {
         emit("    lda var_\(n)+1")
         emit("    adc _for_step_\(n)+1")
         emit("    sta var_\(n)+1")
+        // Carry out of the high byte = wrapped past 65535 → loop is done
+        // (fixes FOR I=0 TO 65535 never terminating). sta preserves C.
+        emit("    bcs \(e.doneLabel)")
         emit("    lda var_\(n)+1")
         emit("    cmp _for_limit_\(n)+1")
         let hiLess = newLabel("nwhl")
@@ -658,14 +751,29 @@ struct BasicCodeGen {
             emit("    lda var_\(asm(name))")
             emit("    ora var_\(asm(name))+1")
             emit("    beq \(label)")
-        case .binaryOp("AND", let left, let right):
+        case .binaryOp("AND", let left, let right) where isBooleanExpr(left) && isBooleanExpr(right):
             genConditionBranch(left, branchIfFalse: label)
             genConditionBranch(right, branchIfFalse: label)
-        case .binaryOp("OR", let left, let right):
+        case .binaryOp("OR", let left, let right) where isBooleanExpr(left) && isBooleanExpr(right):
             let orTrue = newLabel("ort")
             genConditionTrueBranch(left, branchIfTrue: orTrue)
             genConditionBranch(right, branchIfFalse: label)
             emit("\(orTrue):")
+        case .binaryOp("AND", _, _), .binaryOp("OR", _, _):
+            // BASIC AND/OR are BITWISE on 16-bit ints, not logical. When
+            // either operand isn't a comparison (e.g. the ubiquitous
+            // IF PEEK(56320) AND 16 joystick test), short-circuiting gives
+            // the wrong answer: PEEK=2 AND 16 is 0 (false), but "both
+            // nonzero" would say true. Evaluate the value, test nonzero.
+            genWordTest(cond, branchIfFalse: label)
+        case .notOp(let inner) where isBooleanExpr(inner):
+            // NOT of a truth value: branch to the false label when the
+            // inner condition is TRUE.
+            genConditionTrueBranch(inner, branchIfTrue: label)
+        case .notOp:
+            // NOT of arbitrary bits: NOT x = -x-1, which is zero only for
+            // x = -1. Must be computed bitwise, then tested.
+            genWordTest(cond, branchIfFalse: label)
         case .compareOp(let op, let l, let r) where exprWidth(l) == .byte && exprWidth(r) == .byte:
             genByteComparison(op: op, left: l, right: r, falseLabel: label)
         case .compareOp(let op, let l, let r) where exprWidth(l) == .word || exprWidth(r) == .word:
@@ -684,6 +792,33 @@ struct BasicCodeGen {
         genConditionBranch(cond, branchIfFalse: tmp)
         emit("    jmp \(label)")
         emit("\(tmp):")
+    }
+
+    /// True when the expression is guaranteed to produce a BASIC truth
+    /// value (0 or -1) rather than arbitrary bits: comparisons, NOT of a
+    /// truth value, and AND/OR of truth values. Only these may be compiled
+    /// with short-circuit logic in conditions; anything else must go the
+    /// bitwise route because AND/OR/NOT in BASIC V2 are 16-bit bitwise ops.
+    private func isBooleanExpr(_ e: Expr) -> Bool {
+        switch e {
+        case .compareOp:
+            return true
+        case .notOp(let inner):
+            return isBooleanExpr(inner)
+        case .binaryOp("AND", let l, let r), .binaryOp("OR", let l, let r):
+            return isBooleanExpr(l) && isBooleanExpr(r)
+        default:
+            return false
+        }
+    }
+
+    /// Evaluates `e` as a 16-bit value and branches to `label` if it is zero.
+    private mutating func genWordTest(_ e: Expr, branchIfFalse label: String) {
+        genExprToWord(e)
+        emit("    sta _cmp_tmp")
+        emit("    txa")
+        emit("    ora _cmp_tmp")
+        emit("    beq \(label)")
     }
 
     private mutating func genByteComparison(op: String, left: Expr, right: Expr, falseLabel: String) {
@@ -1220,6 +1355,33 @@ struct BasicCodeGen {
                 emit("    sec"); emit("    lda _word_lo"); emit("    sbc _arith_tmp"); emit("    sta _word_lo")
                 emit("    txa"); emit("    sbc _word_hi"); emit("    tax"); emit("    lda _word_lo")
             }
+        case .binaryOp("AND", let l, let r):
+            genBitwiseWord(mnemonic: "and", l, r)
+        case .binaryOp("OR", let l, let r):
+            genBitwiseWord(mnemonic: "ora", l, r)
+        case .notOp(let e):
+            // BASIC NOT is 16-bit one's complement: NOT x = -x-1.
+            genExprToWord(e)
+            emit("    eor #$FF")
+            emit("    pha")
+            emit("    txa")
+            emit("    eor #$FF")
+            emit("    tax")
+            emit("    pla")
+        case .compareOp:
+            // Produce 0 / $FFFF directly. Routing this through the float
+            // path would call GETADR on -1 for a true result, which throws
+            // ILLEGAL QUANTITY into the ROM error handler.
+            let falseL = newLabel("wcf")
+            let endL   = newLabel("wce")
+            genConditionBranch(expr, branchIfFalse: falseL)
+            emit("    lda #$FF")
+            emit("    tax")
+            emit("    jmp \(endL)")
+            emit("\(falseL):")
+            emit("    lda #0")
+            emit("    tax")
+            emit("\(endL):")
         case .funcCall("PEEK", let args) where !args.isEmpty:
             genExprToWord(args[0])
             emit("    sta _peek_lo"); emit("    stx _peek_hi")
@@ -1228,6 +1390,24 @@ struct BasicCodeGen {
             genExprToFloat(expr); emit("    jsr \(ROM.FACINT)")
             emit("    sta _word_hi_tmp"); emit("    tya"); emit("    ldx _word_hi_tmp")
         }
+    }
+
+    /// 16-bit bitwise AND/OR. Result in A (lo) / X (hi), matching the
+    /// genExprToWord convention. Each node gets its own 2-byte scratch so
+    /// nested bitwise expressions can't clobber each other's saved operand.
+    private mutating func genBitwiseWord(mnemonic: String, _ l: Expr, _ r: Expr) {
+        let tmp = newLabel("bw")
+        emitWordScratch(tmp)
+        genExprToWord(l)
+        emit("    sta \(tmp)")
+        emit("    stx \(tmp)+1")
+        genExprToWord(r)
+        emit("    \(mnemonic) \(tmp)")
+        emit("    sta \(tmp)")
+        emit("    txa")
+        emit("    \(mnemonic) \(tmp)+1")
+        emit("    tax")
+        emit("    lda \(tmp)")
     }
 
     mutating func genExprToFloat(_ expr: Expr) {
@@ -1283,25 +1463,23 @@ struct BasicCodeGen {
             emit("    lda #0"); emit("    ldy $90"); emit("    jsr \(ROM.INTFAC)")
         case .unaryMinus(let e):
             genExprToFloat(e); emit("    jsr \(ROM.NEGFAC)")
-        case .notOp(let e):
-            let notTrue = newLabel("nott")
-            let notDone = newLabel("notd")
-            genExprToFloat(e)
-            emit("    lda $61"); emit("    beq \(notTrue)")
-            emit("    lda #0"); emit("    tay"); emit("    jsr \(ROM.INTFAC)")
-            emit("    jmp \(notDone)")
-            emit("\(notTrue):")
-            emit("    lda #0"); emit("    ldy #1"); emit("    jsr \(ROM.INTFAC)")
-            emit("\(notDone):")
+        case .notOp:
+            // BASIC NOT is bitwise one's complement on a 16-bit signed int
+            // (NOT x = -x-1), not logical negation. NOT 0 = -1, NOT 1 = -2.
+            genExprToWord(expr)
+            emit("    tay")             // lo → Y
+            emit("    txa")             // hi → A
+            emit("    jsr \(ROM.INTFAC)")
         case .binaryOp(let op, let l, let r):
-            if op == "AND" {
-                genExprToByte(l); emit("    sta _cmp_tmp"); genExprToByte(r); emit("    and _cmp_tmp")
-                emit("    tay"); emit("    lda #0"); emit("    jsr \(ROM.INTFAC)")
-                break
-            }
-            if op == "OR" {
-                genExprToByte(l); emit("    sta _cmp_tmp"); genExprToByte(r); emit("    ora _cmp_tmp")
-                emit("    tay"); emit("    lda #0"); emit("    jsr \(ROM.INTFAC)")
+            if op == "AND" || op == "OR" {
+                // 16-bit bitwise, then signed word → FAC. GIVAYF being
+                // signed is CORRECT here: BASIC AND/OR operate on 16-bit
+                // signed ints and the result can legitimately be negative
+                // (e.g. -1 AND X = X, NOT 0 = -1).
+                genExprToWord(expr)
+                emit("    tay")             // lo → Y
+                emit("    txa")             // hi → A
+                emit("    jsr \(ROM.INTFAC)")
                 break
             }
             let tmp = newLabel("ftmp")
@@ -1344,7 +1522,8 @@ struct BasicCodeGen {
             emit("    lda #0"); emit("    tay"); emit("    jsr \(ROM.INTFAC)")
             emit("    jmp \(endL)")
             emit("\(trueL):")
-            emit("    lda #0"); emit("    ldy #1"); emit("    jsr \(ROM.INTFAC)")
+            // BASIC truth value is -1, not +1: GIVAYF(A=$FF, Y=$FF) = -1.
+            emit("    lda #$FF"); emit("    tay"); emit("    jsr \(ROM.INTFAC)")
             emit("\(endL):")
         case .funcCall(let fn, let args):
             genFuncCallToFloat(fn: fn, args: args)
@@ -1790,6 +1969,11 @@ struct BasicCodeGen {
     private mutating func emitFloatScratch(_ label: String) {
         if floatConstSection.contains(where: { $0.hasPrefix("\(label):") }) { return }
         floatConstSection.append("\(label): .res 5")
+    }
+
+    private mutating func emitWordScratch(_ label: String) {
+        if floatConstSection.contains(where: { $0.hasPrefix("\(label):") }) { return }
+        floatConstSection.append("\(label): .res 2")
     }
 
     /// Encode a Double as a 5-byte C64 float.
