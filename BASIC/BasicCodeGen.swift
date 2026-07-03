@@ -25,6 +25,9 @@ private enum ROM {
     static let FDIV    = "$BB0F"   // FAC = FAC / MEM(A/Y)
     static let FPOW    = "$BF7B"   // FAC = ARG ^ FAC
     static let MOVAF   = "$BC0C"   // ARG = FAC
+    static let CONUPK  = "$BA8C"   // Unpack 5-byte float at (A/Y) into ARG,
+                                   // sets the FAC/ARG sign-compare byte.
+                                   // Same routine FADD/FMUL call first.
     static let NEGFAC  = "$BFB4"   // FAC = -FAC
     static let INT     = "$BCCC"   // FAC = INT(FAC)
     static let ABS     = "$BC58"   // FAC = ABS(FAC)
@@ -40,8 +43,12 @@ private enum ROM {
     static let FCOMP   = "$BC5B"   // Compare FAC with MEM(A/Y)
     static let FACINT  = "$B7F7"   // FAC → 16-bit int: A=$64(hi), Y=$65(lo)
     static let INTFAC  = "$B391"   // 16-bit int A=hi/Y=lo → FAC (GIVAYF)
-    static let PRNTFAC = "$BDDD"   // FOUT entry: formats FAC into $0100
-    static let FOUT    = "$BDE3"   // FAC → ASCII string at $0101
+    static let FOUT    = "$BDDD"   // FAC -> null-terminated ASCII at $0100
+                                   // (LDY #$01 entry; sign char lands at
+                                   // $0100, digits follow, 0-terminated).
+                                   // Do NOT enter at $BDE3: that is the
+                                   // middle of the routine and Y would be
+                                   // whatever the caller left in it.
     static let VAL     = "$B7B5"   // Parse string at $22/$23/$24 → FAC
 }
 
@@ -55,6 +62,8 @@ private enum KERNAL {
     static let CHKOUT = "$FFC9"
     static let CHKIN  = "$FFC6"
     static let CLRCHN = "$FFCC"
+    static let KLOAD  = "$FFD5"   // A=0 load/1 verify, X/Y = addr (SA=0 only)
+    static let KSAVE  = "$FFD8"   // A = ZP offset of start ptr, X/Y = end+1
 }
 
 // MARK: - BasicCodeGen
@@ -202,6 +211,13 @@ struct BasicCodeGen {
             }
         case .letStr(let name, _):
             stringVarNames.insert(name)
+        case .defFn(let name, let param, let body):
+            // Register during the first pass so FNA(x) works even when the
+            // DEF FN line comes later in the program (the common layout:
+            // definitions at the bottom). Previously registration happened
+            // in genStmt, so forward references silently emitted
+            // "; unimplemented function".
+            userFunctions[name] = (param: param, body: body)
         case .getStmt(let name):
             if name.hasSuffix("$") { stringVarNames.insert(name) }
         case .inputStmt(_, let name):
@@ -432,19 +448,35 @@ struct BasicCodeGen {
             genExprToByte(n)
             emit("    tax")
             emit("    jsr \(KERNAL.CHKOUT)")
-        case .loadStmt(let name, let dev, _):
+        case .loadStmt(let name, let dev, let flag):
+            // Real KERNAL LOAD. The old code set up SETNAM with scrambled
+            // registers (SETNAM wants A=length, X=ptr lo, Y=ptr hi) and
+            // then only OPENed logical file 1 - nothing was ever loaded.
             genStrPtr(name)
-            emit("    jsr _rt_strlen")
-            emit("    tax")
-            emit("    lda $FB")
-            emit("    ldy $FC")
+            emit("    jsr _rt_strlen")      // A = length
+            emit("    ldx $FB")             // X = name ptr lo
+            emit("    ldy $FC")             // Y = name ptr hi
             emit("    jsr \(KERNAL.SETNAM)")
+            // Secondary address from the third LOAD parameter. Default is
+            // 1 (load at the file's own address), NOT BASIC's 0: SA=0
+            // relocates the file to $0801, which is where the running
+            // compiled program lives. LOAD-chaining cannot work here;
+            // LOAD"DATA",8,1 for sprite/char data is the supported use.
+            if let f = flag { genExprToByte(f) } else { emit("    lda #1") }
+            emit("    sta _open_sec")
             genExprToByte(dev)
-            emit("    tax")
-            emit("    lda #1")
-            emit("    ldy #0")
+            emit("    tax")                 // X = device
+            emit("    lda #1")              // A = logical file number
+            emit("    ldy _open_sec")       // Y = secondary address
             emit("    jsr \(KERNAL.SETLFS)")
-            emit("    jsr \(KERNAL.KOPEN)")
+            emit("    lda #0")              // 0 = LOAD (1 = VERIFY)
+            emit("    ldx #$01")            // fallback address $0801,
+            emit("    ldy #$08")            // used by KERNAL only if SA=0
+            emit("    jsr \(KERNAL.KLOAD)")
+            let loadOk = newLabel("ldok")
+            emit("    bcc \(loadOk)")       // carry set = KERNAL error
+            emit("    jmp _program_end")
+            emit("\(loadOk):")
         case .getHashStmt(let logNum, let name):
             genExprToByte(logNum)
             emit("    tax")
@@ -467,20 +499,36 @@ struct BasicCodeGen {
                 }
             }
         case .saveStmt(let name, let dev):
+            // Real KERNAL SAVE. BASIC's SAVE writes the program; the
+            // compiled equivalent is the whole image from $0801 through
+            // _image_end (code, runtime, data, and current variable
+            // state), which re-loads as a runnable PRG.
             genStrPtr(name)
-            emit("    jsr _rt_strlen")
-            emit("    tax")
-            emit("    lda $FB")
-            emit("    ldy $FC")
+            emit("    jsr _rt_strlen")      // A = length
+            emit("    ldx $FB")             // X = name ptr lo
+            emit("    ldy $FC")             // Y = name ptr hi
             emit("    jsr \(KERNAL.SETNAM)")
             genExprToByte(dev)
             emit("    tax")
             emit("    lda #1")
             emit("    ldy #1")
             emit("    jsr \(KERNAL.SETLFS)")
-            emit("    jsr \(KERNAL.KOPEN)")
-        case .defFn(let name, let param, let body):
-            userFunctions[name] = (param: param, body: body)
+            // SETNAM stored the name POINTER into $BB/$BC, so $FB/$FC are
+            // free to reuse as the KERNAL SAVE start-address pointer.
+            emit("    lda #$01")
+            emit("    sta $FB")
+            emit("    lda #$08")
+            emit("    sta $FC")
+            emit("    lda #$FB")            // A = ZP offset of start ptr
+            emit("    ldx #<_image_end")    // X/Y = end address + 1
+            emit("    ldy #>_image_end")
+            emit("    jsr \(KERNAL.KSAVE)")
+            let saveOk = newLabel("svok")
+            emit("    bcc \(saveOk)")       // carry set = KERNAL error
+            emit("    jmp _program_end")
+            emit("\(saveOk):")
+        case .defFn(let name, let param, _):
+            // Registered in firstPass (collectStmt); nothing to execute here.
             emit("    ; DEF FN \(name)(\(param))")
         }
     }
@@ -656,6 +704,15 @@ struct BasicCodeGen {
 
     private mutating func genNextWord(_ e: (name: String, bodyLabel: String, doneLabel: String)) {
         let n = asm(e.name)
+        let negPath = newLabel("nwneg")
+
+        // Runtime sign test on the step's high byte: STEP can be any
+        // expression, so the direction isn't knowable at compile time.
+        emit("    lda _for_step_\(n)+1")
+        emit("    bmi \(negPath)")
+
+        // -- Positive step: 16-bit add, exit on wrap past $FFFF,
+        //    continue while var <= limit --
         emit("    lda var_\(n)")
         emit("    clc")
         emit("    adc _for_step_\(n)")
@@ -663,24 +720,39 @@ struct BasicCodeGen {
         emit("    lda var_\(n)+1")
         emit("    adc _for_step_\(n)+1")
         emit("    sta var_\(n)+1")
-        // Carry out of the high byte = wrapped past 65535 → loop is done
-        // (fixes FOR I=0 TO 65535 never terminating). sta preserves C.
-        emit("    bcs \(e.doneLabel)")
-        emit("    lda var_\(n)+1")
-        emit("    cmp _for_limit_\(n)+1")
+        emit("    bcs \(e.doneLabel)")      // wrapped past 65535: done
+        emit("    cmp _for_limit_\(n)+1")   // A still holds var hi
         let hiLess = newLabel("nwhl")
-        let hiMore = newLabel("nwhm")
-        emit("    bcc \(hiLess)")
-        emit("    bne \(hiMore)")
+        emit("    bcc \(hiLess)")           // var hi < limit hi: continue
+        emit("    bne \(e.doneLabel)")      // var hi > limit hi: done
         emit("    lda var_\(n)")
         emit("    cmp _for_limit_\(n)")
-        let loMore = newLabel("nwlm")
-        emit("    beq \(hiLess)")
-        emit("    bcs \(loMore)")
+        emit("    beq \(hiLess)")           // var == limit: continue
+        emit("    bcs \(e.doneLabel)")      // var lo > limit lo: done
         emit("\(hiLess):")
         emit("    jmp \(e.bodyLabel)")
-        emit("\(loMore):")
-        emit("\(hiMore):")
+
+        // -- Negative step (two's complement add): carry CLEAR means the
+        //    subtraction borrowed past 0, so the loop is done. Otherwise
+        //    continue while var >= limit. --
+        emit("\(negPath):")
+        emit("    lda var_\(n)")
+        emit("    clc")
+        emit("    adc _for_step_\(n)")
+        emit("    sta var_\(n)")
+        emit("    lda var_\(n)+1")
+        emit("    adc _for_step_\(n)+1")
+        emit("    sta var_\(n)+1")
+        emit("    bcc \(e.doneLabel)")      // underflowed below 0: done
+        emit("    cmp _for_limit_\(n)+1")   // A still holds var hi
+        let negLoop = newLabel("nwnl")
+        emit("    bcc \(e.doneLabel)")      // var hi < limit hi: done
+        emit("    bne \(negLoop)")          // var hi > limit hi: continue
+        emit("    lda var_\(n)")
+        emit("    cmp _for_limit_\(n)")
+        emit("    bcc \(e.doneLabel)")      // var < limit: done
+        emit("\(negLoop):")
+        emit("    jmp \(e.bodyLabel)")
     }
 
     private mutating func genNextFloat(_ e: (name: String, bodyLabel: String, doneLabel: String)) {
@@ -1015,7 +1087,7 @@ struct BasicCodeGen {
             emit("    jsr _print_str")
         default:
             genExprToFloat(expr)
-            emit("    jsr \(ROM.PRNTFAC)")
+            emit("    jsr \(ROM.FOUT)")
             emit("    lda #<$0100")
             emit("    ldy #>$0100")
             emit("    jsr _print_str")
@@ -1160,10 +1232,9 @@ struct BasicCodeGen {
         emit("    jsr \(KERNAL.SETLFS)")
         if let fn = filename {
             genStrPtr(fn)
-            emit("    jsr _rt_strlen")
-            emit("    tay")
-            emit("    lda $FB")
-            emit("    ldx $FC")
+            emit("    jsr _rt_strlen")      // A = length (SETNAM wants A)
+            emit("    ldx $FB")             // X = name ptr lo
+            emit("    ldy $FC")             // Y = name ptr hi
             emit("    jsr \(KERNAL.SETNAM)")
         } else {
             emit("    lda #0")
@@ -1176,6 +1247,7 @@ struct BasicCodeGen {
     private mutating func genArrayWrite(name: String, indices: [Expr], rhs: Expr) {
         genArrayElementPtr(name: name, indices: indices)
         if name.hasSuffix("$") {
+            // genStrPtr never touches _arr_ptr, so no save needed here.
             genStrPtr(rhs)
             emit("    lda _arr_ptr_lo")
             emit("    sta $FD")
@@ -1190,8 +1262,40 @@ struct BasicCodeGen {
             emit("    iny")
             emit("    bne \(lbl)")
             emit("\(lbl)_done:")
+        } else if name.hasSuffix("%") {
+            // Integer arrays store 2-byte little-endian values matching the
+            // 2-bytes-per-element stride in genArrayElementPtr/emitStorage.
+            // (Previously this fell into the float branch and wrote 5 bytes
+            // into 2-byte slots, corrupting the neighbors.)
+            // Save the element pointer: evaluating the RHS can recompute
+            // _arr_ptr for a nested array read (A%(I) = A%(J) + 1).
+            emit("    lda _arr_ptr_lo")
+            emit("    pha")
+            emit("    lda _arr_ptr_hi")
+            emit("    pha")
+            genExprToWord(rhs)              // A = lo, X = hi
+            emit("    sta _arith_tmp")      // safe: RHS eval is complete
+            emit("    pla")
+            emit("    sta $FE")
+            emit("    pla")
+            emit("    sta $FD")
+            emit("    ldy #0")
+            emit("    lda _arith_tmp")
+            emit("    sta ($FD),y")
+            emit("    iny")
+            emit("    txa")
+            emit("    sta ($FD),y")
         } else {
+            // Save the element pointer for the same nested-read reason.
+            emit("    lda _arr_ptr_lo")
+            emit("    pha")
+            emit("    lda _arr_ptr_hi")
+            emit("    pha")
             genExprToFloat(rhs)
+            emit("    pla")                 // FAC untouched by pla/sta
+            emit("    sta _arr_ptr_hi")
+            emit("    pla")
+            emit("    sta _arr_ptr_lo")
             emit("    ldx _arr_ptr_lo")
             emit("    ldy _arr_ptr_hi")
             emit("    jsr \(ROM.MOVMF)")
@@ -1355,6 +1459,19 @@ struct BasicCodeGen {
                 emit("    sec"); emit("    lda _word_lo"); emit("    sbc _arith_tmp"); emit("    sta _word_lo")
                 emit("    txa"); emit("    sbc _word_hi"); emit("    tax"); emit("    lda _word_lo")
             }
+        case .arrayRead(let name, let idxs) where name.hasSuffix("%"):
+            // Direct 2-byte load. Going through the float path would send
+            // negative elements into GETADR's ILLEGAL QUANTITY check.
+            genArrayElementPtr(name: name, indices: idxs)
+            emit("    lda _arr_ptr_lo")
+            emit("    sta $FD")
+            emit("    lda _arr_ptr_hi")
+            emit("    sta $FE")
+            emit("    ldy #1")
+            emit("    lda ($FD),y")
+            emit("    tax")                 // hi
+            emit("    dey")
+            emit("    lda ($FD),y")         // lo
         case .binaryOp("AND", let l, let r):
             genBitwiseWord(mnemonic: "and", l, r)
         case .binaryOp("OR", let l, let r):
@@ -1439,7 +1556,17 @@ struct BasicCodeGen {
                     emit("    lda #0"); emit("    ldy var_\(asm(name))"); emit("    jsr \(ROM.INTFAC)")
                 }
             } else if w == .word {
-                emit("    lda var_\(asm(name))+1"); emit("    ldy var_\(asm(name))"); emit("    jsr \(ROM.INTFAC)")
+                if table[name].isSigned {
+                    // Signed word (e.g. produced by word subtraction):
+                    // GIVAYF's signed interpretation is exactly right.
+                    emit("    lda var_\(asm(name))+1"); emit("    ldy var_\(asm(name))"); emit("    jsr \(ROM.INTFAC)")
+                } else {
+                    // Unsigned word: GIVAYF is SIGNED 16-bit, so values
+                    // above 32767 would come out negative (X=50000 would
+                    // print -15536). The helper adds 65536 back when the
+                    // high bit was set.
+                    emit("    lda var_\(asm(name))+1"); emit("    ldy var_\(asm(name))"); emit("    jsr _rt_uword_to_fac")
+                }
             } else {
                 emit("    lda #<var_\(asm(name))"); emit("    ldy #>var_\(asm(name))"); emit("    jsr \(ROM.MOVFM)")
             }
@@ -1485,11 +1612,18 @@ struct BasicCodeGen {
             let tmp = newLabel("ftmp")
             emitFloatConst(tmp, 0.0)
             if op == "^" {
-                genExprToFloat(l)
-                emit("    ldx #<\(tmp)"); emit("    ldy #>\(tmp)"); emit("    jsr \(ROM.MOVMF)")
-                emit("    lda #<\(tmp)"); emit("    ldy #>\(tmp)"); emit("    jsr \(ROM.MOVFM)")
-                emit("    jsr \(ROM.MOVAF)")
-                genExprToFloat(r); emit("    jsr \(ROM.FPOW)")
+                // $BF7B entry requirements (see the ROM's own SQR at $BF71,
+                // which falls into it): ARG = base, FAC = exponent, and
+                // A = FAC exponent byte so the entry BEQ can test for a
+                // zero exponent. The old sequence copied the base to ARG
+                // FIRST and then evaluated the exponent, which clobbers
+                // ARG the moment the exponent involves any FADD/FMUL.
+                genExprToFloat(l)                                   // base -> FAC
+                emit("    ldx #<\(tmp)"); emit("    ldy #>\(tmp)"); emit("    jsr \(ROM.MOVMF)")   // base -> tmp
+                genExprToFloat(r)                                   // exponent -> FAC
+                emit("    lda #<\(tmp)"); emit("    ldy #>\(tmp)"); emit("    jsr \(ROM.CONUPK)")  // base -> ARG
+                emit("    lda $61")                                 // A/Z = FAC exponent
+                emit("    jsr \(ROM.FPOW)")
             } else {
                 genExprToFloat(l)
                 emit("    ldx #<\(tmp)"); emit("    ldy #>\(tmp)"); emit("    jsr \(ROM.MOVMF)")
@@ -1529,7 +1663,22 @@ struct BasicCodeGen {
             genFuncCallToFloat(fn: fn, args: args)
         case .arrayRead(let name, let idxs):
             genArrayElementPtr(name: name, indices: idxs)
-            emit("    lda _arr_ptr_lo"); emit("    ldy _arr_ptr_hi"); emit("    jsr \(ROM.MOVFM)")
+            if name.hasSuffix("%") {
+                // 2-byte signed element (little-endian). GIVAYF's signed
+                // interpretation is correct: % values are signed in BASIC.
+                emit("    lda _arr_ptr_lo"); emit("    sta $FD")
+                emit("    lda _arr_ptr_hi"); emit("    sta $FE")
+                emit("    ldy #1")
+                emit("    lda ($FD),y")     // hi
+                emit("    pha")
+                emit("    dey")
+                emit("    lda ($FD),y")     // lo
+                emit("    tay")
+                emit("    pla")             // A = hi, Y = lo
+                emit("    jsr \(ROM.INTFAC)")
+            } else {
+                emit("    lda _arr_ptr_lo"); emit("    ldy _arr_ptr_hi"); emit("    jsr \(ROM.MOVFM)")
+            }
         }
     }
 
@@ -1767,6 +1916,22 @@ struct BasicCodeGen {
         emit("@zero:"); emit("    lda #0"); emit("    rts")
         emit("")
 
+        // Unsigned 16-bit (A=hi, Y=lo) -> FAC. GIVAYF interprets its input
+        // as SIGNED, so values with bit 15 set come back 65536 too low;
+        // add the correction constant when that happens.
+        emitFloatConst("_flt_65536", 65536.0)
+        emit("_rt_uword_to_fac:")
+        emit("    sta _word_tmp")
+        emit("    jsr \(ROM.INTFAC)")
+        emit("    lda _word_tmp")
+        emit("    bpl @uw_done")
+        emit("    lda #<_flt_65536")
+        emit("    ldy #>_flt_65536")
+        emit("    jsr \(ROM.FADD)")
+        emit("@uw_done:")
+        emit("    rts")
+        emit("")
+
         emit("_rt_strlen:")
         emit("    ldy #0"); emit("@sl:")
         emit("    lda ($FB),y"); emit("    beq @sl_done"); emit("    iny"); emit("    bne @sl")
@@ -1799,11 +1964,17 @@ struct BasicCodeGen {
         emit("")
 
         emit("_rt_str_from_fac:")
-        emit("    jsr \(ROM.FOUT)"); emit("    sty _str_tmp")
-        emit("    ldx #0"); emit("    ldy #1"); emit("@sf:")
-        emit("    lda $0100,y"); emit("    sta _str_slice_buf,x"); emit("    iny"); emit("    inx")
-        emit("    dec _str_tmp"); emit("    bne @sf")
-        emit("    lda #0"); emit("    sta _str_slice_buf,x")
+        // FOUT builds a null-terminated ASCII string at $0100 (sign or
+        // space first, matching BASIC's STR$ which includes the leading
+        // space for positive numbers). It does NOT return a length in any
+        // register, so copy until the terminator.
+        emit("    jsr \(ROM.FOUT)")
+        emit("    ldy #0")
+        emit("@sf:")
+        emit("    lda $0100,y"); emit("    sta _str_slice_buf,y")
+        emit("    beq @sf_done")
+        emit("    iny"); emit("    bne @sf")
+        emit("@sf_done:")
         emit("    lda #<_str_slice_buf"); emit("    ldy #>_str_slice_buf"); emit("    rts")
         emit("")
 
@@ -2056,6 +2227,9 @@ struct BasicCodeGen {
                 emit("arr_\(asm(name)): .res \(total * bpe)   ; \(name)(\(dimStr))")
             }
         }
+
+        emit("")
+        emit("_image_end:   ; end of the compiled image, used by SAVE")
     }
 
     private func collectForVars(_ stmt: Stmt, into set: inout Set<String>) {

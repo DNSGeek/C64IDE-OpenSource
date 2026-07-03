@@ -375,6 +375,17 @@ public struct BasicParser {
 
     private mutating func parseGet() -> Stmt {
         advance() // GET
+        // GET# is not a ROM token: real hardware crunches it as the GET
+        // token followed by a literal '#', and our lexer does the same.
+        // The .keyword("GET#") dispatch case can only fire if a dialect
+        // table defines GET# as its own keyword; this path handles V2.
+        if peek == .hash {
+            advance() // #
+            let logNum = parseExpr()
+            consumeComma()
+            let v = parseVarName(context: "GET#")
+            return .getHashStmt(logNum, v)
+        }
         let v = parseVarName(context: "GET")
         return .getStmt(v)
     }
