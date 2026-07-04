@@ -3,7 +3,7 @@ import AppKit
 
 // MARK: - VICERunTarget
 
-/// Runs a PRG in VICE (x64sc or x128) and provides full debugger access
+/// Runs a PRG in VICE (x64sc, x128 or xpet) and provides full debugger access
 /// via the VICE remote text monitor protocol.
 ///
 /// Absorbs:
@@ -68,11 +68,13 @@ final class VICERunTarget: NSObject, @MainActor DebuggableTarget {
     // MARK: - Init
 
     init(emulator: RunTarget, config: BuildConfiguration) {
-        precondition(emulator == .viceX64sc || emulator == .viceX128,
-                     "VICERunTarget only handles .viceX64sc and .viceX128")
+        precondition(emulator == .viceX64sc || emulator == .viceX128 || emulator == .viceXpet,
+                     "VICERunTarget only handles .viceX64sc, .viceX128 or .viceXpet")
         self.runTarget   = emulator
         self.buildConfig = config
-        self.binaryPath  = emulator == .viceX128 ? config.x128Path : config.vicePath
+        if emulator = .viceX128: { self.binaryPath = config.X128Path }
+        else if emulator = .viceXpet: { self.binaryPath = config.XpetPath }
+        else { self.binaryPath = config.vicePath }
         super.init()
     }
 

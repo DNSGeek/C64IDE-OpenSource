@@ -113,7 +113,7 @@ protocol RunTargetProtocol: AnyObject {
 
 /// Refines `RunTargetProtocol` with capabilities specific to local-process emulators.
 ///
-/// Implemented by VICE (x64sc, x128), xemu, and VirtualC64.
+/// Implemented by VICE (x64sc, x128, xpet), xemu, and VirtualC64.
 /// Hardware targets (U64, MEGA65) do not conform to this protocol.
 protocol EmulatorTarget: RunTargetProtocol {
 
@@ -148,7 +148,7 @@ extension EmulatorTarget {
 
 /// Extends `EmulatorTarget` with source-level debugging capabilities.
 ///
-/// Implemented by VirtualC64 and VICE (x64sc, x128).
+/// Implemented by VirtualC64 and VICE (x64sc, x128, xpet).
 /// xemu does not conform to this protocol as it lacks a remote monitor protocol.
 ///
 /// `DebuggerViewController` holds `(any DebuggableTarget)?` to abstract away

@@ -28,6 +28,9 @@ class BuildConfiguration: Codable {
     /// Path to VICE x128 emulator (C128). Used when the active dialect targets C128.
     var x128Path: String = "/Applications/VICE/x128.app/Contents/MacOS/x128"
 
+    /// Path to VICE xpet emulator (PET). Used when the active dialect targets PET.
+    var xpetPath: String = "/Applications/VICE/xpet.app/Contents/MacOS/xpet"
+
     /// Path to xemu's MEGA65 emulator binary (xmega65).
     var xemuPath: String = "/usr/local/bin/xmega65"
 
@@ -149,6 +152,10 @@ class BuildConfiguration: Codable {
             if !x128Path.isEmpty && !FileManager.default.isExecutableFile(atPath: x128Path) {
                 errors.append("VICE (x128) not found at: \(x128Path)")
             }
+        case .viceXpet:
+            if !xpetPath.isEmpty && !FileManager.default.isExecutableFile(atPath: xpetPath) {
+                errors.append("VICE (xpet) not found at: \(xpetPath)")
+            }
         case .xemu:
             if !xemuPath.isEmpty && !FileManager.default.isExecutableFile(atPath: xemuPath) {
                 errors.append("xemu (xmega65) not found at: \(xemuPath)")
@@ -202,6 +209,17 @@ class BuildConfiguration: Codable {
             }
         }
 
+        let xpetCandidates = [
+            "/Applications/VICE/xpet.app/Contents/MacOS/xpet",
+            "/opt/homebrew/bin/xpet",
+            "/usr/local/bin/xpet",
+        ]
+        for path in x128Candidates {
+            if FileManager.default.isExecutableFile(atPath: path) {
+                x128Path = path
+                break
+            }
+        }
         // xemu — handles DEB package renaming and Homebrew/manual builds.
         let xemuCandidates = [
             "/opt/homebrew/bin/xmega65",

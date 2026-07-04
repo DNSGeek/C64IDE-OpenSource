@@ -12,17 +12,17 @@ import SwiftUI
 /// SwiftUI panel for configuring build toolchain, emulator, and project settings.
 struct BuildPreferencesView: View {
     @Environment(\.colorScheme) private var colorScheme
-    
+
     @State private var showExampleOnLaunch: Bool = {
         UserDefaults.standard.object(forKey: "showExampleOnLaunch") == nil
             ? true
             : UserDefaults.standard.bool(forKey: "showExampleOnLaunch")
     }()
-    
+
     private var accentColor: Color { colorScheme == .dark ? .cyan : Color(red: 0.05, green: 0.40, blue: 0.80) }
     private var dimText:     Color { colorScheme == .dark ? .gray : Color(white: 0.45) }
     private var panelBg:     Color { colorScheme == .dark ? Color(red: 0.10, green: 0.10, blue: 0.13) : Color(NSColor.windowBackgroundColor) }
-    
+
     @ObservedObject var viewModel: BuildPreferencesViewModel
     var onDismiss: () -> Void
     var onSave: (() -> Void)? = nil
@@ -57,13 +57,14 @@ struct BuildPreferencesView: View {
                     pathField(label: "ld65 (linker)", path: $viewModel.ld65Path)
                     pathField(label: "VICE (x64sc)", path: $viewModel.vicePath)
                     pathField(label: "VICE (x128)", path: $viewModel.x128Path)
+                    pathField(label: "VICE (xpet)", path: $viewModel.xpetPath)
                     pathField(label: "xemu (xmega65)", path: $viewModel.xemuPath)
                     Text("x128 replaces x64sc as the Run target when the active dialect targets C128 (e.g. BASIC V7). xemu replaces it for MEGA65 (e.g. BASIC 65).")
                         .font(.system(size: 10, design: .monospaced))
                         .foregroundColor(.gray.opacity(0.7))
 
                     Divider().padding(.vertical, 4)
-                    
+
                     // ── C64 Emulator ─────────────────────────────
                     sectionHeader("C64 Emulator")
 
@@ -100,7 +101,7 @@ struct BuildPreferencesView: View {
                     Text("Removes unnecessary spaces to save bytes on the C64")
                         .font(.system(size: 10, design: .monospaced))
                         .foregroundColor(.gray.opacity(0.7))
-                    
+
                     Divider().padding(.vertical, 2)
                     Toggle("Show example file on launch", isOn: $showExampleOnLaunch)
                         .font(.system(.body, design: .monospaced))
@@ -287,6 +288,7 @@ class BuildPreferencesViewModel: ObservableObject {
     @Published var ld65Path: String
     @Published var vicePath: String
     @Published var x128Path: String
+    @Published var xpetPath: String
     @Published var xemuPath: String
     @Published var generateDebugInfo: Bool
     @Published var generateListing: Bool
@@ -309,6 +311,7 @@ class BuildPreferencesViewModel: ObservableObject {
         self.ld65Path = config.ld65Path
         self.vicePath = config.vicePath
         self.x128Path = config.x128Path
+        self.xpetPath = config.xpetPath
         self.xemuPath = config.xemuPath
         self.generateDebugInfo = config.generateDebugInfo
         self.generateListing = config.generateListing
@@ -331,6 +334,7 @@ class BuildPreferencesViewModel: ObservableObject {
         ld65Path = config.ld65Path
         vicePath = config.vicePath
         x128Path = config.x128Path
+        xpetPath = config.xpetPath
         xemuPath = config.xemuPath
         validate()
     }
@@ -341,6 +345,7 @@ class BuildPreferencesViewModel: ObservableObject {
         config.ld65Path = ld65Path
         config.vicePath = vicePath
         config.x128Path = x128Path
+        config.xpetPath = xpetPath
         config.xemuPath = xemuPath
         config.generateDebugInfo = generateDebugInfo
         config.generateListing = generateListing
@@ -370,6 +375,9 @@ class BuildPreferencesViewModel: ObservableObject {
         }
         if !x128Path.isEmpty && !FileManager.default.isExecutableFile(atPath: x128Path) {
             validationMessages.append("VICE x128 not found at \(x128Path)")
+        }
+        if !xpetPath.isEmpty && !FileManager.default.isExecutableFile(atPath: xpetPath) {
+            validationMessages.append("VICE xpet not found at \(xpetPath)")
         }
         if !xemuPath.isEmpty && !FileManager.default.isExecutableFile(atPath: xemuPath) {
             validationMessages.append("xemu not found at \(xemuPath)")

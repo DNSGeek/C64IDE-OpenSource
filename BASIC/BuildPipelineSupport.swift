@@ -3,8 +3,8 @@ import AppKit
 // MARK: - Build Pipeline Support
 
 /// Shared helpers used by the various "build & run on target X" pipelines
-/// (VICE x64sc, VICE x128, xemu xmega65, MEGA65 hardware via etherload, U64
-/// hardware). Extracted here so the build logic lives in exactly one place
+/// (VICE x64sc, VICE x128, VICE pet, xemu xmega65, MEGA65 hardware via etherload,
+/// U64 hardware). Extracted here so the build logic lives in exactly one place
 /// rather than drifting across half a dozen copy-pasted siblings.
 ///
 /// Caseless enum = namespace. There's no intent to ever instantiate this.

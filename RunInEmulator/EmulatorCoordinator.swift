@@ -75,7 +75,7 @@ final class EmulatorCoordinator {
             // Pass config so VC64RunTarget can read ROM paths. Falls back to
             // embedded OpenROMs with a warning if config is unavailable.
             t = VC64RunTarget(config: config)
-        case .viceX64sc, .viceX128:
+        case .viceX64sc, .viceX128, viceXpet:
             guard let cfg = config else { throw RunTargetError.binaryNotFound("no config") }
             t = VICERunTarget(emulator: target, config: cfg)
         default:

@@ -27,6 +27,9 @@ public class BasicTokenizer {
     /// BASIC V7 start address on the C128 (native mode).
     public static let c128StartAddress: UInt16 = 0x1C01
 
+    /// BASIC V4 start address on the PET (native mode).
+    public static let petStartAddress: UInt16 = 0x0401
+
     /// BASIC start address on the MEGA65 (in native BASIC 65 mode).
     public static let mega65StartAddress: UInt16 = 0x2001
 
