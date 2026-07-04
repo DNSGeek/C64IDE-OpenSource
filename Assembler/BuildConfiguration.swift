@@ -214,9 +214,9 @@ class BuildConfiguration: Codable {
             "/opt/homebrew/bin/xpet",
             "/usr/local/bin/xpet",
         ]
-        for path in x128Candidates {
+        for path in xpetCandidates {
             if FileManager.default.isExecutableFile(atPath: path) {
-                x128Path = path
+                xpetPath = path
                 break
             }
         }
