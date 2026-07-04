@@ -72,8 +72,8 @@ final class VICERunTarget: NSObject, @MainActor DebuggableTarget {
                      "VICERunTarget only handles .viceX64sc, .viceX128 or .viceXpet")
         self.runTarget   = emulator
         self.buildConfig = config
-        if emulator = .viceX128: { self.binaryPath = config.X128Path }
-        else if emulator = .viceXpet: { self.binaryPath = config.XpetPath }
+        if emulator == .viceX128 { self.binaryPath = config.x128Path }
+        else if emulator == .viceXpet { self.binaryPath = config.xpetPath }
         else { self.binaryPath = config.vicePath }
         super.init()
     }

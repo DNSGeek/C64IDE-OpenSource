@@ -839,7 +839,7 @@ class MainWindowController: NSWindowController, NSToolbarDelegate {
                 switch runTarget {
                 case .xemu:
                     XemuBuildPipeline.shared.runPRGWithDiskSupport(at: prgURL, autoRun: true, config: buildConfig)
-                case .vc64, .viceX64sc, .viceX128, viceXpet:
+                case .vc64, .viceX64sc, .viceX128, .viceXpet:
                     let plan: DiskMountPlan? = {
                         guard let proj = ProjectManager.shared.activeProject,
                               let root = ProjectManager.shared.projectRoot,
