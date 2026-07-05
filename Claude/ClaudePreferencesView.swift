@@ -26,7 +26,8 @@ final class ClaudePreferencesViewModel: ObservableObject {
         // updates when the fetch lands.
         Task { [weak self] in
             await ClaudeModelCatalog.shared.refreshIfStale()
-            await MainActor.run { self?.syncFromCatalog() }
+            guard let self else { return }
+            await MainActor.run { self.syncFromCatalog() }
         }
     }
 

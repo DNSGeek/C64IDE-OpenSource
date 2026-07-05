@@ -134,12 +134,17 @@ final class ClaudeModelCatalog {
         guard !trimmed.isEmpty else { throw ClaudeAPIError.invalidResponse }
 
         let now = Date()
-        lock.lock()
-        _models    = trimmed
-        _fetchedAt = now
-        lock.unlock()
+        store(models: trimmed, fetchedAt: now)
 
         Self.saveCache(CachedCatalog(fetchedAt: now, models: trimmed))
+    }
+
+    /// Synchronous so the lock is never held across a suspension point
+    /// (NSLock.lock() is unavailable from async contexts).
+    private func store(models: [ClaudeModelOption], fetchedAt: Date) {
+        lock.lock(); defer { lock.unlock() }
+        _models    = models
+        _fetchedAt = fetchedAt
     }
 
     // MARK: - Fetching
