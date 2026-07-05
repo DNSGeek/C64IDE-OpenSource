@@ -53,8 +53,8 @@ final class ClaudeAPIService {
     private let keychainService = "com.c64ide.claude"
     private let keychainAccount = "anthropic-api-key"
     private let apiEndpoint     = URL(string: "https://api.anthropic.com/v1/messages")!
-    private let model           = "claude-sonnet-4-20250514"
-    private let maxTokens       = 2048
+    private let model           = "claude-sonnet-5"
+    private let maxTokens       = 4096
 
     private init() {}
 
@@ -248,6 +248,10 @@ final class ClaudeAPIService {
             "max_tokens": maxTokens,
             "system":     systemPrompt,
             "messages":   messagesPayload,
+            // Adaptive thinking lets the model decide how much to reason per
+            // request. Thinking blocks share the max_tokens budget and are
+            // emitted before the text block (handled when parsing below).
+            "thinking":   ["type": "adaptive"],
         ]
 
         let bodyData = try JSONSerialization.data(withJSONObject: body)
@@ -282,10 +286,11 @@ final class ClaudeAPIService {
             }
         }
 
+        // The content array may lead with a "thinking" block (adaptive thinking),
+        // so pick the first block of type "text" rather than assuming index 0.
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let content = json["content"] as? [[String: Any]],
-              let first = content.first,
-              let text = first["text"] as? String else {
+              let text = content.first(where: { ($0["type"] as? String) == "text" })?["text"] as? String else {
             throw ClaudeAPIError.invalidResponse
         }
 

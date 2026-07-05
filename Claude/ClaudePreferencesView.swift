@@ -4,7 +4,6 @@ import SwiftUI
 
 final class ClaudePreferencesViewModel: ObservableObject {
     @Published var apiKey: String = ""
-    @Published var isSaved: Bool = false
     @Published var errorMessage: String? = nil
 
     init() {
@@ -19,11 +18,7 @@ final class ClaudePreferencesViewModel: ObservableObject {
         }
         do {
             try ClaudeAPIService.shared.saveAPIKey(trimmed)
-            isSaved = true
             errorMessage = nil
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-                self?.isSaved = false
-            }
         } catch {
             errorMessage = "Failed to save: \(error.localizedDescription)"
         }
@@ -77,8 +72,13 @@ struct ClaudePreferencesView: View {
                     onDismiss()
                 }
 
-                Button(viewModel.isSaved ? "Saved ✓" : "Save") {
+                Button("Save") {
                     viewModel.save()
+                    // save() sets errorMessage on failure (e.g. empty key) and
+                    // clears it on success. Only dismiss once the key is stored.
+                    if viewModel.errorMessage == nil {
+                        onDismiss()
+                    }
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(viewModel.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
