@@ -514,6 +514,41 @@ static vc64::C64Key mapKey(VC64KeyCode key)
     _emu->set(vc64::Opt::HOST_SAMPLE_RATE, (int64_t)llround(hz));
 }
 
+// ─────────────────────────────────────────────────────────────
+// MARK: Video standard
+// ─────────────────────────────────────────────────────────────
+
+- (void)setVideoStandard:(VC64Standard)standard
+{
+    if (!_emu) return;
+
+    if (standard == VC64StandardNTSC) {
+        _emu->set(vc64::Opt::VICII_REVISION,
+                  (int64_t)vc64::VICIIRev::NTSC_6567);
+        _emu->set(vc64::Opt::POWER_GRID,
+                  (int64_t)vc64::PowerGrid::STABLE_60HZ);
+    } else {
+        _emu->set(vc64::Opt::VICII_REVISION,
+                  (int64_t)vc64::VICIIRev::PAL_6569_R3);
+        _emu->set(vc64::Opt::POWER_GRID,
+                  (int64_t)vc64::PowerGrid::STABLE_50HZ);
+    }
+}
+
+- (VC64Standard)videoStandard
+{
+    if (!_emu) return VC64StandardPAL;
+
+    switch ((vc64::VICIIRev)_emu->get(vc64::Opt::VICII_REVISION)) {
+        case vc64::VICIIRev::NTSC_6567_R56A:
+        case vc64::VICIIRev::NTSC_6567:
+        case vc64::VICIIRev::NTSC_8562:
+            return VC64StandardNTSC;
+        default:
+            return VC64StandardPAL;
+    }
+}
+
 - (NSInteger)copyInterleavedSamples:(float *)buffer frames:(NSInteger)frames
 {
     // Guard against being called before the bridge is launched. The audio

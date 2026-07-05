@@ -104,11 +104,18 @@ final class VC64RunTarget: NSObject, @MainActor DebuggableTarget {
                 basicROM: basicPath,
                 charROM:  charPath
             )
+
+            // Configure the machine's video standard BEFORE first power-on
+            // so it boots directly in the standard the config asked for.
+            bridge.setVideoStandard(videoStandard.bridgeStandard)
+
             bridge.powerOn()
-            // powerOn() leaves the emulator in STATE_PAUSED — same state as
-            // hitting Pause on the toolbar. Without an explicit run(), no
-            // frames are computed and the video texture stays black forever.
             bridge.run()
+        } else {
+            // Warm run: re-sync in case the user flipped PAL/NTSC in
+            // preferences since the last run. VCCore applies the VICII
+            // revision change on the fly.
+            bridge.setVideoStandard(videoStandard.bridgeStandard)
         }
 
         // Start audio output. Safe to call on every run() — the engine is
@@ -117,8 +124,11 @@ final class VC64RunTarget: NSObject, @MainActor DebuggableTarget {
         // being in RUN state, so we have to do this after bridge.run().
         audioEngine.start()
 
-        // Show or create the emulator window.
+        // Show or create the emulator window. Sync the renderer's crop to
+        // the machine's ACTUAL standard (queried from the bridge, not the
+        // config) so the crop can never disagree with the emulated output.
         let wc = emulatorWindowController()
+        wc.syncVideoStandard(VC64VideoStandard(bridge: bridge.videoStandard()))
         wc.showWindow(nil)
         wc.window?.makeKeyAndOrderFront(nil)
 
@@ -402,6 +412,30 @@ final class VC64EmulatorWindowController: NSWindowController, NSWindowDelegate {
     }
 
     // MARK: - Setup
+    
+    /// Point the renderer at the crop for `standard` and resize the window
+    /// content to match its aspect. Called by the run target on every run,
+    /// so a PAL/NTSC preference change between runs takes effect without
+    /// tearing down the cached window controller.
+    func syncVideoStandard(_ standard: VC64VideoStandard) {
+        renderer.visibleRect = standard.visibleAreaUV
+
+        // Resize so the content aspect matches the crop (PAL 384x284 vs
+        // NTSC 411x235 source pixels, doubled). Skip if unchanged so we
+        // don't stomp a user resize on every run.
+        let uv = standard.visibleAreaUV
+        let size = NSSize(
+            width:  (CGFloat(uv.z - uv.x) * 520 * 2).rounded(),
+            height: (CGFloat(uv.w - uv.y) * 312 * 2).rounded()
+        )
+        if lastStandardSize != size {
+            lastStandardSize = size
+            window?.setContentSize(size)
+            window?.center()
+        }
+    }
+
+    private var lastStandardSize: NSSize?
 
     private func setupMTKView() {
         guard let device = MTLCreateSystemDefaultDevice() else {
@@ -555,6 +589,19 @@ enum VC64VideoStandard {
     }
 }
 
+extension VC64VideoStandard {
+
+    /// Map to the bridge's ObjC enum.
+    var bridgeStandard: VC64Standard {
+        self == .ntsc ? .NTSC : .PAL
+    }
+
+    /// Map from the bridge's ObjC enum.
+    init(bridge: VC64Standard) {
+        self = (bridge == .NTSC) ? .ntsc : .pal
+    }
+}
+
 // MARK: - VC64Renderer
 
 /// Minimal `MTKViewDelegate` that uploads the VC64 frame to a fullscreen quad.
@@ -575,11 +622,11 @@ final class VC64Renderer: NSObject, MTKViewDelegate {
     /// `draw(in:)` early-returns and the window stays black.
     var vc64Target: VC64RunTarget?
 
-    /// UV sub-rect of VCCore's 520×312 texture corresponding to the visible
-    /// C64 picture, for the configured video standard. Set at init from the
-    /// video standard's `visibleAreaUV` and not changed afterward — switching
-    /// PAL/NTSC mid-session would require a renderer rebuild anyway.
-    private let visibleRect: SIMD4<Float>
+    /// UV sub-rect of VCCore's 520x312 texture corresponding to the visible
+    /// C64 picture. Set at init from the video standard and refreshed by
+    /// VC64EmulatorWindowController.syncVideoStandard(_:) on every run.
+    /// Only mutated on the main thread; draw(in:) also runs on main.
+    var visibleRect: SIMD4<Float>
 
     init(device: MTLDevice, view: MTKView, videoStandard: VC64VideoStandard) {
         self.device       = device

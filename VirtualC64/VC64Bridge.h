@@ -111,6 +111,18 @@ typedef NS_ENUM(NSInteger, VC64Message) {
 };
 
 // ─────────────────────────────────────────────────────────────
+// MARK: - Video standard
+// ─────────────────────────────────────────────────────────────
+
+/// Video standard of the emulated machine. Mirrors the PAL/NTSC split of
+/// VCCore's VICII revision option without leaking the full revision enum
+/// into Swift.
+typedef NS_ENUM(NSInteger, VC64Standard) {
+    VC64StandardPAL,
+    VC64StandardNTSC,
+};
+
+// ─────────────────────────────────────────────────────────────
 // MARK: - Delegate
 // ─────────────────────────────────────────────────────────────
 
@@ -298,6 +310,20 @@ typedef NS_ENUM(NSInteger, VC64Message) {
 /// Creates the texture on first call; recreates it if dimensions change.
 /// Returns nil if the emulator isn't running.
 - (nullable id<MTLTexture>)updateMetalTextureOnDevice:(id<MTLDevice>)device;
+
+/// Set the emulated machine's video standard by switching the VICII
+/// revision (PAL 6569 R3 vs NTSC 6567) and the power-grid frequency
+/// (which drives the CIA TOD clocks: 50 Hz PAL, 60 Hz NTSC).
+///
+/// Safe to call any time after -launch..., including on a powered-on
+/// machine -- VCCore applies revision changes on the fly, same as the
+/// VirtualC64 app's settings panel. For a clean boot in the desired
+/// standard, call it between -launch... and -powerOn.
+- (void)setVideoStandard:(VC64Standard)standard;
+
+/// The machine's current video standard, derived from the live VICII
+/// revision. Reliable after -launch...; returns PAL before that.
+- (VC64Standard)videoStandard;
 
 /// Return the UV coordinates of the visible C64 picture area inside the
 /// full emulator texture. VCCore's texture is 520x312 — the full PAL frame

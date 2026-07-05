@@ -2431,7 +2431,6 @@ struct BasicCodeGen {
         case .arrayRead: return true                    // element sign unknown
         case .funcCall(let fn, _):
             return !["PEEK", "LEN", "ASC", "POS", "FRE", "RND", "ABS", "SQR"].contains(fn)
-        default: return true
         }
     }
 
