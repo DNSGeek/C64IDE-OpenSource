@@ -120,7 +120,8 @@ struct BasicTypeAnalyser {
 
     func analyse(_ lines: [ParsedLine]) -> SymbolTable {
         var table = SymbolTable()
-        seedFromSyntax(lines, into: &table)
+        let dataHint = widestNumericDataType(lines)
+        seedFromSyntax(lines, into: &table, dataHint: dataHint)
 
         var iterations = 0
         var changed = true
@@ -136,13 +137,60 @@ struct BasicTypeAnalyser {
     // MARK: - Phase 1: Seeding
     // ═══════════════════════════════════════════════════════
 
-    private func seedFromSyntax(_ lines: [ParsedLine], into table: inout SymbolTable) {
+    private func seedFromSyntax(_ lines: [ParsedLine], into table: inout SymbolTable,
+                                dataHint: VarType) {
         for line in lines {
-            for stmt in line.stmts { seedStmt(stmt, into: &table) }
+            for stmt in line.stmts { seedStmt(stmt, into: &table, dataHint: dataHint) }
         }
     }
 
-    private func seedStmt(_ stmt: Stmt, into t: inout SymbolTable) {
+    /// Widest numeric type appearing in any DATA statement, classified
+    /// exactly as the code generator classifies DATA items (0..255 byte,
+    /// otherwise +/-32767 word, otherwise float; anything negative is
+    /// signed). READ targets are seeded with this type because the
+    /// DATA-to-READ mapping is a runtime property of the data pointer:
+    /// statically, any numeric READ may receive the widest item in the
+    /// pool. Programs whose numeric DATA all fits in a byte (the common
+    /// sprite/charset case) fall back to .byte, preserving the fast
+    /// indexed read path. DATA inside a THEN/ELSE clause counts, matching
+    /// both real BASIC (the READ pointer scans program text) and the
+    /// code generator's first-pass collection.
+    private func widestNumericDataType(_ lines: [ParsedLine]) -> VarType {
+        var hint = VarType.byte
+        func scan(_ stmt: Stmt) {
+            switch stmt {
+            case .dataStmt(let vals):
+                for v in vals {
+                    switch v {
+                    case .integer(let n):
+                        if n >= 0 && n <= 255 {
+                            // Fits the byte floor; nothing to widen.
+                        } else if n >= -32768 && n <= 32767 {
+                            hint = hint.widened(to: n < 0 ? .sword : .word)
+                        } else {
+                            hint = hint.widened(to: .float)
+                        }
+                    case .negative(let n):
+                        hint = hint.widened(to: (-n >= -32768) ? .sword : .float)
+                    case .float:
+                        hint = hint.widened(to: .float)
+                    case .string:
+                        break
+                    }
+                }
+            case .ifThen(_, let then, let els):
+                then.forEach(scan)
+                els?.forEach(scan)
+            default:
+                break
+            }
+        }
+        for line in lines { for stmt in line.stmts { scan(stmt) } }
+        return hint
+    }
+
+    private func seedStmt(_ stmt: Stmt, into t: inout SymbolTable,
+                          dataHint: VarType) {
         switch stmt {
 
         case .letStr(let name, let rhs):
@@ -202,12 +250,14 @@ struct BasicTypeAnalyser {
             names.forEach {
                 if $0.hasSuffix("$") { t.set($0, .string) }
                 else if $0.hasSuffix("%") { t.widen($0, to: .word) }
-                // Numeric READ targets: we don't know which DATA value
-                // maps here without a runtime data pointer, so we seed
-                // conservatively as .byte — the propagation pass will
-                // widen if needed. The code generator uses dataIsAllByte
-                // to pick the fast byte path anyway.
-                else { t.widen($0, to: .byte) }
+                // Numeric READ targets: the DATA-to-READ mapping is only
+                // known at runtime, so seed with the widest numeric type
+                // present in any DATA statement (see
+                // widestNumericDataType). All-byte DATA — the common
+                // sprite/charset case — seeds .byte and keeps the fast
+                // indexed read path; a program whose DATA contains a word
+                // or float seeds wide enough that no READ can truncate.
+                else { t.widen($0, to: dataHint) }
             }
 
         case .dimStmt(let entries):
@@ -222,8 +272,8 @@ struct BasicTypeAnalyser {
 
         case .ifThen(let cond, let then, let els):
             seedExpr(cond, into: &t)
-            then.forEach { seedStmt($0, into: &t) }
-            els?.forEach { seedStmt($0, into: &t) }
+            then.forEach { seedStmt($0, into: &t, dataHint: dataHint) }
+            els?.forEach { seedStmt($0, into: &t, dataHint: dataHint) }
 
         case .printStmt(let items):
             items.forEach { if case .expr(let e) = $0 { seedExpr(e, into: &t) } }

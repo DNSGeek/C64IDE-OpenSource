@@ -101,6 +101,10 @@ struct BasicCodeGen {
     /// Runtime routines emitted only when some expression needs them.
     private var needsMul16 = false
     private var needsDiv16 = false
+    /// Set when a byte-table READ needs full 16-bit data-pointer
+    /// addressing (table longer than 256 bytes); gates emission of
+    /// _rt_data_get_byte.
+    private var needsWideByteData = false
 
     // First-pass collection:
     private var dataBytes: [UInt8] = []
@@ -140,6 +144,7 @@ struct BasicCodeGen {
         forStepNeeded = []
         needsMul16 = false
         needsDiv16 = false
+        needsWideByteData = false
 
         // Build line → label map
         for line in lines {
@@ -1357,26 +1362,71 @@ struct BasicCodeGen {
                     emit("    ldy #>var_\(asm(name))")
                     emit("    jsr _rt_data_read_str")
                 } else {
-                    warn("READ of numeric \(name) from mixed string/numeric DATA is not supported; program will stop here")
-                    emit("    jmp _program_end")
+                    // Mixed string/numeric DATA: the tagged-stream reader
+                    // dispatches on the item tag, converts byte/word/float
+                    // items into FAC1, and advances _data_ptr by the item's
+                    // encoded size (a string item under a numeric READ is a
+                    // type mismatch and stops the program, mirroring what
+                    // _rt_data_read_str does in the opposite direction).
+                    // Storing from FAC1 by analysed width below is identical
+                    // to the pure-float table path.
+                    emit("    jsr _rt_data_read_num")
+                    let varType = table[name]
+                    switch varType.width {
+                    case .byte:
+                        emit("    jsr \(ROM.AYINT)")
+                        emit("    lda $65")
+                        emit("    sta var_\(asm(name))")
+                    case .word:
+                        emit("    jsr \(ROM.AYINT)")
+                        emit("    lda $65")
+                        emit("    sta var_\(asm(name))")
+                        emit("    lda $64")
+                        emit("    sta var_\(asm(name))+1")
+                    default:
+                        genStoreFloat(name)
+                    }
                 }
             }
             return
         }
         for name in names {
             let varType = table[name]
-            if dataIsAllByte && varType.width == .byte {
-                emit("    ldy _data_ptr")
-                emit("    lda _data_table,y")
-                emit("    sta var_\(asm(name))")
-                emit("    inc _data_ptr")
-            } else if dataIsAllByte && varType.width == .word {
-                emit("    ldy _data_ptr")
-                emit("    lda _data_table,y")
-                emit("    sta var_\(asm(name))")
-                emit("    lda #0")
-                emit("    sta var_\(asm(name))+1")
-                emit("    inc _data_ptr")
+            if dataIsAllByte {
+                // Byte-table fetch into A, advancing _data_ptr by 1.
+                // Tables up to 256 bytes keep the fast Y-indexed path
+                // (indices 0..255 all reachable; the low-byte-only inc
+                // can't wrap mid-table). Larger tables previously wrapped
+                // silently after 256 reads because ldy/inc only ever saw
+                // the low byte; they now go through _rt_data_get_byte,
+                // which does full 16-bit indexing and carry.
+                if dataBytes.count > 256 {
+                    needsWideByteData = true
+                    emit("    jsr _rt_data_get_byte")
+                } else {
+                    emit("    ldy _data_ptr")
+                    emit("    lda _data_table,y")
+                    emit("    inc _data_ptr")
+                }
+                switch varType.width {
+                case .byte:
+                    emit("    sta var_\(asm(name))")
+                case .word:
+                    emit("    sta var_\(asm(name))")
+                    emit("    lda #0")
+                    emit("    sta var_\(asm(name))+1")
+                default:
+                    // Float-typed target reading from a byte table
+                    // (propagation widened the variable, e.g. READ X
+                    // followed by X=X+0.5). Previously this fell into
+                    // the float-table branch below, which misread raw
+                    // bytes as 5-byte MFLPT floats and advanced by 5.
+                    // Convert the fetched byte via GIVAYF instead.
+                    emit("    tay")                 // Y = lo
+                    emit("    lda #0")              // A = hi
+                    emit("    jsr \(ROM.INTFAC)")   // GIVAYF: A/Y -> FAC1
+                    genStoreFloat(name)
+                }
             } else {
                 let lbl = newLabel("rd")
                 emit("    lda _data_ptr+1")
@@ -2772,6 +2822,31 @@ struct BasicCodeGen {
             emit("")
         }
 
+        if needsWideByteData {
+            // Byte-table fetch with full 16-bit indexing, for DATA
+            // tables longer than 256 bytes. Returns the item in A and
+            // advances _data_ptr with carry into the high byte. The
+            // Y-indexed inline path can't be used past 256 entries
+            // because both ldy and inc only touch the pointer's low
+            // byte, wrapping the read position back to item 0.
+            emit("_rt_data_get_byte:")
+            emit("    lda _data_ptr")
+            emit("    clc")
+            emit("    adc #<_data_table")
+            emit("    sta $FD")
+            emit("    lda _data_ptr+1")
+            emit("    adc #>_data_table")
+            emit("    sta $FE")
+            emit("    inc _data_ptr")
+            emit("    bne @nw")
+            emit("    inc _data_ptr+1")
+            emit("@nw:")
+            emit("    ldy #0")
+            emit("    lda ($FD),y")
+            emit("    rts")
+            emit("")
+        }
+
         if dataHasString {
             emit("_rt_data_read_str:")
             emit("    sta $FB"); emit("    sty $FC")
@@ -2791,6 +2866,57 @@ struct BasicCodeGen {
             emit("    lda _data_ptr"); emit("    clc"); emit("    adc _str_tmp"); emit("    sta _data_ptr")
             emit("    bcc @s3"); emit("    inc _data_ptr+1"); emit("@s3:")
             emit("    rts"); emit("@tymm:"); emit("    jmp _program_end")
+            emit("")
+
+            // Numeric READ from the tagged stream. Dispatches on the tag
+            // byte, converts the item into FAC1 (GIVAYF for byte/word,
+            // MOVFM for float), then advances _data_ptr by the item's
+            // total encoded size including the tag. The caller stores
+            // from FAC1 based on the target variable's analysed width.
+            // Tag $03 (string) under a numeric READ is a type mismatch:
+            // stop the program, same as _rt_data_read_str's @tymm.
+            emit("_rt_data_read_num:")
+            emit("    lda _data_ptr"); emit("    clc"); emit("    adc #<_data_table"); emit("    sta $FD")
+            emit("    lda _data_ptr+1"); emit("    adc #>_data_table"); emit("    sta $FE")
+            emit("    ldy #0"); emit("    lda ($FD),y")
+            emit("    beq @byte")                       // tag $00
+            emit("    cmp #$01"); emit("    beq @word") // tag $01
+            emit("    cmp #$02"); emit("    beq @float")// tag $02
+            emit("    jmp _program_end")                // tag $03: mismatch
+            emit("@byte:")
+            emit("    iny"); emit("    lda ($FD),y")    // value byte
+            emit("    tay")                             // Y = lo
+            emit("    lda #0")                          // A = hi (0..255 fits signed 16-bit)
+            emit("    jsr \(ROM.INTFAC)")               // GIVAYF: A/Y -> FAC1
+            emit("    lda #2")                          // advance: tag + 1
+            emit("    bne @adv")                        // always (A != 0)
+            emit("@word:")
+            emit("    ldy #2"); emit("    lda ($FD),y") // hi byte
+            emit("    tax")
+            emit("    dey"); emit("    lda ($FD),y")    // lo byte
+            emit("    tay")                             // Y = lo
+            emit("    txa")                             // A = hi
+            emit("    jsr \(ROM.INTFAC)")
+            emit("    lda #3")                          // advance: tag + 2
+            emit("    bne @adv")                        // always
+            emit("@float:")
+            emit("    ldy $FE")                         // MOVFM wants A=lo, Y=hi
+            emit("    lda $FD")
+            emit("    clc")
+            emit("    adc #1")                          // skip the tag byte
+            emit("    bcc @f1")
+            emit("    iny")
+            emit("@f1:")
+            emit("    jsr \(ROM.MOVFM)")
+            emit("    lda #6")                          // advance: tag + 5
+            emit("@adv:")
+            emit("    clc")
+            emit("    adc _data_ptr")
+            emit("    sta _data_ptr")
+            emit("    bcc @nd")
+            emit("    inc _data_ptr+1")
+            emit("@nd:")
+            emit("    rts")
             emit("")
         }
 

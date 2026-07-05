@@ -251,7 +251,43 @@ final class BasicTypeAnalyserTests: XCTestCase {
     }
 
     // ═══════════════════════════════════════════════════════
-    // MARK: 12. Full invader.bas integration
+    // MARK: 12. READ target seeding from DATA pool width
+    // ═══════════════════════════════════════════════════════
+
+    func test_read_from_byte_data_stays_byte() {
+        let t = analyse("10 DATA 1,2,3\n20 READ B")
+        XCTAssertEqual(t["B"].width, .byte)
+    }
+
+    func test_read_from_word_data_widens_to_word() {
+        let t = analyse("10 DATA 500\n20 READ W")
+        XCTAssertEqual(t["W"].width, .word)
+    }
+
+    func test_read_from_float_data_widens_to_float() {
+        let t = analyse("10 DATA 3.5\n20 READ F")
+        XCTAssertEqual(t["F"].width, .float)
+    }
+
+    func test_read_from_negative_data_is_signed() {
+        let t = analyse("10 DATA -5\n20 READ X")
+        XCTAssertTrue(t["X"].isSigned)
+    }
+
+    func test_mixed_string_numeric_data_read_types() {
+        let t = analyse("10 DATA \"SHIP\",120,500\n20 READ N$,X,W")
+        XCTAssertEqual(t["N$"], .string)
+        XCTAssertEqual(t["X"].width, .word, "widest numeric DATA item governs all numeric READs")
+        XCTAssertEqual(t["W"].width, .word)
+    }
+
+    func test_string_data_items_do_not_widen_numeric_reads() {
+        let t = analyse("10 DATA \"HELLO\",7\n20 READ A$,X")
+        XCTAssertEqual(t["X"].width, .byte)
+    }
+
+    // ═══════════════════════════════════════════════════════
+    // MARK: 13. Full invader.bas integration
     // ═══════════════════════════════════════════════════════
 
     func test_invader_full_program() {

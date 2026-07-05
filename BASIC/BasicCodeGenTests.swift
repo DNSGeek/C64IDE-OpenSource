@@ -449,5 +449,117 @@ final class BasicCodeGenTests: XCTestCase {
     func test_runtime_has_data_table() {
         XCTAssertTrue(compile("10 DATA 1,2,3\n20 READ B").contains("_data_table:"))
     }
+
+    // MARK: - Mixed String/Numeric DATA
+
+    func test_mixed_data_emits_tagged_table_with_all_tags() {
+        let out = compile("10 DATA \"SHIP\",120,500,3.5\n20 READ N$,X,W,F")
+        XCTAssertTrue(out.contains("_data_table:"))
+        XCTAssertTrue(out.contains(".byte $00,"), "byte item should carry tag $00")
+        XCTAssertTrue(out.contains(".byte $01,"), "word item should carry tag $01")
+        XCTAssertTrue(out.contains(".byte $02,"), "float item should carry tag $02")
+        XCTAssertTrue(out.contains(".byte $03,"), "string item should carry tag $03")
+    }
+
+    func test_mixed_data_numeric_read_uses_tagged_reader() {
+        let out = compile("10 DATA \"A\",7\n20 READ A$,X")
+        XCTAssertTrue(out.contains("jsr _rt_data_read_num"),
+                      "numeric READ from mixed DATA must call the tagged reader")
+        XCTAssertTrue(out.contains("jsr _rt_data_read_str"))
+        XCTAssertTrue(out.contains("_rt_data_read_num:"),
+                      "tagged numeric reader must be emitted in the runtime")
+    }
+
+    func test_mixed_data_numeric_read_compiles_without_warning() {
+        let result = BasicCompilerV2.compile("10 DATA \"A\",7\n20 READ A$,X")
+        XCTAssertTrue(result.success)
+        XCTAssertFalse(result.warnings.contains(where: { $0.contains("not supported") }),
+                       "mixed READ must no longer emit the unsupported warning")
+        XCTAssertFalse(result.assembly?.contains("READ of numeric") ?? true)
+    }
+
+    func test_mixed_data_byte_target_stores_via_ayint() {
+        // Hint stays byte (only numeric DATA item is 7), so the store
+        // path after the tagged reader is the AYINT lo-byte store.
+        let out = compile("10 DATA \"A\",7\n20 READ A$,X")
+        XCTAssertTrue(out.contains("jsr $B1BF"), "byte store from FAC uses AYINT")
+    }
+
+    func test_mixed_data_wide_item_widens_read_target_storage() {
+        // DATA contains 500, so numeric READ targets must be at least
+        // word-sized: the old byte seeding truncated 500 to 244.
+        let out = compile("10 DATA \"E\",500\n20 READ A$,W")
+        XCTAssertTrue(out.contains("var_W: .res 2"),
+                      "READ target must widen to word when DATA holds a word item")
+    }
+
+    func test_pure_numeric_wide_data_widens_read_target() {
+        // Same latent truncation existed without strings in the picture.
+        let out = compile("10 DATA 500\n20 READ W")
+        XCTAssertTrue(out.contains("var_W: .res 2"))
+    }
+
+    func test_byte_only_data_keeps_fast_path() {
+        // Regression guard: all-byte DATA must not pay the tagged-stream
+        // or float-table cost.
+        let out = compile("10 DATA 1,2,3\n20 READ B")
+        XCTAssertFalse(out.contains("_rt_data_read_num"))
+        XCTAssertTrue(out.contains("lda _data_table,y"))
+        XCTAssertTrue(out.contains("var_B: .res 1"))
+    }
+
+    // MARK: - Large Byte DATA Tables (16-bit data pointer)
+
+    /// Builds a program with `count` byte DATA items split across lines
+    /// (BASIC lines have length limits; 40 items per line is safe).
+    private func byteDataProgram(count: Int, readLine: String) -> String {
+        var lines: [String] = []
+        var lineNo = 10
+        var i = 0
+        while i < count {
+            let chunk = (i..<min(i + 40, count)).map { String($0 % 256) }
+            lines.append("\(lineNo) DATA \(chunk.joined(separator: ","))")
+            lineNo += 10
+            i += 40
+        }
+        lines.append("\(lineNo) \(readLine)")
+        return lines.joined(separator: "\n")
+    }
+
+    func test_small_byte_table_does_not_emit_wide_reader() {
+        let out = compile(byteDataProgram(count: 256, readLine: "READ B"))
+        XCTAssertFalse(out.contains("_rt_data_get_byte"),
+                       "256 items or fewer must keep the Y-indexed fast path")
+        XCTAssertTrue(out.contains("lda _data_table,y"))
+    }
+
+    func test_large_byte_table_uses_16bit_pointer() {
+        let out = compile(byteDataProgram(count: 300, readLine: "READ B"))
+        XCTAssertTrue(out.contains("jsr _rt_data_get_byte"),
+                      "tables over 256 bytes must use the 16-bit reader")
+        XCTAssertTrue(out.contains("_rt_data_get_byte:"),
+                      "16-bit reader routine must be emitted")
+        XCTAssertTrue(out.contains("inc _data_ptr+1"),
+                      "pointer advance must carry into the high byte")
+        XCTAssertFalse(out.contains("ldy _data_ptr"),
+                       "large tables must not use low-byte-only indexing")
+    }
+
+    func test_large_byte_table_word_target_zero_extends() {
+        let out = compile(byteDataProgram(count: 300, readLine: "READ W\n9000 W=W+1000"))
+        XCTAssertTrue(out.contains("jsr _rt_data_get_byte"))
+        XCTAssertTrue(out.contains("var_W: .res 2"))
+    }
+
+    func test_byte_table_float_target_converts_via_givayf() {
+        // Propagation widens X to float; the byte table must convert
+        // the fetched byte via GIVAYF, not misread raw bytes as MFLPT
+        // floats (the old else-branch did exactly that, advancing by 5).
+        let out = compile("10 DATA 10,20\n20 READ X\n30 X=X+0.5")
+        XCTAssertTrue(out.contains("var_X: .res 5"), "X should be float-typed")
+        XCTAssertTrue(out.contains("lda _data_table,y"), "fetch stays on the byte path")
+        XCTAssertTrue(out.contains("jsr $B391"), "byte converts to FAC via GIVAYF")
+        XCTAssertFalse(out.contains("adc #5"), "byte table must never advance by 5")
+    }
 }
 
