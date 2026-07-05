@@ -53,10 +53,86 @@ final class ClaudeAPIService {
     private let keychainService = "com.c64ide.claude"
     private let keychainAccount = "anthropic-api-key"
     private let apiEndpoint     = URL(string: "https://api.anthropic.com/v1/messages")!
-    private let model           = "claude-sonnet-5"
-    private let maxTokens       = 4096
 
     private init() {}
+
+    // MARK: - Model Catalog Accessors
+
+    /// Models offered in Preferences. Sourced from ClaudeModelCatalog, which
+    /// fetches GET /v1/models with a 7-day disk cache and falls back to a
+    /// hardcoded seed list until the first successful fetch.
+    static var availableModels: [ClaudeModelOption] { ClaudeModelCatalog.shared.models }
+
+    static let defaultModelID   = "claude-sonnet-5"
+    static let defaultMaxTokens = 4096
+
+    /// Absolute bounds for max output tokens, independent of model. The
+    /// ceiling is deliberately below what current models accept (128k)
+    /// because this client does not stream, and very large non-streamed
+    /// responses risk request timeouts.
+    static let absoluteMaxTokensRange = 256...ClaudeModelCatalog.absoluteMaxOutputTokens
+
+    /// Valid max-token range for a specific model: the absolute range
+    /// further capped by the model's own output limit.
+    static func maxTokensRange(for option: ClaudeModelOption) -> ClosedRange<Int> {
+        let lower = absoluteMaxTokensRange.lowerBound
+        let upper = min(option.maxOutputTokens, absoluteMaxTokensRange.upperBound)
+        return lower...max(lower, upper)
+    }
+
+    // MARK: - Settings (UserDefaults)
+
+    private enum DefaultsKey {
+        static let model           = "ClaudeModel"
+        static let thinkingEnabled = "ClaudeThinkingEnabled"
+        static let maxTokens       = "ClaudeMaxTokens"
+    }
+
+    /// Selected model ID. Falls back to the default (or the newest available
+    /// model) if the stored value is no longer in the catalog, e.g. after a
+    /// model is retired.
+    var model: String {
+        get {
+            let available = Self.availableModels
+            if let stored = UserDefaults.standard.string(forKey: DefaultsKey.model),
+               available.contains(where: { $0.id == stored }) {
+                return stored
+            }
+            if available.contains(where: { $0.id == Self.defaultModelID }) {
+                return Self.defaultModelID
+            }
+            return available.first?.id ?? Self.defaultModelID
+        }
+        set { UserDefaults.standard.set(newValue, forKey: DefaultsKey.model) }
+    }
+
+    /// The catalog entry for the selected model.
+    var modelOption: ClaudeModelOption {
+        ClaudeModelCatalog.shared.option(for: model) ?? ClaudeModelCatalog.seed[0]
+    }
+
+    /// Whether extended thinking is requested. Defaults to true.
+    /// Models with ClaudeThinkingSupport.alwaysOn think regardless of this setting.
+    var thinkingEnabled: Bool {
+        get { UserDefaults.standard.object(forKey: DefaultsKey.thinkingEnabled) as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: DefaultsKey.thinkingEnabled) }
+    }
+
+    /// Max output tokens per response. Thinking tokens (when enabled) count
+    /// against this budget too. The stored value is clamped to the absolute
+    /// range; the per-model cap is applied at request time in sendMessage,
+    /// so switching models never silently rewrites the stored preference.
+    var maxTokens: Int {
+        get {
+            let stored = UserDefaults.standard.integer(forKey: DefaultsKey.maxTokens)
+            return Self.absoluteMaxTokensRange.contains(stored) ? stored : Self.defaultMaxTokens
+        }
+        set {
+            let clamped = min(max(newValue, Self.absoluteMaxTokensRange.lowerBound),
+                              Self.absoluteMaxTokensRange.upperBound)
+            UserDefaults.standard.set(clamped, forKey: DefaultsKey.maxTokens)
+        }
+    }
 
     // MARK: - Keychain
 
@@ -243,16 +319,38 @@ final class ClaudeAPIService {
 
         let messagesPayload = history.map { ["role": $0.role, "content": $0.content] }
 
-        let body: [String: Any] = [
-            "model":      model,
-            "max_tokens": maxTokens,
+        let option = modelOption
+        // Apply the model-specific output cap at request time.
+        let requestMaxTokens = min(maxTokens, Self.maxTokensRange(for: option).upperBound)
+
+        var body: [String: Any] = [
+            "model":      option.id,
+            "max_tokens": requestMaxTokens,
             "system":     systemPrompt,
             "messages":   messagesPayload,
-            // Adaptive thinking lets the model decide how much to reason per
-            // request. Thinking blocks share the max_tokens budget and are
-            // emitted before the text block (handled when parsing below).
-            "thinking":   ["type": "adaptive"],
         ]
+
+        // Thinking configuration depends on the model generation (see
+        // ClaudeThinkingSupport). Thinking blocks share the max_tokens budget
+        // and are emitted before the text block (handled when parsing below).
+        switch (thinkingEnabled, option.thinking) {
+        case (true, .adaptive), (true, .alwaysOn):
+            // Adaptive lets the model decide how much to reason per request.
+            body["thinking"] = ["type": "adaptive"]
+        case (true, .manualBudget):
+            // Pre-adaptive models need an explicit budget:
+            // budget_tokens must be >= 1024 and < max_tokens.
+            if requestMaxTokens > 1024 {
+                let budget = max(1024, min(requestMaxTokens - 1, requestMaxTokens / 2))
+                body["thinking"] = ["type": "enabled", "budget_tokens": budget]
+            }
+        case (true, .unsupported), (false, _):
+            // Omit the field entirely. This disables thinking on adaptive and
+            // manual-budget models. alwaysOn models (Fable 5, Sonnet 5) run
+            // adaptive thinking regardless; sending {"type": "disabled"}
+            // would be rejected with a 400, so we don't.
+            break
+        }
 
         let bodyData = try JSONSerialization.data(withJSONObject: body)
 
@@ -262,7 +360,9 @@ final class ClaudeAPIService {
         request.setValue("application/json",      forHTTPHeaderField: "Content-Type")
         request.setValue(apiKey,                  forHTTPHeaderField: "x-api-key")
         request.setValue("2023-06-01",            forHTTPHeaderField: "anthropic-version")
-        request.timeoutInterval = 60
+        // Generous timeout: this client doesn't stream, and a large
+        // max_tokens with thinking enabled can legitimately take a while.
+        request.timeoutInterval = 300
 
         let (data, response): (Data, URLResponse)
         do {
