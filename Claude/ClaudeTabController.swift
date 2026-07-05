@@ -444,19 +444,21 @@ final class ClaudeTabController: NSViewController {
     @objc private func openSettings() {
         guard let window = view.window else { return }
         let vm = ClaudePreferencesViewModel()
+        // onDismiss ends whatever sheet is attached to the host window (our prefs
+        // sheet). We deliberately don't capture prefsWindow here: the window owns
+        // the SwiftUI view which owns this closure, so capturing it would create a
+        // retain cycle and leak a window each time settings is opened.
         let hostingController = NSHostingController(
-            rootView: ClaudePreferencesView(viewModel: vm, onDismiss: {
-                // The sheet is automatically dismissed by beginSheet's completion handler.
-                // We only need this closure if we want to run post-dismissal cleanup.
+            rootView: ClaudePreferencesView(viewModel: vm, onDismiss: { [weak window] in
+                guard let window, let sheet = window.attachedSheet else { return }
+                window.endSheet(sheet)
             })
         )
         let prefsWindow = NSWindow(contentViewController: hostingController)
         prefsWindow.title = "Claude AI Settings"
         prefsWindow.styleMask = [.titled, .closable]
         prefsWindow.center()
-        window.beginSheet(prefsWindow) { _ in
-            // Sheet dismissal handled automatically by AppKit.
-        }
+        window.beginSheet(prefsWindow, completionHandler: nil)
     }
 }
 
