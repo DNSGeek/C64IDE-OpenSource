@@ -20,18 +20,30 @@ class TooltipProvider {
         self.textView = textView
         self.fileType = fileType
 
-        // Hide tooltip when the editor window resigns key/main status
+        // Hide tooltip when the editor window resigns key/main status.
+        // Note: textView.window is nil at init time (view not yet in a window),
+        // so we observe all windows and compare at notification time instead.
         observers.append(NotificationCenter.default.addObserver(
             forName: NSWindow.didResignKeyNotification,
-            object: textView.window,
+            object: nil,
             queue: .main
-        ) { [weak self] _ in self?.hideTooltip() })
+        ) { [weak self] notification in
+            if let window = notification.object as? NSWindow,
+               window === self?.textView?.window {
+                self?.hideTooltip()
+            }
+        })
 
         observers.append(NotificationCenter.default.addObserver(
             forName: NSWindow.didResignMainNotification,
-            object: textView.window,
+            object: nil,
             queue: .main
-        ) { [weak self] _ in self?.hideTooltip() })
+        ) { [weak self] notification in
+            if let window = notification.object as? NSWindow,
+               window === self?.textView?.window {
+                self?.hideTooltip()
+            }
+        })
 
         // Hide tooltip when any other window becomes key (focus shift)
         observers.append(NotificationCenter.default.addObserver(

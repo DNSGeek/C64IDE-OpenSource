@@ -11,6 +11,37 @@ private class GutterAwareScrollView: NSScrollView {
     }
 }
 
+/// A text view that tracks mouse movement and forwards hover events to a TooltipProvider.
+private final class TooltipTextView: NSTextView {
+    weak var tooltipProvider: TooltipProvider?
+    private var hoverTrackingArea: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let area = hoverTrackingArea {
+            removeTrackingArea(area)
+        }
+        let area = NSTrackingArea(
+            rect: .zero,
+            options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        hoverTrackingArea = area
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        super.mouseMoved(with: event)
+        tooltipProvider?.handleMouseMoved(at: event.locationInWindow, in: self)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        tooltipProvider?.handleMouseExited()
+    }
+}
+
 /// View controller responsible for managing the C64 source editor, including syntax highlighting,
 /// gutter rendering, file watching, and C64-specific features like auto-numbering and shortcut expansion.
 class EditorViewController: NSViewController, NSTextViewDelegate, NSTextStorageDelegate {
@@ -71,7 +102,7 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSTextStorageD
         sv.borderType = .noBorder
         sv.backgroundColor = editorBackground
 
-        let tv = NSTextView(frame: NSRect(origin: .zero, size: sv.contentSize))
+        let tv = TooltipTextView(frame: NSRect(origin: .zero, size: sv.contentSize))
         tv.autoresizingMask = [.width, .height]
         tv.isEditable = true
         tv.isSelectable = true
@@ -111,6 +142,7 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSTextStorageD
 
         highlighter = SyntaxHighlighter(textStorage: textView.textStorage!, fileType: document.fileType)
         tooltipProvider = TooltipProvider(textView: textView, fileType: document.fileType)
+        (textView as? TooltipTextView)?.tooltipProvider = tooltipProvider
 
         loadTextIntoEditor()
 
