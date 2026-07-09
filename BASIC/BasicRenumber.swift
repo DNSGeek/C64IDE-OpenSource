@@ -297,6 +297,75 @@ public class BasicRenumber {
         return proposed
     }
 
+    // MARK: - Auto-Arrange
+
+    /// Describes what (if anything) should happen to a just-committed line
+    /// to keep the source in line-number order.
+    public enum AutoArrangeAction: Equatable {
+        /// Line is unique and already in sorted position.
+        case none
+        /// Line is out of order. `targetOffset` is the character offset (in
+        /// the source as passed in) at which the line, trailing newline
+        /// included, should be re-inserted. Always a line boundary, except
+        /// the append-after-last-line case, where it may point one past a
+        /// final line that has no trailing newline. Callers must clamp to
+        /// the text length and re-adjust after deleting the original line.
+        case move(targetOffset: Int)
+        /// Another line already has this number. `existingLineStart` is that
+        /// line's `range.location`.
+        case duplicate(existingLineStart: Int)
+    }
+
+    /// Classifies the numbered line starting at `lineStart`.
+    ///
+    /// Assumes the rest of the file is sorted, which holds when this runs on
+    /// every line commit: only the just-committed line can be out of place.
+    /// For a globally unsorted file the move target is a best-effort
+    /// heuristic (the first line with a greater number); a full Renumber
+    /// remains the real fix in that situation.
+    ///
+    /// - Parameters:
+    ///   - source: The full BASIC source text.
+    ///   - lineStart: Character offset of the start of the committed line.
+    /// - Returns: The action to take, or `nil` if no numbered line starts at
+    ///   `lineStart` (blank and unnumbered lines are never arranged).
+    public static func autoArrangeAction(source: String, lineStart: Int) -> AutoArrangeAction? {
+        let lines = parseLines(source)
+        guard let idx = lines.firstIndex(where: { $0.range.location == lineStart }) else {
+            return nil
+        }
+        let line = lines[idx]
+
+        // Duplicate beats out-of-order: the collision has to be resolved
+        // before a "sorted position" even means anything.
+        if let dup = lines.first(where: {
+            $0.lineNumber == line.lineNumber && $0.range.location != lineStart
+        }) {
+            return .duplicate(existingLineStart: dup.range.location)
+        }
+
+        let prevOK = idx == 0 || lines[idx - 1].lineNumber < line.lineNumber
+        let nextOK = idx == lines.count - 1 || lines[idx + 1].lineNumber > line.lineNumber
+        // Qualified: the return type is Optional, so a bare `.none` would
+        // infer as Optional.none (nil), not the enum case we mean.
+        if prevOK && nextOK { return AutoArrangeAction.none }
+
+        // Insert before the first line carrying a greater number...
+        if let target = lines.first(where: {
+            $0.lineNumber > line.lineNumber && $0.range.location != lineStart
+        }) {
+            return .move(targetOffset: target.range.location)
+        }
+
+        // ...or after the last other line when every other number is smaller.
+        guard let last = lines.last(where: { $0.range.location != lineStart }) else {
+            return AutoArrangeAction.none  // Only line in the file: trivially in order.
+        }
+        // +1 steps past that line's trailing newline; the caller clamps when
+        // the file ends without one.
+        return .move(targetOffset: NSMaxRange(last.range) + 1)
+    }
+
     /// Gets the line number at a given character position in the source.
     ///
     /// - Parameters:

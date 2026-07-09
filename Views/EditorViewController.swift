@@ -382,27 +382,60 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSTextStorageD
             }
 
             if let currentNum = Int(numStr) {
-                let lines = BasicRenumber.parseLines(textView.string)
-                let currentIdx = lines.firstIndex(where: { $0.lineNumber == currentNum })
-                let nextLine = currentIdx.flatMap { idx in
-                    idx + 1 < lines.count ? lines[idx + 1].lineNumber : nil
-                }
+                let committedStart = lineRange.location
 
-                if let nextNum = BasicRenumber.nextLineNumber(after: currentNum, beforeLine: nextLine) {
-                    // Replace the entire line break + number region atomically to preserve undo
-                    textView.insertText(expansionPrefix + "\n\(nextNum) ", replacementRange: expansionReplaceRange)
-                    return false
-                } else {
-                    textView.insertText(expansionPrefix + "\n", replacementRange: expansionReplaceRange)
-                    return false
+                // Classify the committed line BEFORE deciding how to number
+                // the next one: an out-of-order or duplicate line takes a
+                // plain newline here and gets arranged after the commit
+                // settles. Auto-numbering from the wrong file position would
+                // propose a number based on the wrong neighbours.
+                let arrangeAction: BasicRenumber.AutoArrangeAction =
+                    autoArrangeEnabled
+                    ? (BasicRenumber.autoArrangeAction(source: textView.string,
+                                                       lineStart: committedStart) ?? .none)
+                    : .none
+
+                switch arrangeAction {
+                case .none:
+                    let lines = BasicRenumber.parseLines(textView.string)
+                    let currentIdx = lines.firstIndex(where: { $0.lineNumber == currentNum })
+                    let nextLine = currentIdx.flatMap { idx in
+                        idx + 1 < lines.count ? lines[idx + 1].lineNumber : nil
+                    }
+
+                    if let nextNum = BasicRenumber.nextLineNumber(after: currentNum, beforeLine: nextLine) {
+                        // Replace the entire line break + number region atomically to preserve undo
+                        textView.insertText(expansionPrefix + "\n\(nextNum) ", replacementRange: expansionReplaceRange)
+                        return false
+                    }
+                    // No room before the next line (e.g. editing 790 with a
+                    // 791 right below): fall through to a plain newline.
+                    // Do NOT call insertText("\n") here — a bare "\n" comes
+                    // straight back through this delegate (the guard at the
+                    // top matches replacement == "\n"), recomputes the same
+                    // nil, and recurses until the stack overflows. That was
+                    // the no-gap crash.
+
+                case .move, .duplicate:
+                    // Commit the newline first (below), then arrange once the
+                    // text has settled. Offsets are re-derived at that point,
+                    // so it doesn't matter that the buffer changes in between.
+                    DispatchQueue.main.async { [weak self] in
+                        self?.performAutoArrange(lineStart: committedStart)
+                    }
                 }
             }
 
-            // Honour expansion even if auto-numbering can't apply
+            // Honour expansion even when auto-numbering can't apply. The
+            // inserted string is never exactly "\n", so this cannot recurse.
             if !expansionPrefix.isEmpty {
                 textView.insertText(expansionPrefix + "\n", replacementRange: expansionReplaceRange)
                 return false
             }
+
+            // Numbered line with no room, or unnumbered line: fall through
+            // and let AppKit insert the newline itself. (The indent logic
+            // below is a no-op for numbered BASIC lines.)
         }
 
         // Non-BASIC files: preserve leading indentation
@@ -436,6 +469,259 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSTextStorageD
             self.document.isModified = true
             self.gutter?.needsDisplay = true
         }
+    }
+
+    // MARK: - Auto-Arrange on Commit
+
+    /// UserDefaults key for the "committed line jumps to its sorted position"
+    /// behavior. Defaults to enabled; wire a menu item / settings checkbox to
+    /// this key to let users opt out.
+    static let autoArrangeDefaultsKey = "BasicAutoArrangeOnCommit"
+
+    private var autoArrangeEnabled: Bool {
+        UserDefaults.standard.object(forKey: Self.autoArrangeDefaultsKey) as? Bool ?? true
+    }
+
+    /// Arranges the just-committed BASIC line at `lineStart`:
+    ///   - in order and unique → nothing.
+    ///   - out of order        → moved to its sorted position, cursor follows,
+    ///                           and a fresh auto-numbered line is started
+    ///                           there when a number fits.
+    ///   - duplicate number    → sheet asking Replace / Renumber / Keep Both.
+    ///
+    /// Called async after the Return commit so the newline is already in the
+    /// buffer; all offsets are re-derived from the current text.
+    private func performAutoArrange(lineStart: Int) {
+        guard document.fileType.usesBasicHighlighting else { return }
+        let text = textView.string as NSString
+        guard lineStart < text.length else { return }
+
+        // Guard-let first: switching an Optional whose Wrapped has a `.none`
+        // case is a footgun — `case .none` would match Optional.none, not
+        // AutoArrangeAction.none.
+        guard let action = BasicRenumber.autoArrangeAction(source: textView.string,
+                                                           lineStart: lineStart) else { return }
+        switch action {
+        case .none:
+            return
+        case .move(let targetOffset):
+            moveCommittedLine(from: lineStart, toOffset: targetOffset)
+        case .duplicate(let existingStart):
+            presentDuplicateLineSheet(committedStart: lineStart, existingStart: existingStart)
+        }
+    }
+
+    /// Moves the line at `lineStart` (trailing newline included) so it sits
+    /// at `targetOffset`, as a single undoable group. The caret lands at the
+    /// end of the moved line and, when a line number fits before the new
+    /// next neighbour, a fresh numbered line is started — mirroring what the
+    /// normal Return path would have done had the line been typed in place.
+    private func moveCommittedLine(from lineStart: Int, toOffset targetOffset: Int) {
+        let text = textView.string as NSString
+        let fullLine = text.lineRange(for: NSRange(location: lineStart, length: 0))
+        var lineText = text.substring(with: fullLine)
+        if !lineText.hasSuffix("\n") { lineText.append("\n") }
+
+        // Adjust the insertion offset for the deletion below. Targets never
+        // land inside the line itself (autoArrangeAction only returns other
+        // lines' boundaries), but guard against it anyway.
+        var insertAt = targetOffset
+        if insertAt >= NSMaxRange(fullLine) {
+            insertAt -= fullLine.length
+        } else if insertAt > fullLine.location {
+            return
+        }
+
+        let um = textView.undoManager
+        um?.beginUndoGrouping()
+        defer { um?.endUndoGrouping() }
+
+        textView.insertText("", replacementRange: fullLine)
+
+        // Clamp against the post-deletion text and normalise to a line
+        // boundary: the append-at-end target can overshoot when the file's
+        // last line has no trailing newline.
+        let after = textView.string as NSString
+        insertAt = min(max(0, insertAt), after.length)
+        var payload = lineText
+        var contentStart = insertAt
+        if insertAt > 0, after.character(at: insertAt - 1) != 0x0A {
+            payload = "\n" + lineText
+            contentStart += 1
+        }
+        textView.insertText(payload, replacementRange: NSRange(location: insertAt, length: 0))
+
+        // Caret at the end of the moved line's content (before its newline).
+        let contentLength = (lineText as NSString).length - 1
+        textView.setSelectedRange(NSRange(location: contentStart + contentLength, length: 0))
+
+        continueNumbering(afterLineAt: contentStart)
+        textView.scrollRangeToVisible(textView.selectedRange())
+    }
+
+    /// Sheet shown when the committed line's number collides with an
+    /// existing line. Silent replacement is what real hardware does, but in
+    /// an editor that's a destructive surprise, so the user decides.
+    private func presentDuplicateLineSheet(committedStart: Int, existingStart: Int) {
+        let text = textView.string as NSString
+        guard committedStart < text.length, existingStart < text.length else { return }
+
+        let committedRange = text.lineRange(for: NSRange(location: committedStart, length: 0))
+        let existingRange  = text.lineRange(for: NSRange(location: existingStart, length: 0))
+        let committedLine = text.substring(with: committedRange)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let existingLine = text.substring(with: existingRange)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        var numStr = ""
+        for ch in committedLine {
+            if ch.isNumber { numStr.append(ch) } else { break }
+        }
+
+        let alert = NSAlert()
+        alert.messageText = "Line \(numStr) already exists"
+        alert.informativeText = """
+            Existing:  \(existingLine)
+            New:       \(committedLine)
+
+            Replace the existing line, renumber the new one to the next \
+            free slot, or keep both as typed?
+            """
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Replace Existing")
+        alert.addButton(withTitle: "Renumber New Line")
+        alert.addButton(withTitle: "Keep Both")
+
+        // The sheet blocks editing, so the captured offsets stay valid.
+        guard let window = view.window else { return }
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard let self = self else { return }
+            switch response {
+            case .alertFirstButtonReturn:
+                self.replaceExistingLine(existingStart: existingStart,
+                                         committedStart: committedStart)
+            case .alertSecondButtonReturn:
+                self.renumberCommittedLine(at: committedStart)
+            default:
+                break  // Keep both; the tokenizer sorts at build time anyway.
+            }
+        }
+    }
+
+    /// Overwrites the existing line's text with the committed line's text
+    /// and removes the committed line, as one undoable group. The caret
+    /// lands at the end of the surviving line. No auto-number continuation
+    /// here: replacing a line is a correction, not the start of a new block.
+    private func replaceExistingLine(existingStart: Int, committedStart: Int) {
+        let text = textView.string as NSString
+        let committedFull = text.lineRange(for: NSRange(location: committedStart, length: 0))
+        var committedBody = committedFull
+        if committedBody.length > 0,
+           text.character(at: NSMaxRange(committedBody) - 1) == 0x0A {
+            committedBody.length -= 1
+        }
+        let newBody = text.substring(with: committedBody)
+
+        var existingBody = text.lineRange(for: NSRange(location: existingStart, length: 0))
+        if existingBody.length > 0,
+           text.character(at: NSMaxRange(existingBody) - 1) == 0x0A {
+            existingBody.length -= 1
+        }
+
+        let um = textView.undoManager
+        um?.beginUndoGrouping()
+        defer { um?.endUndoGrouping() }
+
+        // Edit the later range first so the earlier offsets stay valid.
+        var finalBodyStart = existingBody.location
+        if committedFull.location > existingBody.location {
+            textView.insertText("", replacementRange: committedFull)
+            textView.insertText(newBody, replacementRange: existingBody)
+        } else {
+            textView.insertText(newBody, replacementRange: existingBody)
+            textView.insertText("", replacementRange: committedFull)
+            finalBodyStart -= committedFull.length
+        }
+
+        let eol = finalBodyStart + (newBody as NSString).length
+        textView.setSelectedRange(NSRange(location: eol, length: 0))
+        textView.scrollRangeToVisible(textView.selectedRange())
+    }
+
+    /// Rewrites the committed line's number to the nearest free slot above
+    /// it, then re-runs arrangement so it moves into position. If no slot
+    /// exists, informs the user and leaves the line as typed.
+    private func renumberCommittedLine(at committedStart: Int) {
+        let lines = BasicRenumber.parseLines(textView.string)
+        guard let committed = lines.first(where: { $0.range.location == committedStart }) else {
+            return
+        }
+        let n = committed.lineNumber
+
+        // Smallest number above n among the OTHER lines bounds the free slot.
+        let following = lines
+            .filter { $0.range.location != committedStart }
+            .map(\.lineNumber)
+            .filter { $0 > n }
+            .min()
+
+        guard let newNum = BasicRenumber.nextLineNumber(after: n, beforeLine: following) else {
+            let alert = NSAlert()
+            alert.messageText = "No room after line \(n)"
+            alert.informativeText = "There is no free line number between \(n) and "
+                + "\(following.map(String.init) ?? "the end of the program")"
+                + ". Run Renumber to open up gaps, then re-enter the line."
+            alert.alertStyle = .informational
+            alert.addButton(withTitle: "OK")
+            if let window = view.window {
+                alert.beginSheetModal(for: window)
+            } else {
+                alert.runModal()
+            }
+            return
+        }
+
+        // Replace the digit run at the start of the line with the new number.
+        let text = textView.string as NSString
+        let fullLine = text.lineRange(for: NSRange(location: committedStart, length: 0))
+        var digitStart = fullLine.location
+        while digitStart < NSMaxRange(fullLine) {
+            let c = text.character(at: digitStart)
+            if c == 0x20 || c == 0x09 { digitStart += 1 } else { break }
+        }
+        var digitEnd = digitStart
+        while digitEnd < NSMaxRange(fullLine) {
+            let c = text.character(at: digitEnd)
+            if c >= 0x30 && c <= 0x39 { digitEnd += 1 } else { break }
+        }
+        guard digitEnd > digitStart else { return }
+
+        let um = textView.undoManager
+        um?.beginUndoGrouping()
+        defer { um?.endUndoGrouping() }
+
+        textView.insertText("\(newNum)",
+                            replacementRange: NSRange(location: digitStart,
+                                                      length: digitEnd - digitStart))
+
+        // The renumbered line is unique by construction (newNum lies strictly
+        // between n and its successor) but may still be out of position.
+        // Its start offset is unchanged: only the digits were replaced.
+        performAutoArrange(lineStart: committedStart)
+    }
+
+    /// After a line has been arranged, offer the same auto-number
+    /// continuation the normal Return path provides — computed against the
+    /// line's NEW neighbours. Inserts "\n<n> " at the caret when a number
+    /// fits; otherwise leaves the caret at the end of the line.
+    private func continueNumbering(afterLineAt lineStart: Int) {
+        let lines = BasicRenumber.parseLines(textView.string)
+        guard let idx = lines.firstIndex(where: { $0.range.location == lineStart }) else { return }
+        let nextLine = idx + 1 < lines.count ? lines[idx + 1].lineNumber : nil
+        guard let n = BasicRenumber.nextLineNumber(after: lines[idx].lineNumber,
+                                                   beforeLine: nextLine) else { return }
+        // Never exactly "\n", so the Return-key delegate path can't recurse.
+        textView.insertText("\n\(n) ", replacementRange: textView.selectedRange())
     }
 
     // MARK: - Reference Panel Integration
