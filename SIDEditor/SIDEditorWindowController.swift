@@ -1,4 +1,5 @@
 import Cocoa
+import UniformTypeIdentifiers
 
 // MARK: - SID Editor Window Controller
 
@@ -24,6 +25,7 @@ class SIDEditorWindowController: NSWindowController, NSWindowDelegate {
 
         let editor = SIDEditorViewController()
         editor.onModified = { [weak self] in self?.isModified = true }
+        editor.onSaved    = { [weak self] in self?.isModified = false }
         window.contentViewController = editor
     }
 
@@ -31,11 +33,20 @@ class SIDEditorWindowController: NSWindowController, NSWindowDelegate {
         guard isModified else { return true }
         let alert = NSAlert()
         alert.messageText = "You have unsaved changes in the SID Editor."
-        alert.informativeText = "Close without exporting?"
+        alert.informativeText = "Do you want to save your song before closing?"
         alert.alertStyle = .warning
-        alert.addButton(withTitle: "Close")
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Don't Save")
         alert.addButton(withTitle: "Cancel")
-        return alert.runModal() == .alertFirstButtonReturn
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            guard let editor = window?.contentViewController as? SIDEditorViewController else { return true }
+            return editor.saveSong(forcePrompt: false)  // False if user cancels the save panel
+        case .alertSecondButtonReturn:
+            return true
+        default:
+            return false
+        }
     }
 
     @objc func closeTab(_ sender: Any?) {
@@ -54,6 +65,13 @@ class SIDEditorViewController: NSViewController, NSMenuItemValidation {
     private var cursorVoice: Int = 0
 
     var onModified: (() -> Void)?
+    var onSaved: (() -> Void)?
+
+    /// URL of the currently open .sidsong file, if any.
+    private var currentFileURL: URL?
+
+    /// Uniform type for .sidsong files (dynamic; no Info.plist registration required).
+    private static let sidsongType = UTType(filenameExtension: "sidsong")
 
     // MARK: - Undo / Redo Responder Actions
 
@@ -120,16 +138,35 @@ class SIDEditorViewController: NSViewController, NSMenuItemValidation {
         currentInstrument = min(snapshot.currentInstrument, song.instruments.count - 1)
         currentPattern = min(snapshot.currentPattern, song.patterns.count - 1)
         refreshAllUI()
+        markModified()
     }
 
     /// Refreshes all UI elements from current song state.
     private func refreshAllUI() {
         refreshInstrumentSelector()
         refreshInstrumentUI()
+        refreshPatternSelector()
+        for btn in filterButtons {
+            btn.state = song.filterType & UInt8(1 << btn.tag) != 0 ? .on : .off
+        }
+        for btn in filterVoiceButtons {
+            btn.state = song.filterVoices & UInt8(1 << btn.tag) != 0 ? .on : .off
+        }
+        trackerView?.currentInstrument = currentInstrument
         trackerView?.patternIndex = currentPattern
         trackerView?.needsDisplay = true
         updateTrackerContentSize()
         speedField?.integerValue = song.speed
+    }
+
+    /// Rebuilds the pattern popup to match the song's pattern list.
+    private func refreshPatternSelector() {
+        guard let patternSelector else { return }
+        patternSelector.removeAllItems()
+        for i in song.patterns.indices {
+            patternSelector.addItem(withTitle: String(format: "Pat %02d", i))
+        }
+        patternSelector.selectItem(at: currentPattern)
     }
 
     /// Resizes tracker document view to fit the current pattern's row count.
@@ -155,6 +192,7 @@ class SIDEditorViewController: NSViewController, NSMenuItemValidation {
     private var resonanceSlider: NSSlider!
     private var volumeSlider: NSSlider!
     private var filterButtons: [NSButton] = []
+    private var filterVoiceButtons: [NSButton] = []
 
     // Tracker UI
     private var trackerView: TrackerView!
@@ -201,6 +239,7 @@ class SIDEditorViewController: NSViewController, NSMenuItemValidation {
     override func viewWillAppear() {
         super.viewWillAppear()
         applyThemeColors()
+        updateWindowTitle()
     }
 
     private func applyThemeColors() {
@@ -260,6 +299,19 @@ class SIDEditorViewController: NSViewController, NSMenuItemValidation {
         previewButton.frame = NSRect(x: 460, y: y - 2, width: 85, height: 20)
         previewButton.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .medium)
         view.addSubview(previewButton)
+
+        // File buttons (top right)
+        let fileBtns: [(String, Selector, CGFloat, CGFloat)] = [
+            ("Open...",    #selector(openDocument(_:)),   570, 70),
+            ("Save",       #selector(saveDocument(_:)),   645, 60),
+            ("Save As...", #selector(saveDocumentAs(_:)), 710, 95),
+        ]
+        for (title, action, x, w) in fileBtns {
+            let btn = NSButton(title: title, target: self, action: action)
+            btn.frame = NSRect(x: x, y: y - 2, width: w, height: 20)
+            btn.font = NSFont.monospacedSystemFont(ofSize: 10, weight: .medium)
+            view.addSubview(btn)
+        }
 
         // ── Waveform buttons ─────────────────────────────
         y -= 30
@@ -350,7 +402,7 @@ class SIDEditorViewController: NSViewController, NSMenuItemValidation {
             self.envelopeView.decay   = d
             self.envelopeView.sustain = s
             self.envelopeView.release = r
-            self.onModified?()
+            self.markModified()
         }
         envelopeView.onDragEnded = { [weak self] in
             // Clear coalescing key so the next gesture gets its own undo entry
@@ -399,6 +451,26 @@ class SIDEditorViewController: NSViewController, NSMenuItemValidation {
         volumeSlider = NSSlider(value: 15, minValue: 0, maxValue: 15, target: self, action: #selector(volumeChanged(_:)))
         volumeSlider.frame = NSRect(x: filterX + 32, y: y - 72, width: 150, height: 18)
         view.addSubview(volumeSlider)
+
+        // Filter voice routing ($D417 bits 0-2). A voice not routed here
+        // plays dry on real hardware no matter what LP/BP/HP are set to.
+        let routeLabel = makeLabel("Voices:", bold: false, color: AppTheme.current.statusLabel)
+        routeLabel.frame = NSRect(x: filterX, y: y - 96, width: 50, height: 16)
+        view.addSubview(routeLabel)
+
+        for i in 0..<3 {
+            let btn = NSButton(checkboxWithTitle: "\(i + 1)", target: self, action: #selector(filterVoiceChanged(_:)))
+            btn.tag = i  // Bit index into filterVoices
+            btn.frame = NSRect(x: filterX + 52 + CGFloat(i) * 40, y: y - 96, width: 36, height: 18)
+            btn.font = NSFont.monospacedSystemFont(ofSize: 10, weight: .medium)
+            let attrTitle = NSAttributedString(string: "\(i + 1)", attributes: [
+                .font: NSFont.monospacedSystemFont(ofSize: 10, weight: .medium),
+                .foregroundColor: AppTheme.current.defaultText,
+            ])
+            btn.attributedTitle = attrTitle
+            view.addSubview(btn)
+            filterVoiceButtons.append(btn)
+        }
 
         // ═══════════════════════════════════════════════════
         // TRACKER (bottom section)
@@ -464,7 +536,7 @@ class SIDEditorViewController: NSViewController, NSMenuItemValidation {
             self?.pushUndo("Note Entry")
             self?.song.patterns[self?.currentPattern ?? 0].notes[voice][row] = note
             self?.trackerView.needsDisplay = true
-            self?.onModified?()
+            self?.markModified()
         }
         trackerView.onNotePreview = { [weak self] noteNum in
             guard let self = self, self.currentInstrument < self.song.instruments.count else { return }
@@ -474,7 +546,8 @@ class SIDEditorViewController: NSViewController, NSMenuItemValidation {
             self.audioEngine.playNote(instrument: inst, noteNumber: noteNum, duration: 0.3,
                                       filterCutoff: self.song.filterCutoff,
                                       filterResonance: self.song.filterResonance,
-                                      filterType: self.song.filterType)
+                                      filterType: self.song.filterType,
+                                      filterVoices: self.song.filterVoices)
         }
         // Undo/Redo — callbacks ready for future SID undo implementation
         trackerView.onUndo = { [weak self] in self?.performUndo() }
@@ -575,6 +648,7 @@ class SIDEditorViewController: NSViewController, NSMenuItemValidation {
         trackerView.currentInstrument = currentInstrument
         refreshInstrumentSelector()
         refreshInstrumentUI()
+        markModified()
     }
 
     @objc private func instrNameChanged(_ sender: NSTextField) {
@@ -582,6 +656,7 @@ class SIDEditorViewController: NSViewController, NSMenuItemValidation {
         pushUndo("Rename Instrument")
         song.instruments[currentInstrument].name = sender.stringValue
         refreshInstrumentSelector()
+        markModified()
     }
 
     @objc private func waveformChanged(_ sender: NSButton) {
@@ -595,7 +670,7 @@ class SIDEditorViewController: NSViewController, NSMenuItemValidation {
             inst.waveform.remove(bit)
         }
         refreshInstrumentUI()
-        onModified?()
+        markModified()
     }
 
     // Track last slider undo label to coalesce continuous slider drags
@@ -620,7 +695,7 @@ class SIDEditorViewController: NSViewController, NSMenuItemValidation {
         envelopeView.sustain = inst.sustain
         envelopeView.release = inst.release
         envelopeView.needsDisplay = true
-        onModified?()
+        markModified()
     }
 
     @objc private func pwChanged(_ sender: NSSlider) {
@@ -629,7 +704,7 @@ class SIDEditorViewController: NSViewController, NSMenuItemValidation {
         if lastSliderUndoLabel != label { pushUndo(label); lastSliderUndoLabel = label }
         song.instruments[currentInstrument].pulseWidth = sender.integerValue
         pwLabel.stringValue = "\(sender.integerValue)"
-        onModified?()
+        markModified()
     }
 
     @objc private func filterTypeChanged(_ sender: NSButton) {
@@ -641,6 +716,19 @@ class SIDEditorViewController: NSViewController, NSMenuItemValidation {
         } else {
             song.filterType &= ~bit
         }
+        markModified()
+    }
+
+    @objc private func filterVoiceChanged(_ sender: NSButton) {
+        pushUndo("Change Filter Routing")
+        lastSliderUndoLabel = nil
+        let bit = UInt8(1 << sender.tag)
+        if sender.state == .on {
+            song.filterVoices |= bit
+        } else {
+            song.filterVoices &= ~bit
+        }
+        markModified()
     }
 
     @objc private func filterChanged(_ sender: Any?) {
@@ -648,12 +736,14 @@ class SIDEditorViewController: NSViewController, NSMenuItemValidation {
         if lastSliderUndoLabel != label { pushUndo(label); lastSliderUndoLabel = label }
         song.filterCutoff = cutoffSlider.integerValue
         song.filterResonance = resonanceSlider.integerValue
+        markModified()
     }
 
     @objc private func volumeChanged(_ sender: Any?) {
         let label = "Change Volume"
         if lastSliderUndoLabel != label { pushUndo(label); lastSliderUndoLabel = label }
         song.globalVolume = volumeSlider.integerValue
+        markModified()
     }
 
     // MARK: - Pattern Actions
@@ -676,12 +766,14 @@ class SIDEditorViewController: NSViewController, NSMenuItemValidation {
         trackerView.patternIndex = currentPattern
         updateTrackerContentSize()
         trackerView.needsDisplay = true
+        markModified()
     }
 
     @objc private func speedChanged(_ sender: NSTextField) {
         pushUndo("Change Speed")
         lastSliderUndoLabel = nil
         song.speed = max(1, min(20, sender.integerValue))
+        markModified()
     }
 
     // MARK: - Export
@@ -699,6 +791,159 @@ class SIDEditorViewController: NSViewController, NSMenuItemValidation {
         NSPasteboard.general.setString(exportTextView.string, forType: .string)
     }
 
+    // MARK: - Save / Load
+
+    // Standard responder-chain selectors: if the app's File menu items use
+    // saveDocument:/saveDocumentAs:/openDocument:, Cmd-S / Cmd-Shift-S / Cmd-O
+    // route here automatically while this editor is key.
+    @objc func saveDocument(_ sender: Any?) { saveSong(forcePrompt: false) }
+    @objc func saveDocumentAs(_ sender: Any?) { saveSong(forcePrompt: true) }
+    @objc func openDocument(_ sender: Any?) { openSong() }
+
+    /// Marks the song as having unsaved changes.
+    private func markModified() {
+        view.window?.isDocumentEdited = true
+        onModified?()
+    }
+
+    /// Marks the song as clean (just saved or just loaded).
+    private func markSaved() {
+        view.window?.isDocumentEdited = false
+        onSaved?()
+        updateWindowTitle()
+    }
+
+    /// Reflects the current file (if any) in the window title and proxy icon.
+    private func updateWindowTitle() {
+        guard let window = view.window else { return }
+        if let url = currentFileURL {
+            window.title = "SID Editor - \(url.lastPathComponent)"
+            window.representedURL = url
+        } else {
+            window.title = "SID Editor"
+            window.representedURL = nil
+        }
+    }
+
+    /// Saves the song to its current file, prompting for a location when
+    /// there is none yet or when forcePrompt is true (Save As).
+    /// Returns false if the user cancelled or the write failed.
+    @discardableResult
+    func saveSong(forcePrompt: Bool) -> Bool {
+        var url = currentFileURL
+
+        if url == nil || forcePrompt {
+            let panel = NSSavePanel()
+            panel.title = "Save SID Song"
+            panel.canCreateDirectories = true
+            if let type = SIDEditorViewController.sidsongType {
+                panel.allowedContentTypes = [type]
+            }
+            let suggested = song.title.isEmpty ? "Untitled" : song.title
+            panel.nameFieldStringValue = suggested
+                .replacingOccurrences(of: "/", with: "-")
+                .replacingOccurrences(of: ":", with: "-")
+            guard panel.runModal() == .OK, let chosen = panel.url else { return false }
+            url = chosen
+        }
+
+        guard let url else { return false }
+
+        do {
+            try song.jsonData().write(to: url, options: .atomic)
+            currentFileURL = url
+            markSaved()
+            return true
+        } catch {
+            showErrorAlert(title: "Save Failed",
+                           message: "Could not save the song to \(url.lastPathComponent).\n\n\(error.localizedDescription)")
+            return false
+        }
+    }
+
+    /// Opens a .sidsong file, offering to save unsaved changes first.
+    func openSong() {
+        if view.window?.isDocumentEdited == true {
+            let alert = NSAlert()
+            alert.messageText = "You have unsaved changes."
+            alert.informativeText = "Do you want to save your song before opening another one?"
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "Save")
+            alert.addButton(withTitle: "Don't Save")
+            alert.addButton(withTitle: "Cancel")
+            switch alert.runModal() {
+            case .alertFirstButtonReturn:
+                guard saveSong(forcePrompt: false) else { return }
+            case .alertSecondButtonReturn:
+                break
+            default:
+                return
+            }
+        }
+
+        let panel = NSOpenPanel()
+        panel.title = "Open SID Song"
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        if let type = SIDEditorViewController.sidsongType {
+            panel.allowedContentTypes = [type]
+        }
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        do {
+            let data = try Data(contentsOf: url)
+            let loaded = try SIDSong.fromJSONData(data)
+            adoptSong(loaded)
+            currentFileURL = url
+            markSaved()
+        } catch {
+            showErrorAlert(title: "Open Failed",
+                           message: "Could not open \(url.lastPathComponent).\n\n\(error.localizedDescription)")
+        }
+    }
+
+    /// Copies a loaded song's state into the live song object.
+    /// Fields are copied (not the reference) because TrackerView holds a
+    /// reference to the existing song instance, mirroring restoreSnapshot().
+    private func adoptSong(_ loaded: SIDSong) {
+        audioEngine.stop()
+
+        song.title = loaded.title
+        song.author = loaded.author
+        song.speed = loaded.speed
+        song.instruments = loaded.instruments
+        song.patterns = loaded.patterns
+        song.sequence = loaded.sequence
+        song.filterCutoff = loaded.filterCutoff
+        song.filterResonance = loaded.filterResonance
+        song.filterType = loaded.filterType
+        song.filterVoices = loaded.filterVoices
+        song.globalVolume = loaded.globalVolume
+
+        currentInstrument = 0
+        currentPattern = 0
+        trackerView.currentInstrument = 0
+        trackerView.patternIndex = 0
+        trackerView.cursorRow = 0
+        trackerView.cursorVoice = 0
+
+        undoStack.removeAll()
+        redoStack.removeAll()
+        lastSliderUndoLabel = nil
+
+        refreshAllUI()
+        exportTextView.string = ""
+    }
+
+    private func showErrorAlert(title: String, message: String) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
+
     // MARK: - Audio Preview
 
     @objc private func previewInstrument(_ sender: Any?) {
@@ -709,7 +954,8 @@ class SIDEditorViewController: NSViewController, NSMenuItemValidation {
         audioEngine.playNote(instrument: inst, noteNumber: 48, duration: 1.5,
                              filterCutoff: song.filterCutoff,
                              filterResonance: song.filterResonance,
-                             filterType: song.filterType)
+                             filterType: song.filterType,
+                             filterVoices: song.filterVoices)
     }
 
     @objc private func playPattern(_ sender: Any?) {

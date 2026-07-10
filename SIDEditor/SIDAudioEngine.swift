@@ -44,7 +44,20 @@ class SIDAudioEngine {
         engine.attach(playerNode)
         engine.attach(filterNode)
 
-        // Configure the three EQ bands upfront; applyFilter() will tune them per-song.
+        // Band filter types must be set explicitly. AVAudioUnitEQ bands
+        // default to .parametric, and a parametric band with its default
+        // 0 dB gain passes audio through unchanged, so without these lines
+        // the whole filter section is an audible no-op. The resonant
+        // variants honor the bandwidth parameter, which is what the SID
+        // resonance mapping in applyFilter() feeds.
+        filterNode.bands[0].filterType = .resonantLowPass
+        filterNode.bands[1].filterType = .bandPass
+        filterNode.bands[2].filterType = .resonantHighPass
+
+        // Fully bypassed until applyFilter() configures a song or preview.
+        filterNode.bypass = true
+        for band in filterNode.bands { band.bypass = true }
+
         let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)!
         
         engine.connect(playerNode, to: filterNode, format: format)
@@ -79,7 +92,15 @@ class SIDAudioEngine {
         let hpEnabled  = song.filterType & (1 << 6) != 0
         let anyEnabled = lpEnabled || bpEnabled || hpEnabled
 
-        filterNode.bypass = !anyEnabled
+        // On real hardware, voices not routed through the filter (filterVoices
+        // bits 0-2) pass through dry. With no voices routed, the filter
+        // processes nothing, so bypass it here too. Partial routing (some
+        // voices filtered, some dry) cannot be approximated with this global
+        // EQ; that fidelity arrives when playback routes through the
+        // emulator's SID.
+        let anyVoiceRouted = song.filterVoices & 0x07 != 0
+
+        filterNode.bypass = !anyEnabled || !anyVoiceRouted
 
         let lpBand = filterNode.bands[0]
         lpBand.frequency = cutoffHz
@@ -98,7 +119,9 @@ class SIDAudioEngine {
     }
 
     /// Applies filter from explicit parameters (used by instrument preview).
-    func applyFilter(cutoff: Int, resonance: Int, filterType: UInt8) {
+    /// filterVoices defaults to "all routed" so callers without routing
+    /// context keep the old behavior.
+    func applyFilter(cutoff: Int, resonance: Int, filterType: UInt8, filterVoices: UInt8 = 0x07) {
         let cutoffNorm = Double(max(0, min(2047, cutoff))) / 2047.0
         let cutoffHz   = Float(30.0 * pow(400.0, cutoffNorm))
         let resNorm    = Double(max(0, min(15, resonance))) / 15.0
@@ -109,8 +132,9 @@ class SIDAudioEngine {
         let bpEnabled  = filterType & (1 << 5) != 0
         let hpEnabled  = filterType & (1 << 6) != 0
         let anyEnabled = lpEnabled || bpEnabled || hpEnabled
+        let anyVoiceRouted = filterVoices & 0x07 != 0
 
-        filterNode.bypass = !anyEnabled
+        filterNode.bypass = !anyEnabled || !anyVoiceRouted
 
         filterNode.bands[0].frequency = cutoffHz
         filterNode.bands[0].bandwidth = bandwidth
@@ -129,7 +153,7 @@ class SIDAudioEngine {
 
     /// Plays a single instrument note (for preview).
     func playNote(instrument: SIDInstrument, noteNumber: Int, duration: Double = 1.0) {
-        guard noteNumber >= 0, noteNumber < SID_FREQ_TABLE.count else { return }
+        guard noteNumber >= 0, noteNumber <= SID_NOTE_MAX else { return }
         let freq = frequencyForNote(noteNumber)
         let samples = generateNoteSamples(instrument: instrument, frequency: freq, duration: duration)
         scheduleBuffer(samples)
@@ -137,8 +161,10 @@ class SIDAudioEngine {
 
     /// Plays a single note with explicit filter parameters (used by the instrument preview button).
     func playNote(instrument: SIDInstrument, noteNumber: Int, duration: Double = 1.0,
-                  filterCutoff: Int, filterResonance: Int, filterType: UInt8) {
-        applyFilter(cutoff: filterCutoff, resonance: filterResonance, filterType: filterType)
+                  filterCutoff: Int, filterResonance: Int, filterType: UInt8,
+                  filterVoices: UInt8 = 0x07) {
+        applyFilter(cutoff: filterCutoff, resonance: filterResonance,
+                    filterType: filterType, filterVoices: filterVoices)
         playNote(instrument: instrument, noteNumber: noteNumber, duration: duration)
     }
 
