@@ -3,7 +3,7 @@ import Cocoa
 // MARK: - Map Editor View Controller
 
 /// Orchestrates the Map Editor UI, document state, tools, and data flow.
-public final class MapEditorViewController: NSViewController, MapGridViewDelegate {
+public final class MapEditorViewController: NSViewController, MapGridViewDelegate, NSUserInterfaceValidations {
 
     // MARK: - Properties
 
@@ -44,7 +44,6 @@ public final class MapEditorViewController: NSViewController, MapGridViewDelegat
 
     // MARK: - Lifecycle
 
-    override public func becomeFirstResponder() -> Bool { return true }
     override public var acceptsFirstResponder: Bool { return true }
 
     override public func viewDidAppear() {
@@ -66,13 +65,7 @@ public final class MapEditorViewController: NSViewController, MapGridViewDelegat
         setupStatusBar()
         layoutSubviews()
 
-        undoMgr = MapUndoManager(document: document)
-        undoMgr.onStateChanged = { [weak self] in
-            self?.isModified = true
-        }
-
-        mapGridView.document = document
-        tilePickerView?.charsetData = document.charsetData ?? C64ROMCharset.data
+        attachDocument()
 
         // Observe charset notifications from the Character Set Editor
         NotificationCenter.default.addObserver(
@@ -135,7 +128,12 @@ public final class MapEditorViewController: NSViewController, MapGridViewDelegat
     /// Extracts charset data from the notification and updates the document and views.
     private func applyCharsetFromNotification(_ notification: Notification) {
         guard let userInfo = notification.userInfo,
-              let data = userInfo["charsetData"] as? Data else { return }
+              let raw = userInfo["charsetData"] as? Data else { return }
+
+        // Re-base into a fresh Data. If the sender ever hands us a slice
+        // with a nonzero startIndex, integer subscripting downstream
+        // (TilePickerView) would crash otherwise.
+        let data = Data(raw.prefix(2048))
 
         document.charsetData = data
         mapGridView.invalidateCharsetCache()
@@ -225,7 +223,10 @@ public final class MapEditorViewController: NSViewController, MapGridViewDelegat
         rasterRulerView.isHidden = true
         view.addSubview(rasterRulerView)
 
-        // Keep ruler in sync with canvas scroll
+        // Keep ruler in sync with canvas scroll.
+        // NSClipView does not reliably post bounds changes by default,
+        // so enable it explicitly.
+        scrollView.contentView.postsBoundsChangedNotifications = true
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(mapScrolled(_:)),
@@ -258,6 +259,12 @@ public final class MapEditorViewController: NSViewController, MapGridViewDelegat
         layerListView.onLayerChanged = { [weak self] in
             self?.mapGridView.needsDisplay = true
             self?.updateBankWarning()
+        }
+        // Structural changes (layer removal) invalidate recorded layer
+        // indices in the undo stack, so history must be discarded.
+        layerListView.onLayerStructureChanged = { [weak self] in
+            self?.undoMgr.clearHistory()
+            self?.isModified = true
         }
         layerListView.document = document
         view.addSubview(layerListView)
@@ -348,9 +355,9 @@ public final class MapEditorViewController: NSViewController, MapGridViewDelegat
     }
 
     @objc private func zoomChanged(_ sender: NSSlider) {
-        let z = CGFloat(sender.doubleValue)
-        mapGridView.zoom = z
-        rasterRulerView.zoom = z
+        // Setting zoom triggers mapGridView(_:zoomDidChange:), which syncs
+        // the ruler and re-syncs the slider to the clamped value.
+        mapGridView.zoom = CGFloat(sender.doubleValue)
     }
 
     @objc private func gridToggled(_ sender: NSButton) {
@@ -358,9 +365,7 @@ public final class MapEditorViewController: NSViewController, MapGridViewDelegat
     }
 
     @objc private func rasterToggled(_ sender: NSButton) {
-        let on = sender.state == .on
-        mapGridView.showRasterRuler = false  // ruler drawn by floating view, not canvas
-        rasterRulerView.isHidden = !on
+        rasterRulerView.isHidden = sender.state != .on
     }
 
     @objc private func mapScrolled(_ notification: Notification) {
@@ -393,25 +398,29 @@ public final class MapEditorViewController: NSViewController, MapGridViewDelegat
 
     public func newDocument(width: Int = 40, height: Int = 25) {
         document = MapDocument(width: width, height: height)
+        attachDocument()
+        fileURL = nil
+        isModified = false
+    }
+
+    public func loadDocument(from url: URL) throws {
+        document = try MapDocument.load(from: url)
+        attachDocument()
+        fileURL = url
+        isModified = false
+    }
+
+    /// Common wiring after `document` is replaced: rebuild the undo manager,
+    /// point every view at the new document, and reset transient edit state.
+    private func attachDocument() {
         undoMgr = MapUndoManager(document: document)
         undoMgr.onStateChanged = { [weak self] in self?.isModified = true }
         mapGridView.document = document
         layerListView.document = document
-        fileURL = nil
-        isModified = false
-        updateBankWarning()
-    }
-
-    public func loadDocument(from url: URL) throws {
-        let doc = try MapDocument.load(from: url)
-        document = doc
-        undoMgr = MapUndoManager(document: doc)
-        undoMgr.onStateChanged = { [weak self] in self?.isModified = true }
-        mapGridView.document = doc
-        layerListView.document = doc
-        tilePickerView?.charsetData = doc.charsetData ?? C64ROMCharset.data
-        fileURL = url
-        isModified = false
+        tilePickerView?.charsetData = document.charsetData ?? C64ROMCharset.data
+        rasterRulerView?.rows = document.height
+        resetPaintStroke()
+        currentSelection = nil
         updateBankWarning()
     }
 
@@ -420,13 +429,7 @@ public final class MapEditorViewController: NSViewController, MapGridViewDelegat
             saveDocumentAs()
             return
         }
-        do {
-            try document.save(to: url)
-            isModified = false
-        } catch {
-            let alert = NSAlert(error: error)
-            alert.runModal()
-        }
+        writeDocument(to: url)
     }
 
     public func saveDocumentAs() {
@@ -435,9 +438,45 @@ public final class MapEditorViewController: NSViewController, MapGridViewDelegat
         panel.nameFieldStringValue = document.name + ".c64map"
         panel.begin { [weak self] response in
             guard response == .OK, let url = panel.url, let self = self else { return }
-            self.fileURL = url
-            self.document.name = url.deletingPathExtension().lastPathComponent
-            self.saveDocument()
+            self.writeDocument(to: url)
+        }
+    }
+
+    /// Synchronous save for callers that must know the outcome before
+    /// proceeding (e.g. the window-close prompt). Runs the save panel
+    /// modally if the document has never been saved.
+    /// Returns true if the document was saved successfully.
+    @discardableResult
+    public func saveDocumentModally() -> Bool {
+        var url = fileURL
+        if url == nil {
+            let panel = NSSavePanel()
+            panel.allowedContentTypes = [.init(filenameExtension: "c64map")!]
+            panel.nameFieldStringValue = document.name + ".c64map"
+            guard panel.runModal() == .OK, let chosen = panel.url else { return false }
+            url = chosen
+        }
+        guard let saveURL = url else { return false }
+        return writeDocument(to: saveURL)
+    }
+
+    /// Writes the document to `url`, committing fileURL/name/title state
+    /// only if the write succeeds. Shows an alert and leaves state
+    /// untouched on failure.
+    @discardableResult
+    private func writeDocument(to url: URL) -> Bool {
+        let oldName = document.name
+        document.name = url.deletingPathExtension().lastPathComponent
+        do {
+            try document.save(to: url)
+            fileURL = url
+            isModified = false
+            view.window?.title = "Map Editor - \(document.name)"
+            return true
+        } catch {
+            document.name = oldName
+            NSAlert(error: error).runModal()
+            return false
         }
     }
 
@@ -450,38 +489,49 @@ public final class MapEditorViewController: NSViewController, MapGridViewDelegat
             alert.runModal()
             return
         }
-        document.charsetData = data.prefix(2048)
+        let charset = Data(data.prefix(2048))  // re-base into a fresh Data
+        document.charsetData = charset
         document.charsetPath = url.path
         mapGridView.invalidateCharsetCache()
         mapGridView.needsDisplay = true
-        tilePickerView?.charsetData = data.prefix(2048)
+        tilePickerView?.charsetData = charset
         isModified = true
     }
 
     // MARK: - Export
 
+    /// If the map mixes charset banks, warns the user and asks whether to
+    /// proceed. Returns true if export should continue.
+    private func confirmExportDespiteMixedBanks() -> Bool {
+        guard document.charsetBankStatus() == .mixed else { return true }
+        let alert = NSAlert()
+        alert.messageText = "Mixed Charset Banks Detected"
+        alert.informativeText = """
+            This map uses tiles from both charset bank 0 ($00-$7F) and bank 1 ($80-$FF). \
+            The C64 can only display one charset bank at a time, so this map will not \
+            render correctly on real hardware or in VICE without raster interrupt tricks.
+            """
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Export Anyway")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
     public func exportAssembly() {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.init(filenameExtension: "s")!, .init(filenameExtension: "asm")!]
-        let baseName = document.name.replacingOccurrences(of: " ", with: "_").lowercased()
+        let baseName = MapDocument.sanitizeAssemblyLabel(
+            document.name.replacingOccurrences(of: " ", with: "_").lowercased())
         panel.nameFieldStringValue = "\(baseName)_map.s"
         panel.begin { [weak self] response in
             guard response == .OK, let url = panel.url, let self = self else { return }
-            if self.document.charsetBankStatus() == .mixed {
-                let alert = NSAlert()
-                alert.messageText = "Mixed Charset Banks Detected"
-                alert.informativeText = """
-                    This map uses tiles from both charset bank 0 ($00–$7F) and bank 1 ($80–$FF). \
-                    The C64 can only display one charset bank at a time, so this map will not \
-                    render correctly on real hardware or in VICE without raster interrupt tricks.
-                    """
-                alert.alertStyle = .warning
-                alert.addButton(withTitle: "Export Anyway")
-                alert.addButton(withTitle: "Cancel")
-                guard alert.runModal() == .alertFirstButtonReturn else { return }
-            }
+            guard self.confirmExportDespiteMixedBanks() else { return }
             let asm = self.document.exportAsAssembly(label: baseName)
-            try? asm.write(to: url, atomically: true, encoding: .utf8)
+            do {
+                try asm.write(to: url, atomically: true, encoding: .utf8)
+            } catch {
+                NSAlert(error: error).runModal()
+            }
         }
     }
 
@@ -492,23 +542,16 @@ public final class MapEditorViewController: NSViewController, MapGridViewDelegat
         panel.prompt = "Export Here"
         panel.begin { [weak self] response in
             guard response == .OK, let dir = panel.url, let self = self else { return }
-            if self.document.charsetBankStatus() == .mixed {
-                let alert = NSAlert()
-                alert.messageText = "Mixed Charset Banks Detected"
-                alert.informativeText = """
-                    This map uses tiles from both charset bank 0 ($00–$7F) and bank 1 ($80–$FF). \
-                    The C64 can only display one charset bank at a time, so this map will not \
-                    render correctly on real hardware or in VICE without raster interrupt tricks.
-                    """
-                alert.alertStyle = .warning
-                alert.addButton(withTitle: "Export Anyway")
-                alert.addButton(withTitle: "Cancel")
-                guard alert.runModal() == .alertFirstButtonReturn else { return }
-            }
-            let baseName = self.document.name.replacingOccurrences(of: " ", with: "_").lowercased()
+            guard self.confirmExportDespiteMixedBanks() else { return }
+            let baseName = MapDocument.sanitizeAssemblyLabel(
+                self.document.name.replacingOccurrences(of: " ", with: "_").lowercased())
             let screenURL = dir.appendingPathComponent("\(baseName)_screen.bin")
             let colorURL = dir.appendingPathComponent("\(baseName)_color.bin")
-            try? self.document.exportBinary(screenURL: screenURL, colorURL: colorURL)
+            do {
+                try self.document.exportBinary(screenURL: screenURL, colorURL: colorURL)
+            } catch {
+                NSAlert(error: error).runModal()
+            }
         }
     }
 
@@ -524,14 +567,60 @@ public final class MapEditorViewController: NSViewController, MapGridViewDelegat
     private var tileClipboard: TileClipboard?
     private var currentSelection: MapRect?   // track last selection
 
+    // MARK: - Paint Stroke State
+    //
+    // A stroke is one mouse-down-to-mouse-up paint gesture. Cells are
+    // applied to the layer immediately for live feedback, but recorded as a
+    // single MapEditAction.stroke on mouse-up so one Cmd+Z undoes the whole
+    // stroke instead of one cell at a time.
+
+    private var strokeCells: [(col: Int, row: Int)] = []
+    private var strokeOldTiles: [UInt8] = []
+    private var strokeOldColors: [UInt8] = []
+    private var strokeVisited = Set<Int>()
+    private var strokeLayerIndex = 0
+
+    private func resetPaintStroke() {
+        strokeCells.removeAll()
+        strokeOldTiles.removeAll()
+        strokeOldColors.removeAll()
+        strokeVisited.removeAll()
+    }
+
+    /// Commits the accumulated stroke as one undo action. No-op if empty.
+    private func commitPaintStroke() {
+        guard !strokeCells.isEmpty else { return }
+        let action = MapEditAction.stroke(layer: strokeLayerIndex,
+                                          cells: strokeCells,
+                                          oldTiles: strokeOldTiles,
+                                          oldColors: strokeOldColors,
+                                          newTile: selectedTile,
+                                          newColor: selectedColor)
+        resetPaintStroke()
+        // perform() re-applies the same values already painted live, which
+        // is an idempotent no-op, then records the action.
+        undoMgr.perform(action)
+        updateBankWarning()
+    }
+
     // MARK: - MapGridViewDelegate
 
     public func mapGridView(_ view: MapGridView, didPaintAt col: Int, row: Int) {
+        commitPaintStroke()  // safety net if a prior stroke never got a mouse-up
         paintTile(at: col, row: row)
     }
 
     public func mapGridView(_ view: MapGridView, didDragTo col: Int, row: Int) {
         paintTile(at: col, row: row)
+    }
+
+    public func mapGridViewDidEndPaintStroke(_ view: MapGridView) {
+        commitPaintStroke()
+    }
+
+    public func mapGridView(_ view: MapGridView, zoomDidChange zoom: CGFloat) {
+        zoomSlider.doubleValue = Double(zoom)
+        rasterRulerView.zoom = zoom
     }
 
     public func mapGridView(_ view: MapGridView, didFillFrom origin: MapPoint, to end: MapPoint) {
@@ -570,18 +659,26 @@ public final class MapEditorViewController: NSViewController, MapGridViewDelegat
         // Don't fill if we're already the target
         guard targetTile != selectedTile || targetColor != selectedColor else { return }
 
-        // BFS flood fill
+        // BFS flood fill.
+        // Head-index traversal instead of removeFirst(), which is O(n) per
+        // pop on Array and makes large fills quadratic.
         var visited = Set<Int>()
         var queue: [(Int, Int)] = [(col, row)]
+        var head = 0
         var cells: [(col: Int, row: Int)] = []
         var oldTiles: [UInt8] = []
         var oldColors: [UInt8] = []
 
-        while !queue.isEmpty {
-            let (c, r) = queue.removeFirst()
+        while head < queue.count {
+            let (c, r) = queue[head]
+            head += 1
+
+            // Bounds first: out-of-range coordinates would otherwise produce
+            // keys that alias valid cells (e.g. c = -1 aliases the last
+            // column of the previous row).
+            guard c >= 0, c < document.width, r >= 0, r < document.height else { continue }
             let key = r * document.width + c
             guard !visited.contains(key) else { continue }
-            guard c >= 0, c < document.width, r >= 0, r < document.height else { continue }
             guard layer.tiles[r][c] == targetTile, layer.colors[r][c] == targetColor else { continue }
 
             visited.insert(key)
@@ -594,6 +691,8 @@ public final class MapEditorViewController: NSViewController, MapGridViewDelegat
             queue.append((c, r - 1))
             queue.append((c, r + 1))
         }
+
+        guard !cells.isEmpty else { return }
 
         let action = MapEditAction.floodFill(layer: layerIdx, cells: cells,
                                               oldTiles: oldTiles, oldColors: oldColors,
@@ -626,6 +725,12 @@ public final class MapEditorViewController: NSViewController, MapGridViewDelegat
         }
         if item.action == #selector(paste(_:)) {
             return tileClipboard != nil && currentSelection != nil
+        }
+        if item.action == #selector(undo(_:)) {
+            return undoMgr.canUndo
+        }
+        if item.action == #selector(redo(_:)) {
+            return undoMgr.canRedo
         }
         return true
     }
@@ -717,19 +822,37 @@ public final class MapEditorViewController: NSViewController, MapGridViewDelegat
 
     // MARK: - Helpers
 
+    /// Paints one cell as part of the current stroke. The cell is written
+    /// directly to the layer for immediate feedback; the undo action is
+    /// created in commitPaintStroke() when the gesture ends.
     private func paintTile(at col: Int, row: Int) {
-        guard let layer = document.activeLayer else { return }
-        let layerIdx = document.activeLayerIndex
+        guard let layer = document.activeLayer,
+              row >= 0, row < document.height,
+              col >= 0, col < document.width else { return }
+
+        // Each cell is recorded at most once per stroke so its pre-stroke
+        // value is what gets restored on undo.
+        let key = row * document.width + col
+        guard !strokeVisited.contains(key) else { return }
+
         let oldTile = layer.tiles[row][col]
         let oldColor = layer.colors[row][col]
-
         guard oldTile != selectedTile || oldColor != selectedColor else { return }
 
-        let action = MapEditAction.paint(layer: layerIdx, col: col, row: row,
-                                          oldTile: oldTile, oldColor: oldColor,
-                                          newTile: selectedTile, newColor: selectedColor)
-        undoMgr.perform(action)
-        updateBankWarning()
+        // First cell of a stroke pins the layer the whole stroke belongs to
+        // (a drag can begin outside the map, so mouseDown is not reliable).
+        if strokeCells.isEmpty {
+            strokeLayerIndex = document.activeLayerIndex
+        }
+
+        strokeVisited.insert(key)
+        strokeCells.append((col: col, row: row))
+        strokeOldTiles.append(oldTile)
+        strokeOldColors.append(oldColor)
+
+        layer.tiles[row][col] = selectedTile
+        layer.colors[row][col] = selectedColor
+
         mapGridView.setNeedsDisplay(
             NSRect(x: CGFloat(col) * 8.0 * mapGridView.zoom,
                    y: CGFloat(row) * 8.0 * mapGridView.zoom,
@@ -743,7 +866,7 @@ public final class MapEditorViewController: NSViewController, MapGridViewDelegat
     public func updateBankWarning() {
         switch document.charsetBankStatus() {
         case .mixed:
-            bankWarningLabel.stringValue = "⚠ Mixed charset banks ($00–$7F and $80–$FF)"
+            bankWarningLabel.stringValue = "Warning: mixed charset banks ($00-$7F and $80-$FF)"
         case .clean, .bankZeroOnly, .bankOneOnly:
             bankWarningLabel.stringValue = ""
         }
@@ -979,10 +1102,17 @@ public final class ColorPickerView: NSView {
 
 // MARK: - Layer List View
 
-/// Simple layer management panel: list, add/remove, visibility toggle, reorder.
+/// Simple layer management panel: list, add/remove, visibility toggle,
+/// active-layer selection.
 public final class LayerListView: NSView {
     public var document: MapDocument? { didSet { rebuildList() } }
+
+    /// Fires for display-affecting changes (visibility, selection, add/remove).
     public var onLayerChanged: (() -> Void)?
+
+    /// Fires for structural changes that invalidate recorded undo history
+    /// (currently: layer removal). The owner must clear the undo stack.
+    public var onLayerStructureChanged: (() -> Void)?
 
     private var stackView: NSStackView!
     private var addButton: NSButton!
@@ -1039,20 +1169,29 @@ public final class LayerListView: NSView {
 
         for (i, layer) in doc.layers.enumerated() {
             let eyeIcon = layer.isVisible ? "eye" : "eye.slash"
-            let visBtn = NSButton(image: NSImage(systemSymbolName: eyeIcon, accessibilityDescription: nil)!,
+            let visBtn = NSButton(image: NSImage(systemSymbolName: eyeIcon, accessibilityDescription: "Toggle visibility")!,
                                   target: self, action: #selector(toggleVisibility(_:)))
             visBtn.bezelStyle = .inline
             visBtn.tag = i
 
-            let nameLabel = NSTextField(labelWithString: layer.name)
-            nameLabel.font = .systemFont(ofSize: 11)
-            nameLabel.textColor = i == doc.activeLayerIndex ? .controlAccentColor : .labelColor
+            // The layer name itself is the selection target: a borderless
+            // button styled like a label.
+            let isActive = i == doc.activeLayerIndex
+            let nameBtn = NSButton(title: layer.name, target: self, action: #selector(selectLayer(_:)))
+            nameBtn.isBordered = false
+            nameBtn.tag = i
+            nameBtn.font = isActive ? .boldSystemFont(ofSize: 11) : .systemFont(ofSize: 11)
+            nameBtn.contentTintColor = isActive ? .controlAccentColor : .labelColor
+            nameBtn.alignment = .left
+            nameBtn.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-            let selectBtn = NSButton(title: "", target: self, action: #selector(selectLayer(_:)))
-            selectBtn.tag = i
-            selectBtn.isTransparent = true
+            let delBtn = NSButton(image: NSImage(systemSymbolName: "minus.circle", accessibilityDescription: "Remove layer")!,
+                                  target: self, action: #selector(removeLayer(_:)))
+            delBtn.bezelStyle = .inline
+            delBtn.tag = i
+            delBtn.isEnabled = doc.layers.count > 1
 
-            let row = NSStackView(views: [visBtn, nameLabel])
+            let row = NSStackView(views: [visBtn, nameBtn, delBtn])
             row.orientation = .horizontal
             row.spacing = 4
             stackView.addArrangedSubview(row)
@@ -1078,6 +1217,15 @@ public final class LayerListView: NSView {
         rebuildList()
         onLayerChanged?()
     }
+
+    @objc private func removeLayer(_ sender: NSButton) {
+        guard let doc = document, doc.layers.count > 1,
+              sender.tag >= 0, sender.tag < doc.layers.count else { return }
+        doc.removeLayer(at: sender.tag)
+        rebuildList()
+        onLayerStructureChanged?()  // undo history now holds stale indices
+        onLayerChanged?()
+    }
 }
 
 // MARK: - Map Raster Ruler View
@@ -1090,12 +1238,17 @@ public final class MapRasterRulerView: NSView {
     public var zoom: CGFloat = 2.0 { didSet { needsDisplay = true } }
     public var scrollOffset: CGFloat = 0 { didSet { needsDisplay = true } }
 
+    /// Number of tile rows to label. Set from the document height so maps
+    /// taller than one screen still get a full ruler. Note the raster
+    /// numbers only correspond to real VIC-II raster lines within the first
+    /// 25 rows (one static screen); beyond that they are extrapolated.
+    public var rows = 25 { didSet { needsDisplay = true } }
+
     // Must be flipped to match MapGridView (y=0 at top)
     override public var isFlipped: Bool { true }
 
     private let rulerW: CGFloat = 32
     private let rasterTop = 51  // PAL visible area starts at raster line 51
-    private let rows = 25
 
     override public func draw(_ dirtyRect: NSRect) {
         NSColor(white: AppTheme.current.isDark ? 0.0 : 0.85, alpha: 0.75).setFill()

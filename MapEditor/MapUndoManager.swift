@@ -24,6 +24,12 @@ public enum MapEditAction {
     case floodFill(layer: Int, cells: [(col: Int, row: Int)],
                    oldTiles: [UInt8], oldColors: [UInt8],
                    newTile: UInt8, newColor: UInt8)
+
+    /// A freehand paint stroke (one mouse-down-to-mouse-up gesture) covering
+    /// multiple cells. Same shape as floodFill, kept separate for clarity.
+    case stroke(layer: Int, cells: [(col: Int, row: Int)],
+                oldTiles: [UInt8], oldColors: [UInt8],
+                newTile: UInt8, newColor: UInt8)
 }
 
 /// Simple point in map coordinates.
@@ -55,6 +61,11 @@ public final class MapUndoManager {
     private var redoStack: [MapEditAction] = []
     private let document: MapDocument
 
+    /// Maximum number of undoable actions retained. Oldest actions are
+    /// dropped first. Prevents unbounded memory growth in long sessions,
+    /// since fill/stamp actions carry full region snapshots.
+    public var maxHistoryDepth = 200
+
     /// Fires when undo/redo availability changes.
     public var onStateChanged: (() -> Void)?
 
@@ -69,6 +80,19 @@ public final class MapUndoManager {
     public func perform(_ action: MapEditAction) {
         apply(action, to: document)
         undoStack.append(action)
+        if undoStack.count > maxHistoryDepth {
+            undoStack.removeFirst(undoStack.count - maxHistoryDepth)
+        }
+        redoStack.removeAll()
+        onStateChanged?()
+    }
+
+    /// Discards all undo/redo history. Must be called after any operation
+    /// that invalidates stored layer indices or cell coordinates:
+    /// layer removal, layer reordering, or document resize.
+    public func clearHistory() {
+        guard canUndo || canRedo else { return }
+        undoStack.removeAll()
         redoStack.removeAll()
         onStateChanged?()
     }
@@ -89,40 +113,51 @@ public final class MapUndoManager {
 
     // MARK: - Apply / Unapply
 
+    /// Returns true if (row, col) is a valid cell in the given layer's
+    /// current storage. Defends against actions recorded before a resize.
+    private func isValidCell(_ l: MapLayer, row: Int, col: Int) -> Bool {
+        row >= 0 && row < l.tiles.count && col >= 0 && col < (l.tiles.first?.count ?? 0)
+    }
+
     private func apply(_ action: MapEditAction, to doc: MapDocument) {
         switch action {
         case let .paint(layer, col, row, _, _, newTile, newColor):
-            guard layer < doc.layers.count else { return }
-            doc.layers[layer].tiles[row][col] = newTile
-            doc.layers[layer].colors[row][col] = newColor
+            guard layer >= 0, layer < doc.layers.count else { return }
+            let l = doc.layers[layer]
+            guard isValidCell(l, row: row, col: col) else { return }
+            l.tiles[row][col] = newTile
+            l.colors[row][col] = newColor
 
         case let .fill(layer, rect, _, _, newTile, newColor):
-            guard layer < doc.layers.count else { return }
+            guard layer >= 0, layer < doc.layers.count else { return }
             let l = doc.layers[layer]
             for row in rect.origin.row...rect.maxRow {
                 for col in rect.origin.col...rect.maxCol {
+                    guard isValidCell(l, row: row, col: col) else { continue }
                     l.tiles[row][col] = newTile
                     l.colors[row][col] = newColor
                 }
             }
 
         case let .stamp(layer, origin, _, _, newTiles, newColors):
-            guard layer < doc.layers.count else { return }
+            guard layer >= 0, layer < doc.layers.count else { return }
             let l = doc.layers[layer]
             for row in 0..<newTiles.count {
                 for col in 0..<newTiles[row].count {
                     let mapRow = origin.row + row
                     let mapCol = origin.col + col
-                    guard mapRow < doc.height, mapCol < doc.width else { continue }
+                    guard isValidCell(l, row: mapRow, col: mapCol) else { continue }
                     l.tiles[mapRow][mapCol] = newTiles[row][col]
                     l.colors[mapRow][mapCol] = newColors[row][col]
                 }
             }
 
-        case let .floodFill(layer, cells, _, _, newTile, newColor):
-            guard layer < doc.layers.count else { return }
+        case let .floodFill(layer, cells, _, _, newTile, newColor),
+             let .stroke(layer, cells, _, _, newTile, newColor):
+            guard layer >= 0, layer < doc.layers.count else { return }
             let l = doc.layers[layer]
             for cell in cells {
+                guard isValidCell(l, row: cell.row, col: cell.col) else { continue }
                 l.tiles[cell.row][cell.col] = newTile
                 l.colors[cell.row][cell.col] = newColor
             }
@@ -132,15 +167,18 @@ public final class MapUndoManager {
     private func unapply(_ action: MapEditAction, from doc: MapDocument) {
         switch action {
         case let .paint(layer, col, row, oldTile, oldColor, _, _):
-            guard layer < doc.layers.count else { return }
-            doc.layers[layer].tiles[row][col] = oldTile
-            doc.layers[layer].colors[row][col] = oldColor
+            guard layer >= 0, layer < doc.layers.count else { return }
+            let l = doc.layers[layer]
+            guard isValidCell(l, row: row, col: col) else { return }
+            l.tiles[row][col] = oldTile
+            l.colors[row][col] = oldColor
 
         case let .fill(layer, rect, oldTiles, oldColors, _, _):
-            guard layer < doc.layers.count else { return }
+            guard layer >= 0, layer < doc.layers.count else { return }
             let l = doc.layers[layer]
             for row in rect.origin.row...rect.maxRow {
                 for col in rect.origin.col...rect.maxCol {
+                    guard isValidCell(l, row: row, col: col) else { continue }
                     let localRow = row - rect.origin.row
                     let localCol = col - rect.origin.col
                     l.tiles[row][col] = oldTiles[localRow][localCol]
@@ -149,22 +187,24 @@ public final class MapUndoManager {
             }
 
         case let .stamp(layer, origin, oldTiles, oldColors, _, _):
-            guard layer < doc.layers.count else { return }
+            guard layer >= 0, layer < doc.layers.count else { return }
             let l = doc.layers[layer]
             for row in 0..<oldTiles.count {
                 for col in 0..<oldTiles[row].count {
                     let mapRow = origin.row + row
                     let mapCol = origin.col + col
-                    guard mapRow < doc.height, mapCol < doc.width else { continue }
+                    guard isValidCell(l, row: mapRow, col: mapCol) else { continue }
                     l.tiles[mapRow][mapCol] = oldTiles[row][col]
                     l.colors[mapRow][mapCol] = oldColors[row][col]
                 }
             }
 
-        case let .floodFill(layer, cells, oldTiles, oldColors, _, _):
-            guard layer < doc.layers.count else { return }
+        case let .floodFill(layer, cells, oldTiles, oldColors, _, _),
+             let .stroke(layer, cells, oldTiles, oldColors, _, _):
+            guard layer >= 0, layer < doc.layers.count else { return }
             let l = doc.layers[layer]
             for (i, cell) in cells.enumerated() {
+                guard isValidCell(l, row: cell.row, col: cell.col) else { continue }
                 l.tiles[cell.row][cell.col] = oldTiles[i]
                 l.colors[cell.row][cell.col] = oldColors[i]
             }

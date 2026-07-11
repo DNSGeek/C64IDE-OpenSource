@@ -64,6 +64,14 @@ public protocol MapGridViewDelegate: AnyObject {
 
     /// The cursor moved over a cell (for status bar coordinate display).
     func mapGridView(_ view: MapGridView, cursorAt col: Int, row: Int)
+
+    /// A paint gesture (mouse down to mouse up) finished.
+    /// The delegate should commit the accumulated stroke as one undo action.
+    func mapGridViewDidEndPaintStroke(_ view: MapGridView)
+
+    /// The zoom level changed (slider, pinch gesture, or zoomToFit).
+    /// The delegate should sync any external UI (slider, rulers).
+    func mapGridView(_ view: MapGridView, zoomDidChange zoom: CGFloat)
 }
 
 // MARK: - Map Grid View
@@ -81,19 +89,22 @@ public final class MapGridView: NSView {
     public var currentTool: MapEditorTool = .paint
 
     /// Current zoom level (pixels per C64 pixel). Clamped between 0.5x and 8x.
+    /// Notifies the delegate so external UI (slider, raster ruler) stays in
+    /// sync regardless of whether the change came from the slider, a pinch
+    /// gesture, or zoomToFit.
     public var zoom: CGFloat = 2.0 {
         didSet {
             zoom = max(0.5, min(8.0, zoom))
             invalidateIntrinsicContentSize()
             needsDisplay = true
+            if zoom != oldValue {
+                delegate?.mapGridView(self, zoomDidChange: zoom)
+            }
         }
     }
 
     /// Whether to draw grid lines between cells.
     public var showGrid: Bool = true { didSet { needsDisplay = true } }
-    
-    /// Whether to show raster line numbers alongside the map grid.
-    public var showRasterRuler: Bool = false { didSet { needsDisplay = true } }
 
     /// Whether to show layer transparency (dims hidden layers).
     public var showLayerDimming: Bool = true
@@ -174,7 +185,6 @@ public final class MapGridView: NSView {
 
                     drawCharGlyph(ctx: ctx, bitmaps: bitmaps, tile: tile,
                                   fgColor: C64Palette.nsColor(for: color),
-                                  bgColor: bgColor,
                                   rect: cellRect, opacity: opacity)
                 }
             }
@@ -218,48 +228,15 @@ public final class MapGridView: NSView {
             ctx.stroke(overlayRect)
         }
 
-        // Raster line ruler — one label per tile row showing the starting raster line
-        if showRasterRuler, let doc = document {
-            let cell = cellSize
-            let rulerW: CGFloat = 28
-            let rasterTop = 51   // PAL visible area starts at raster 51
-
-            // Dark background strip
-            ctx.setFillColor(NSColor(white: AppTheme.current.isDark ? 0.0 : 0.85, alpha: 0.65).cgColor)
-            ctx.fill(CGRect(x: 0, y: 0, width: rulerW, height: CGFloat(doc.height) * cell.height))
-
-            let fontSize = max(8, min(11, cell.height * 0.55))
-            let font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
-            let color = AppTheme.current.syntaxKeyword.withAlphaComponent(0.9)
-            let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
-            let tickColor = color.withAlphaComponent(0.5).cgColor
-
-            for row in 0..<doc.height {
-                let raster = rasterTop + row * 8
-                let rowY = CGFloat(row) * cell.height
-                let label = "\(raster)" as NSString
-
-                // Tick at the row boundary
-                ctx.setStrokeColor(tickColor)
-                ctx.setLineWidth(0.5)
-                ctx.move(to: CGPoint(x: rulerW, y: rowY))
-                ctx.addLine(to: CGPoint(x: rulerW + 4, y: rowY))
-                ctx.strokePath()
-
-                // Label centred vertically in the row
-                let labelSize = label.size(withAttributes: attrs)
-                if labelSize.height <= cell.height {
-                    let labelX = (rulerW - labelSize.width) / 2
-                    let labelY = rowY + (cell.height - labelSize.height) / 2
-                    label.draw(at: CGPoint(x: labelX, y: labelY), withAttributes: attrs)
-                }
-            }
-        }
+        // Note: the raster line ruler is drawn by the floating
+        // MapRasterRulerView owned by the view controller, not here.
     }
 
-    /// Draws a single 8×8 character glyph scaled into the given rect.
+    /// Draws a single 8x8 character glyph scaled into the given rect.
+    /// The cell background is filled by the caller, so only foreground
+    /// pixels are drawn here.
     private func drawCharGlyph(ctx: CGContext, bitmaps: [[UInt8]], tile: UInt8,
-                               fgColor: NSColor, bgColor: NSColor,
+                               fgColor: NSColor,
                                rect: CGRect, opacity: CGFloat) {
         let charIdx = Int(tile)
         guard charIdx < bitmaps.count else { return }
@@ -343,7 +320,9 @@ public final class MapGridView: NSView {
     }
 
     override public func mouseDragged(with event: NSEvent) {
-        guard let (col, row) = mapCoordinate(from: event) else { return }
+        // Clamp instead of rejecting so dragging past the map edge keeps
+        // painting/tracking the edge cells rather than going dead.
+        guard let (col, row) = clampedMapCoordinate(from: event) else { return }
 
         switch currentTool {
         case .paint:
@@ -365,28 +344,32 @@ public final class MapGridView: NSView {
     }
 
     override public func mouseUp(with event: NSEvent) {
-        guard let (col, row) = mapCoordinate(from: event) else {
-            isDragging = false
-            return
-        }
+        // Clamp here too: releasing the mouse just outside the view must not
+        // silently cancel a fill/select drag or leave a paint stroke uncommitted.
+        let coordinate = clampedMapCoordinate(from: event)
 
         switch currentTool {
         case .paint:
             lastPaintedCell = nil
+            delegate?.mapGridViewDidEndPaintStroke(self)
 
         case .fill:
-            if let origin = dragOrigin {
-                let end = MapPoint(col: col, row: row)
-                delegate?.mapGridView(self, didFillFrom: origin, to: end)
+            if let origin = dragOrigin, let (col, row) = coordinate {
+                delegate?.mapGridView(self, didFillFrom: origin,
+                                      to: MapPoint(col: col, row: row))
             }
+            dragOrigin = nil
+            dragCurrent = nil
             isDragging = false
             needsDisplay = true
 
         case .select:
-            if let origin = dragOrigin {
-                let end = MapPoint(col: col, row: row)
-                delegate?.mapGridView(self, didSelectFrom: origin, to: end)
+            if let origin = dragOrigin, let (col, row) = coordinate {
+                delegate?.mapGridView(self, didSelectFrom: origin,
+                                      to: MapPoint(col: col, row: row))
             }
+            dragOrigin = nil
+            dragCurrent = nil
             isDragging = false
             needsDisplay = true
 
@@ -413,13 +396,27 @@ public final class MapGridView: NSView {
 
     // MARK: - Coordinate Conversion
 
-    /// Converts a mouse event to map (col, row), clamped to valid range.
+    /// Converts a mouse event to map (col, row). Returns nil if the point
+    /// is outside the map. Used for mouseDown/mouseMoved, where clicks
+    /// outside the map should be ignored.
     private func mapCoordinate(from event: NSEvent) -> (Int, Int)? {
         guard let doc = document else { return nil }
         let local = convert(event.locationInWindow, from: nil)
         let col = Int(floor(local.x / cellSize.width))
         let row = Int(floor(local.y / cellSize.height))
         guard col >= 0, col < doc.width, row >= 0, row < doc.height else { return nil }
+        return (col, row)
+    }
+
+    /// Converts a mouse event to map (col, row), clamping out-of-bounds
+    /// points to the nearest valid cell. Used for mouseDragged/mouseUp so an
+    /// in-progress gesture survives the cursor leaving the map area.
+    /// Returns nil only when there is no document.
+    private func clampedMapCoordinate(from event: NSEvent) -> (Int, Int)? {
+        guard let doc = document, doc.width > 0, doc.height > 0 else { return nil }
+        let local = convert(event.locationInWindow, from: nil)
+        let col = max(0, min(doc.width - 1, Int(floor(local.x / cellSize.width))))
+        let row = max(0, min(doc.height - 1, Int(floor(local.y / cellSize.height))))
         return (col, row)
     }
 

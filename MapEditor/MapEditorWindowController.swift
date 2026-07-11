@@ -15,7 +15,7 @@ public final class MapEditorWindowController: NSWindowController {
             backing: .buffered,
             defer: false
         )
-        window.title = "Map Editor — Untitled"
+        window.title = "Map Editor - Untitled"
         window.minSize = NSSize(width: 640, height: 480)
         window.center()
 
@@ -23,6 +23,10 @@ public final class MapEditorWindowController: NSWindowController {
 
         mapEditorVC = MapEditorViewController()
         window.contentViewController = mapEditorVC
+
+        // Required so windowShouldClose fires and unsaved changes prompt
+        // before the window closes.
+        window.delegate = self
     }
 
     /// Required for storyboard/xib loading. Not supported in this programmatic UI.
@@ -39,9 +43,11 @@ public final class MapEditorWindowController: NSWindowController {
     // MARK: - Public API (called from AppDelegate menu actions)
 
     /// Creates a new blank map with the specified dimensions.
+    /// Prompts to save unsaved changes first; does nothing if cancelled.
     public func newMap(width: Int = 40, height: Int = 25) {
+        guard promptToSaveIfNeeded() else { return }
         mapEditorVC.newDocument(width: width, height: height)
-        window?.title = "Map Editor — Untitled"
+        window?.title = "Map Editor - Untitled"
     }
 
     /// Opens a file dialog to load a `.c64map` document.
@@ -55,10 +61,13 @@ public final class MapEditorWindowController: NSWindowController {
     }
 
     /// Loads a map document from the given URL and updates the window title.
+    /// Prompts to save unsaved changes first; does nothing if cancelled.
+    /// (openMap routes through here, so it is covered too.)
     public func loadMap(from url: URL) {
+        guard promptToSaveIfNeeded() else { return }
         do {
             try mapEditorVC.loadDocument(from: url)
-            window?.title = "Map Editor — \(url.deletingPathExtension().lastPathComponent)"
+            window?.title = "Map Editor - \(url.deletingPathExtension().lastPathComponent)"
         } catch {
             let alert = NSAlert(error: error)
             alert.runModal()
@@ -69,7 +78,7 @@ public final class MapEditorWindowController: NSWindowController {
     public func saveMap() {
         mapEditorVC.saveDocument()
         if let name = mapEditorVC.fileURL?.deletingPathExtension().lastPathComponent {
-            window?.title = "Map Editor — \(name)"
+            window?.title = "Map Editor - \(name)"
         }
     }
 
@@ -104,8 +113,9 @@ public final class MapEditorWindowController: NSWindowController {
         mapEditorVC.exportBinary()
     }
 
-    /// Prompts the user to save unsaved changes before closing.
-    /// Returns `true` if the operation should proceed, `false` if cancelled.
+    /// Prompts the user to save unsaved changes before a destructive
+    /// operation (close, new, open). Returns `true` if the operation should
+    /// proceed, `false` if cancelled or if a requested save failed.
     public func promptToSaveIfNeeded() -> Bool {
         guard mapEditorVC.isModified else { return true }
 
@@ -120,13 +130,24 @@ public final class MapEditorWindowController: NSWindowController {
         let response = alert.runModal()
         switch response {
         case .alertFirstButtonReturn:
-            mapEditorVC.saveDocument()
-            return true
+            // Must be synchronous: the async saveDocument()/saveDocumentAs()
+            // path would return before the save panel completes, and the
+            // window would close out from under it. Only proceed if the
+            // save actually succeeded.
+            return mapEditorVC.saveDocumentModally()
         case .alertSecondButtonReturn:
             return true
         default:
             return false
         }
+    }
+}
+
+// MARK: - NSWindowDelegate
+
+extension MapEditorWindowController: NSWindowDelegate {
+    public func windowShouldClose(_ sender: NSWindow) -> Bool {
+        promptToSaveIfNeeded()
     }
 }
 
