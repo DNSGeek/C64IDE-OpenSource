@@ -42,8 +42,9 @@ extension TapeArchive {
 // ═══════════════════════════════════════════════════════════
 
 /// Implemented by formats that support full edit + save.
-/// T64Image conforms. TAPImage does NOT — TAP writing is intentionally out of scope
-/// for the core parser, though the browser provides synthetic write capabilities.
+/// T64Image conforms. TAPImage does NOT — TAP is read-only; a correct TAP
+/// writer (pulse encoding, parity, checksums, repeat copies) does not
+/// exist yet. Export TAP entries to T64, PRG, or disk images instead.
 protocol WritableTapeArchive: TapeArchive {
     /// Append a new PRG entry. `prgData` must be a complete PRG including the
     /// 2-byte load-address header (matches the shape returned by `extractPRG`).
@@ -183,7 +184,16 @@ final class T64Image: WritableTapeArchive {
         log("T64 — \"\(archiveName)\"  max:\(maxEntries) used:\(usedEntries)")
 
         // Parse directory entries, capping at a sane upper bound.
+        // Two passes: read all raw records first, because sizing an entry
+        // with a broken end address requires knowing where the NEXT
+        // payload starts.
         let limit = min(max(maxEntries, usedEntries, 1), 1024)
+
+        typealias DirRecord = (c64sType: UInt8, petsciiType: UInt8,
+                               loadAddr: UInt16, endAddr: UInt16,
+                               dataOffset: Int, name: String)
+        var records: [DirRecord] = []
+
         for i in 0..<limit {
             let base = 64 + i * 32
             guard base + 32 <= raw.count else { break }
@@ -201,45 +211,59 @@ final class T64Image: WritableTapeArchive {
                            | (Int(raw[base + 10]) << 16)
                            | (Int(raw[base + 11]) << 24)
             let nameBytes = Array(raw[(base + 16)..<(base + 32)])
-            let name = Self.decodeName(nameBytes)
+            records.append((c64sType, petsciiType, loadAddr, endAddr,
+                            dataOffset, Self.decodeName(nameBytes)))
+        }
 
-            let declaredSize  = endAddr > loadAddr ? Int(endAddr - loadAddr) : 0
-            let availableSize = dataOffset < raw.count ? raw.count - dataOffset : 0
-            let sizeBytes     = declaredSize > 0 ? declaredSize : min(availableSize, 65535)
+        // Sorted payload offsets, for bounding entries with broken sizes.
+        let sortedOffsets = records.map(\.dataOffset).sorted()
+
+        for rec in records {
+            let declaredSize = rec.endAddr > rec.loadAddr ? Int(rec.endAddr - rec.loadAddr) : 0
+
+            // C64S-era T64s very often carry zeroed/garbage end addresses.
+            // When the declared size is unusable, bound the fallback by the
+            // start of the next payload (or EOF for the last one) — a
+            // plain "everything to EOF" fallback swallows every subsequent
+            // file's data in a multi-entry archive.
+            let nextOffset = sortedOffsets.first(where: { $0 > rec.dataOffset }) ?? raw.count
+            let fallbackAvailable = max(0, min(nextOffset, raw.count) - rec.dataOffset)
+            let sizeBytes = declaredSize > 0 ? declaredSize : min(fallbackAvailable, 65535)
 
             let kind: TAPEntry.FileKind
-            switch c64sType {
+            switch rec.c64sType {
             case 3:
                 kind = .snapshot
             default:
-                switch petsciiType & 0x0F {
+                switch rec.petsciiType & 0x0F {
                 case 1:   kind = .sequential
                 default:  kind = .program
                 }
             }
 
             // Slice payload (clamped to file extent).
-            let take = min(sizeBytes, max(0, raw.count - dataOffset))
+            let take = min(sizeBytes, max(0, raw.count - rec.dataOffset))
             let payload: Data
-            if take > 0, dataOffset >= 0, dataOffset + take <= raw.count {
-                payload = Data(raw[dataOffset..<(dataOffset + take)])
+            if take > 0, rec.dataOffset >= 0, rec.dataOffset + take <= raw.count {
+                payload = Data(raw[rec.dataOffset..<(rec.dataOffset + take)])
             } else {
                 payload = Data()
             }
 
             entries.append(TAPEntry(
                 index:       entries.count,
-                name:        name,
-                loadAddress: loadAddr,
-                endAddress:  endAddr,
+                name:        rec.name,
+                loadAddress: rec.loadAddr,
+                endAddress:  rec.endAddr,
                 kind:        kind,
                 sizeBytes:   payload.count
             ))
             payloads.append(payload)
 
-            log("  [\(i)] \"\(name)\" \(kind.rawValue) "
-              + "\(String(format: "$%04X–$%04X", loadAddr, endAddr)) "
-              + "(\(payload.count)b) @ \(String(format: "$%X", dataOffset))")
+            log("  [\(entries.count - 1)] \"\(rec.name)\" \(kind.rawValue) "
+              + "\(String(format: "$%04X–$%04X", rec.loadAddr, rec.endAddr)) "
+              + "(\(payload.count)b) @ \(String(format: "$%X", rec.dataOffset))"
+              + (declaredSize == 0 ? " [size from next-entry bound]" : ""))
         }
 
         log("Done — \(entries.count) file(s)")
@@ -414,9 +438,11 @@ final class T64Image: WritableTapeArchive {
         // [32..33] Version $0200 LE
         header[32] = 0x00
         header[33] = 0x02
-        // [34..35] Max entries LE
-        header[34] = 0xFF // 255 max entries (standard)
-        header[35] = 0x00
+        // [34..35] Max entries LE — must reflect the directory actually
+        // written; hardcoding 255 while save() emits up to 1024 slots
+        // makes conforming readers truncate the directory.
+        header[34] = UInt8(maxEntries & 0xFF)
+        header[35] = UInt8((maxEntries >> 8) & 0xFF)
         // [36..37] Used entries LE
         header[36] = UInt8(usedEntries & 0xFF)
         header[37] = UInt8((usedEntries >> 8) & 0xFF)

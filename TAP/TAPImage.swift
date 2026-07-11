@@ -150,6 +150,7 @@ class TAPImage: TapeArchive {
 
     /// Re-decodes the pulse stream using the current `timing` settings.
     func reparse() {
+        groupsCache    = nil   // group boundaries depend on timing (LONG classification)
         entries        = []
         hasTurboBlocks = false
         parseLog       = []
@@ -167,6 +168,20 @@ class TAPImage: TapeArchive {
     }
 
     // MARK: - Pulse-group Splitter
+
+    /// Cached result of makeGroups(). The full pulse array can run to
+    /// millions of entries, and extractPRG previously re-split it from
+    /// scratch on every extraction. Invalidated by reparse(), since group
+    /// boundaries depend on the timing thresholds.
+    private var groupsCache: [[UInt32]]?
+
+    /// Returns the pulse groups, computing and caching them on first use.
+    private func groups() -> [[UInt32]] {
+        if let cached = groupsCache { return cached }
+        let g = makeGroups()
+        groupsCache = g
+        return g
+    }
 
     /// Splits the pulse stream into groups separated by LONG (separator) pulses.
     /// Data bytes are groups of exactly 19 short/medium pulses.
@@ -186,20 +201,38 @@ class TAPImage: TapeArchive {
 
     // MARK: - Byte Group Decoder
 
-    /// Decodes a group of exactly 19 pulses into a single byte.
+    /// Decodes a group of exactly 19 pulses into a single byte, verifying
+    /// the trailing parity pair.
     /// Layout: [marker] [bit0_p1 bit0_p2] ... [bit7_p1 bit7_p2] [parity_p1 parity_p2]
+    /// The KERNAL writes odd parity: the check bit starts at 1 and is EORed
+    /// with each data bit, so a byte whose parity pair disagrees was
+    /// misread (usually a pulse misclassified by borderline timing) and is
+    /// rejected rather than silently accepted.
     private func decodeByteGroup(_ g: [UInt32]) -> UInt8? {
         guard g.count == 19 else { return nil }
         var result: UInt8 = 0
+        var expectedParity: UInt8 = 1   // odd parity: check bit starts at 1
         for bit in 0..<8 {
             let p1 = classify(g[1 + bit * 2])
             let p2 = classify(g[2 + bit * 2])
             switch (p1, p2) {
-            case (.short,  .medium): break                    // bit = 0
-            case (.medium, .short):  result |= (1 << bit)    // bit = 1
-            default:                 return nil               // malformed
+            case (.short,  .medium):
+                break                                       // bit = 0
+            case (.medium, .short):
+                result |= (1 << bit)                        // bit = 1
+                expectedParity ^= 1
+            default:
+                return nil                                  // malformed pair
             }
         }
+        // Parity pair at g[17], g[18], encoded like a data bit
+        let parityBit: UInt8
+        switch (classify(g[17]), classify(g[18])) {
+        case (.short,  .medium): parityBit = 0
+        case (.medium, .short):  parityBit = 1
+        default:                 return nil                 // malformed pair
+        }
+        guard parityBit == expectedParity else { return nil }
         return result
     }
 
@@ -210,7 +243,7 @@ class TAPImage: TapeArchive {
         log("TAP v\(version)  \(platformName)  \(pulses.count) pulses")
         log("Timing — S≤\(timing.shortMax)  M≤\(timing.mediumMax)  pilot≥\(timing.minPilotPulses)")
 
-        let groups = makeGroups()
+        let groups = self.groups()
         log("  \(groups.count) groups after splitting at LONG boundaries")
 
         var gi = 0
@@ -245,49 +278,81 @@ class TAPImage: TapeArchive {
             }
 
             log("  Block: \(byteStream.count) raw bytes decoded")
-            processBlock(byteStream, fileIndex: &fileIdx)
+            if !processBlock(byteStream, fileIndex: &fileIdx) {
+                log("  Stopping at end-of-tape marker")
+                break
+            }
         }
 
         log("Done — \(entries.count) file(s)\(hasTurboBlocks ? ", turbo block(s) present" : "")")
     }
 
+    // MARK: - Sync Countdown / Checksum (shared by parse and extractPRG)
+
+    /// Walks the first-copy sync countdown $89, $88, ..., $81.
+    /// Returns the index of the first byte after the countdown, or nil if
+    /// the countdown is absent, incomplete, or has no content following it.
+    /// (Repeat copies use $09..$01 and are intentionally not matched, so
+    /// each recorded block is processed once.)
+    private func consumeCountdown(in bytes: [UInt8]) -> Int? {
+        guard let start = bytes.firstIndex(of: 0x89) else { return nil }
+        var pos = start
+        var expected: UInt8 = 0x89
+        // Bound at $80: a corrupt stream continuing $80, $7F, ... must not
+        // walk (or underflow) past the end of the countdown.
+        while pos < bytes.count && expected > 0x80 && bytes[pos] == expected {
+            expected -= 1
+            pos += 1
+        }
+        guard expected == 0x80, pos < bytes.count else { return nil }
+        return pos
+    }
+
+    /// XOR over a byte range. A block payload followed by its own XOR
+    /// checksum reduces to zero, so `== 0` means the checksum verifies.
+    private func xorReduce<S: Sequence>(_ bytes: S) -> UInt8 where S.Element == UInt8 {
+        bytes.reduce(0, ^)
+    }
+
+    /// Content length of a standard header block after the countdown:
+    /// 192 bytes (type + addresses + name + body) plus 1 checksum byte.
+    private let headerContentPlusChecksum = 193
+
     // MARK: - Block Processor
 
-    /// Processes a decoded byte stream (pilot + header + data) to extract file information.
-    private func processBlock(_ bytes: [UInt8], fileIndex: inout Int) {
-        guard let syncStart = bytes.firstIndex(of: 0x89) else {
-            log("  ⚠ No sync bytes found")
-            return
+    /// Processes a decoded byte stream (countdown + header content) to
+    /// extract file information.
+    /// Standard header types: $01 relocatable BASIC program, $02 data
+    /// chunk, $03 non-relocatable (ML) program, $04 SEQ file header,
+    /// $05 end-of-tape.
+    /// Returns false when an end-of-tape marker is found, signalling the
+    /// caller to stop parsing.
+    private func processBlock(_ bytes: [UInt8], fileIndex: inout Int) -> Bool {
+        guard let contentStart = consumeCountdown(in: bytes) else {
+            log("  ! No valid sync countdown ($89..$81)")
+            return true
         }
 
-        var pos = syncStart
-        var expected: UInt8 = 0x89
-        // Verify sync sequence: 0x89, 0x88, ..., 0x81
-        while pos < bytes.count && bytes[pos] == expected { expected -= 1; pos += 1 }
-        guard expected == 0x80 else {
-            log("  ⚠ Incomplete sync (stopped at 0x\(String(format: "%02X", expected + 1)))")
-            return
+        // Verify the block checksum when the full standard header
+        // (192 content bytes + 1 checksum) decoded. A failure usually means
+        // marginal pulse timing; the entry is still listed so the user can
+        // adjust the timing sliders and re-parse.
+        if bytes.count >= contentStart + headerContentPlusChecksum {
+            let ok = xorReduce(bytes[contentStart..<(contentStart + headerContentPlusChecksum)]) == 0
+            log(ok ? "  Header checksum OK"
+                   : "  ! Header checksum FAILED — data may be misread; try adjusting timing")
+        } else {
+            log("  ! Header truncated (\(bytes.count - contentStart) of \(headerContentPlusChecksum) bytes)")
         }
 
-        guard pos < bytes.count else { return }
+        var pos = contentStart
         let blockType = bytes[pos]; pos += 1
 
         switch blockType {
-        case 0x09:  // Relocatable program header
-            guard pos + 5 <= bytes.count else { return }
-            let load = UInt16(bytes[pos + 1]) | (UInt16(bytes[pos + 2]) << 8)
-            let end  = UInt16(bytes[pos + 3]) | (UInt16(bytes[pos + 4]) << 8)
-            let nameEnd = min(pos + 5 + 16, bytes.count)
-            let name = petsciiToString(Array(bytes[(pos + 5)..<nameEnd]))
-            let sz   = end > load ? Int(end - load) : 0
-            entries.append(TAPEntry(index: fileIndex, name: name,
-                                    loadAddress: load, endAddress: end,
-                                    kind: .program, sizeBytes: sz))
-            log("  Header(09): \"\(name)\" PRG \(String(format: "$%04X–$%04X", load, end)) (\(sz)b)")
-            fileIndex += 1
-
-        case 0x03:  // Non-relocatable header
-            guard pos + 4 <= bytes.count else { return }
+        case 0x01, 0x03:
+            // Program header — $01 relocatable BASIC, $03 non-relocatable ML.
+            // Identical layout: [type][loadL][loadH][endL][endH][name x16]...
+            guard pos + 4 <= bytes.count else { return true }
             let load = UInt16(bytes[pos])     | (UInt16(bytes[pos + 1]) << 8)
             let end  = UInt16(bytes[pos + 2]) | (UInt16(bytes[pos + 3]) << 8)
             let nameEnd = min(pos + 4 + 16, bytes.count)
@@ -296,15 +361,35 @@ class TAPImage: TapeArchive {
             entries.append(TAPEntry(index: fileIndex, name: name,
                                     loadAddress: load, endAddress: end,
                                     kind: .program, sizeBytes: sz))
-            log("  Header(03): \"\(name)\" PRG \(String(format: "$%04X–$%04X", load, end)) (\(sz)b)")
+            let typeLabel = blockType == 0x01 ? "01/BASIC" : "03/ML"
+            log("  Header(\(typeLabel)): \"\(name)\" PRG \(String(format: "$%04X-$%04X", load, end)) (\(sz)b)")
             fileIndex += 1
 
+        case 0x04:
+            // SEQ file header — same field layout; the data arrives later
+            // in $02 chunks, which extractPRG does not reassemble.
+            guard pos + 4 <= bytes.count else { return true }
+            let load = UInt16(bytes[pos])     | (UInt16(bytes[pos + 1]) << 8)
+            let end  = UInt16(bytes[pos + 2]) | (UInt16(bytes[pos + 3]) << 8)
+            let nameEnd = min(pos + 4 + 16, bytes.count)
+            let name = petsciiToString(Array(bytes[(pos + 4)..<nameEnd]))
+            entries.append(TAPEntry(index: fileIndex, name: name,
+                                    loadAddress: load, endAddress: end,
+                                    kind: .sequential, sizeBytes: 0))
+            log("  Header(04): \"\(name)\" SEQ (extraction not supported)")
+            fileIndex += 1
+
+        case 0x02:
+            log("  Data chunk ($02) outside a SEQ context")
+
         case 0x05:
-            log("  End-of-tape marker")
+            log("  End-of-tape marker ($05)")
+            return false
 
         default:
             log("  Data/unknown block type 0x\(String(format: "%02X", blockType))")
         }
+        return true
     }
 
     // MARK: - Inter-block Pilot Threshold
@@ -317,7 +402,9 @@ class TAPImage: TapeArchive {
 
     /// Extracts the raw PRG data (including load address header) for a specific entry.
     func extractPRG(for entry: TAPEntry) -> Data? {
-        let groups = makeGroups()
+        guard entry.kind == .program else { return nil }
+
+        let groups = self.groups()
         var gi = 0
         var fileIdx = 0
 
@@ -341,27 +428,24 @@ class TAPImage: TapeArchive {
             }
             guard !byteStream.isEmpty else { continue }
 
-            // Decode block type from sync
-            guard let syncStart = byteStream.firstIndex(of: 0x89) else { continue }
-            var pos = syncStart
-            var expected: UInt8 = 0x89
-            while pos < byteStream.count && byteStream[pos] == expected { expected -= 1; pos += 1 }
-            guard expected == 0x80, pos < byteStream.count else { continue }
-
+            // Walk the sync countdown; skip streams without one
+            guard var pos = consumeCountdown(in: byteStream) else { continue }
             let blockType = byteStream[pos]; pos += 1
-            guard blockType == 0x09 || blockType == 0x03 else { continue }
 
-            // Extract load address — offset differs by block type
-            let load: UInt16
-            if blockType == 0x09 {
-                guard pos + 2 < byteStream.count else { continue }
-                load = UInt16(byteStream[pos + 1]) | (UInt16(byteStream[pos + 2]) << 8)
-            } else {  // 0x03
-                guard pos + 1 < byteStream.count else { continue }
-                load = UInt16(byteStream[pos]) | (UInt16(byteStream[pos + 1]) << 8)
-            }
+            // Header types that occupy directory slots — must mirror the
+            // set that processBlock creates entries for, or fileIdx and
+            // entry.index drift apart: $01/$03 programs, $04 SEQ.
+            guard blockType == 0x01 || blockType == 0x03 || blockType == 0x04 else { continue }
 
             if fileIdx == entry.index {
+                // SEQ data lives in $02 chunks; not reassembled here.
+                guard blockType != 0x04 else { return nil }
+
+                // Load address — same offsets for $01 and $03:
+                // [type][loadL][loadH][endL][endH]...
+                guard pos + 1 < byteStream.count else { return nil }
+                let load = UInt16(byteStream[pos]) | (UInt16(byteStream[pos + 1]) << 8)
+
                 // Skip verify copy of header:
                 // advance past any inter-block pilot (>= interBlockPilotMin shorts)
                 // and its following 19-pulse byte groups
@@ -395,18 +479,25 @@ class TAPImage: TapeArchive {
                         // pulse main data pilot) — keep searching
                         guard !dataBytes.isEmpty else { continue }
 
-                        // Find and consume sync in data block
-                        guard let ds = dataBytes.firstIndex(of: 0x89) else { return nil }
-                        var dp = ds
-                        var de: UInt8 = 0x89
-                        while dp < dataBytes.count && dataBytes[dp] == de { de -= 1; dp += 1 }
-                        guard de == 0x80, dp < dataBytes.count else { return nil }
-                        dp += 1  // skip block type byte — don't care what it is
+                        // Consume the data block's sync countdown.
+                        // The payload starts IMMEDIATELY after it — data
+                        // blocks have no type byte (only header blocks do);
+                        // the XOR checksum follows the payload at the end.
+                        guard let dp = consumeCountdown(in: dataBytes) else { return nil }
 
-                        // Payload follows immediately
                         let available = dataBytes.count - dp
                         let take = min(entry.sizeBytes, available)
                         guard take > 0 else { return nil }
+
+                        // Verify the block checksum when it decoded:
+                        // payload + checksum XORs to zero.
+                        if available >= take + 1 {
+                            let ok = xorReduce(dataBytes[dp..<(dp + take + 1)]) == 0
+                            log(ok ? "Extract \"\(entry.name)\": data checksum OK"
+                                   : "! Extract \"\(entry.name)\": data checksum FAILED — output may be corrupt")
+                        } else {
+                            log("! Extract \"\(entry.name)\": block shorter than declared size (\(available)/\(entry.sizeBytes)b)")
+                        }
 
                         var prg = Data([UInt8(load & 0xFF), UInt8(load >> 8)])
                         prg.append(contentsOf: dataBytes[dp..<(dp + take)])
@@ -445,108 +536,14 @@ class TAPImage: TapeArchive {
     }
 }
 
-// MARK: - TAP Image Extension (Saving)
-
-extension TAPImage {
-    /// Encodes raw bytes into TAP pulse stream format.
-    /// This is a synthetic encoder for creating TAP files programmatically.
-    private func encodePulses(for data: Data) -> Data {
-        var pulses = Data()
-        let short = UInt32(timing.shortMax)
-        let medium = UInt32(timing.mediumMax)
-
-        for byte in data {
-            // 19 pulses: marker + 8 bit-pairs + parity
-            pulses.append(UInt8(short)) // marker
-            for bit in 0..<8 {
-                let isOne = (byte >> bit) & 1 == 1
-                if isOne {
-                    pulses.append(UInt8(medium)); pulses.append(UInt8(short))
-                } else {
-                    pulses.append(UInt8(short)); pulses.append(UInt8(medium))
-                }
-            }
-            pulses.append(UInt8(short)); pulses.append(UInt8(medium)) // parity
-            pulses.append(UInt8(timing.mediumMax + 1)) // LONG separator
-        }
-        return pulses
-    }
-
-    /// Packs pulses into TAP's 0x00 compression format.
-    private func compressPulses(_ pulses: Data) -> Data {
-        var compressed = Data()
-        var i = 0
-        while i < pulses.count {
-            let val = UInt32(pulses[i])
-            if val > 255 {
-                // Use 0x00 + 3-byte LE value (divided by 8 per decoder)
-                compressed.append(0x00)
-                let enc = val * 8
-                compressed.append(UInt8(enc & 0xFF))
-                compressed.append(UInt8((enc >> 8) & 0xFF))
-                compressed.append(UInt8((enc >> 16) & 0xFF))
-                i += 1
-            } else {
-                compressed.append(UInt8(val))
-                i += 1
-            }
-        }
-        return compressed
-    }
-
-    /// Saves the archive to a TAP file.
-    /// Note: This generates a synthetic TAP file structure. It is not a standard TAP writer
-    /// but rather a browser convenience for exporting PRGs back to tape format.
-    func save(to url: URL, addingFile name: String, loadAddress: UInt16, endAddress: UInt16, data: Data) throws {
-        var tapData = Data()
-
-        // Header
-        tapData.append(Data("C64-TAPE-RAW".utf8))
-        tapData.append(Data([version, platform]))
-        tapData.append(Data(repeating: 0, count: 4)) // length placeholder
-
-        // Block builder
-        func makeBlock(data: Data, isHeader: Bool, pilotCount: Int) -> Data {
-            var block = Data()
-            for _ in 0..<pilotCount { block.append(UInt8(timing.shortMax)) }
-            for i in stride(from: 0x89, through: 0x81, by: -1) { block.append(UInt8(i)) }
-            block.append(isHeader ? UInt8(0x09) : UInt8(0x08))
-            if isHeader {
-                block.append(UInt8(0x02)) // sub-type
-                block.append(UInt8(loadAddress & 0xFF))
-                block.append(UInt8(loadAddress >> 8))
-                block.append(UInt8(endAddress & 0xFF))
-                block.append(UInt8(endAddress >> 8))
-                block.append(Data(name.petsciiPadded(to: 16)))
-            } else {
-                block.append(data)
-            }
-            return block
-        }
-
-        // Tape structure
-        tapData.append(makeBlock(data: Data(), isHeader: true, pilotCount: timing.minPilotPulses)) // Main pilot
-        tapData.append(makeBlock(data: Data(), isHeader: true, pilotCount: timing.minPilotPulses)) // Header block
-        tapData.append(makeBlock(data: Data(), isHeader: true, pilotCount: 40)) // Verify pilot
-        tapData.append(makeBlock(data: Data(), isHeader: true, pilotCount: timing.minPilotPulses)) // Verify header
-        tapData.append(makeBlock(data: Data(), isHeader: true, pilotCount: interBlockPilotMin)) // Inter-block pilot
-        tapData.append(makeBlock(data: data, isHeader: false, pilotCount: timing.minPilotPulses)) // Data block
-
-        // Update header length
-        let length = UInt32(tapData.count - 20)
-        tapData[16] = UInt8(length & 0xFF)
-        tapData[17] = UInt8((length >> 8) & 0xFF)
-        tapData[18] = UInt8((length >> 16) & 0xFF)
-        tapData[19] = UInt8((length >> 24) & 0xFF)
-
-        // Safe write
-        let compressed = compressPulses(tapData)
-        let tempURL = url.deletingLastPathComponent().appendingPathComponent(".tmp_\(url.lastPathComponent)")
-        try compressed.write(to: tempURL)
-        if FileManager.default.fileExists(atPath: url.path) {
-            try FileManager.default.removeItem(at: url)
-        }
-        try FileManager.default.moveItem(at: tempURL, to: url)
-    }
-}
+// MARK: - TAP Writing (intentionally absent)
+//
+// A previous revision carried a synthetic TAP writer here. It was removed:
+// it emitted raw file bytes as pulse widths (never routing them through a
+// byte-to-pulse encoder), wrote an 18-byte header with the length field
+// patched at the wrong offset, and was unreachable from the browser UI.
+// A correct TAP writer (20-byte header, canonical $30/$42/$56 pulses, odd
+// parity, block checksums, first + repeat copies) is a separate project;
+// until one exists, TAPImage is read-only and TAP -> T64 or TAP -> PRG are
+// the supported export paths.
 
