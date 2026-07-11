@@ -363,14 +363,21 @@ class ImageConverterViewController: NSViewController {
             bitmap.backgroundColor = UInt8(globalBg)
         }
 
-        var fsError = Array(
-            repeating: Array(repeating: (r: 0.0, g: 0.0, b: 0.0), count: targetW + 1),
-            count: 2
+        // -- Pass 1: choose per-cell palettes ----------------------------------
+        //
+        // Palette layout matches C64Bitmap pixel slot values directly:
+        //   hi-res:      palette[0] = cell background (pixel 0)
+        //                palette[1] = cell foreground (pixel 1)
+        //   multi-color: palette[0] = global background ($D021, pixel 0)
+        //                palette[1..3] = fg / cell bg / color RAM (pixels 1-3)
+        // so closestPaletteIndex() returns the pixel value to store.
+        var cellPalettes = Array(
+            repeating: Array(repeating: [Int](), count: cellCols),
+            count: cellRows
         )
 
         for cellRow in 0..<cellRows {
             for cellCol in 0..<cellCols {
-
                 // Collect pixels for this cell
                 var cellPixels: [(r: Double, g: Double, b: Double)] = []
                 for py in 0..<8 {
@@ -389,158 +396,102 @@ class ImageConverterViewController: NSViewController {
                     if cellColors.count > 1 { bitmap.cellBackground[cellRow][cellCol] = UInt8(cellColors[1]) }
                     if cellColors.count > 2 { bitmap.cellColorRAM[cellRow][cellCol]   = UInt8(cellColors[2]) }
 
-                    // palette[0] = background ($D021), slots 1–3 = cell registers
+                    // Pad short palettes with the background so indices 0-3 always exist
                     let padding = Array(repeating: globalBg, count: max(0, 3 - cellColors.count))
-                    let palette = [globalBg] + cellColors + padding
-
-                    for py in 0..<8 {
-                        let absY = cellRow * 8 + py
-
-                        for px in 0..<cellPixelW {
-                            let x = cellCol * cellPixelW + px
-                            let y = absY
-                            guard x < targetW, y < targetH else { continue }
-
-                            var rgb = pixels[y][x]
-
-                            if dither == 1 {
-                                // Floyd-Steinberg: apply accumulated error
-                                rgb.r = max(0, min(255, rgb.r + fsError[0][x].r))
-                                rgb.g = max(0, min(255, rgb.g + fsError[0][x].g))
-                                rgb.b = max(0, min(255, rgb.b + fsError[0][x].b))
-                            } else if dither == 2 {
-                                // Bayer 4×4 ordered dithering (scale ×16)
-                                let bayerMatrix: [[Double]] = [
-                                    [-0.5,    0.0,    -0.375,  0.125 ],
-                                    [ 0.25,  -0.25,   0.375, -0.125 ],
-                                    [-0.3125, 0.1875, -0.4375, 0.0625],
-                                    [ 0.4375,-0.0625,  0.3125,-0.1875],
-                                ]
-                                let threshold = bayerMatrix[y % 4][x % 4] * 16
-                                rgb.r = max(0, min(255, rgb.r + threshold))
-                                rgb.g = max(0, min(255, rgb.g + threshold))
-                                rgb.b = max(0, min(255, rgb.b + threshold))
-                            }
-
-                            let chosenIdx = closestPaletteIndex(rgb, from: palette)
-                            bitmap.pixels[y][x] = UInt8(chosenIdx)
-
-                            if dither == 1 {
-                                // Distribute Floyd-Steinberg error
-                                let chosenC   = palette[chosenIdx]
-                                let chosenRGB = c64PaletteRGB[chosenC]
-                                let errR = rgb.r - Double(chosenRGB.r)
-                                let errG = rgb.g - Double(chosenRGB.g)
-                                let errB = rgb.b - Double(chosenRGB.b)
-
-                                if x + 1 < targetW {
-                                    fsError[0][x + 1].r += errR * 7 / 16
-                                    fsError[0][x + 1].g += errG * 7 / 16
-                                    fsError[0][x + 1].b += errB * 7 / 16
-                                }
-                                if y + 1 < targetH {
-                                    if x > 0 {
-                                        fsError[1][x - 1].r += errR * 3 / 16
-                                        fsError[1][x - 1].g += errG * 3 / 16
-                                        fsError[1][x - 1].b += errB * 3 / 16
-                                    }
-                                    fsError[1][x].r += errR * 5 / 16
-                                    fsError[1][x].g += errG * 5 / 16
-                                    fsError[1][x].b += errB * 5 / 16
-                                    if x + 1 < targetW {
-                                        fsError[1][x + 1].r += errR * 1 / 16
-                                        fsError[1][x + 1].g += errG * 1 / 16
-                                        fsError[1][x + 1].b += errB * 1 / 16
-                                    }
-                                }
-                            }
-                        }
-
-                        // Advance FS rolling buffer at end of each image scanline.
-                        if dither == 1 {
-                            fsError[0] = fsError[1]
-                            fsError[1] = Array(repeating: (r: 0.0, g: 0.0, b: 0.0), count: targetW + 1)
-                        }
-                    }
-
+                    cellPalettes[cellRow][cellCol] = [globalBg] + cellColors + padding
                 } else {
-                    // Hi-res: 2 colors per cell, dithering supported
                     let bestColors = findBestColors(cellPixels, count: 2)
                     let bg = bestColors.count > 0 ? bestColors[0] : 0
                     let fg = bestColors.count > 1 ? bestColors[1] : 1
 
                     bitmap.cellBackground[cellRow][cellCol] = UInt8(bg)
                     bitmap.cellForeground[cellRow][cellCol] = UInt8(fg)
+                    cellPalettes[cellRow][cellCol] = [bg, fg]
+                }
+            }
+        }
 
-                    for py in 0..<8 {
-                        let absY = cellRow * 8 + py
+        // -- Pass 2: assign pixels, scanline-major -----------------------------
+        //
+        // Floyd-Steinberg error diffusion REQUIRES scanline order: each
+        // pixel's error flows right and down into neighbours that have not
+        // been quantized yet. The previous cell-major traversal rotated the
+        // full-width error rows once per 8-pixel cell slice, scrambling the
+        // diffusion across cell boundaries. Palettes are already fixed by
+        // pass 1, so this pass can walk the image row by row.
 
-                        for px in 0..<cellPixelW {
-                            let x = cellCol * cellPixelW + px
-                            let y = absY
-                            guard x < targetW, y < targetH else { continue }
+        // Bayer 4x4 ordered-dither matrix (values in -0.5...0.4375, scaled x16)
+        let bayerMatrix: [[Double]] = [
+            [-0.5,     0.0,    -0.375,   0.125 ],
+            [ 0.25,   -0.25,    0.375,  -0.125 ],
+            [-0.3125,  0.1875, -0.4375,  0.0625],
+            [ 0.4375, -0.0625,  0.3125, -0.1875],
+        ]
 
-                            var rgb = pixels[y][x]
+        // Rolling two-row error buffer: [0] = current row, [1] = next row.
+        var fsError = Array(
+            repeating: Array(repeating: (r: 0.0, g: 0.0, b: 0.0), count: targetW + 1),
+            count: 2
+        )
 
-                            if dither == 1 {
-                                // Floyd-Steinberg: apply accumulated error
-                                rgb.r = max(0, min(255, rgb.r + fsError[0][x].r))
-                                rgb.g = max(0, min(255, rgb.g + fsError[0][x].g))
-                                rgb.b = max(0, min(255, rgb.b + fsError[0][x].b))
-                            } else if dither == 2 {
-                                let bayerMatrix: [[Double]] = [
-                                    [-0.5,    0.0,    -0.375,  0.125 ],
-                                    [ 0.25,  -0.25,   0.375, -0.125 ],
-                                    [-0.3125, 0.1875, -0.4375, 0.0625],
-                                    [ 0.4375,-0.0625,  0.3125,-0.1875],
-                                ]
-                                let threshold = bayerMatrix[y % 4][x % 4] * 16
-                                rgb.r = max(0, min(255, rgb.r + threshold))
-                                rgb.g = max(0, min(255, rgb.g + threshold))
-                                rgb.b = max(0, min(255, rgb.b + threshold))
-                            }
+        for y in 0..<targetH {
+            let cellRow = y / 8
 
-                            let bgDist = colorDistance(rgb, c64Color: bg)
-                            let fgDist = colorDistance(rgb, c64Color: fg)
-                            let chosen = bgDist < fgDist ? bg : fg
-                            bitmap.pixels[y][x] = chosen == bg ? 0 : 1
+            for x in 0..<targetW {
+                let cellCol = x / cellPixelW
+                let palette = cellPalettes[cellRow][cellCol]
 
-                            if dither == 1 {
-                                let chosenRGB = c64PaletteRGB[chosen]
-                                let errR = rgb.r - Double(chosenRGB.r)
-                                let errG = rgb.g - Double(chosenRGB.g)
-                                let errB = rgb.b - Double(chosenRGB.b)
+                var rgb = pixels[y][x]
 
-                                if x + 1 < targetW {
-                                    fsError[0][x + 1].r += errR * 7 / 16
-                                    fsError[0][x + 1].g += errG * 7 / 16
-                                    fsError[0][x + 1].b += errB * 7 / 16
-                                }
-                                if y + 1 < targetH {
-                                    if x > 0 {
-                                        fsError[1][x - 1].r += errR * 3 / 16
-                                        fsError[1][x - 1].g += errG * 3 / 16
-                                        fsError[1][x - 1].b += errB * 3 / 16
-                                    }
-                                    fsError[1][x].r += errR * 5 / 16
-                                    fsError[1][x].g += errG * 5 / 16
-                                    fsError[1][x].b += errB * 5 / 16
-                                    if x + 1 < targetW {
-                                        fsError[1][x + 1].r += errR * 1 / 16
-                                        fsError[1][x + 1].g += errG * 1 / 16
-                                        fsError[1][x + 1].b += errB * 1 / 16
-                                    }
-                                }
-                            }
+                if dither == 1 {
+                    // Floyd-Steinberg: apply accumulated error
+                    rgb.r = max(0, min(255, rgb.r + fsError[0][x].r))
+                    rgb.g = max(0, min(255, rgb.g + fsError[0][x].g))
+                    rgb.b = max(0, min(255, rgb.b + fsError[0][x].b))
+                } else if dither == 2 {
+                    let threshold = bayerMatrix[y % 4][x % 4] * 16
+                    rgb.r = max(0, min(255, rgb.r + threshold))
+                    rgb.g = max(0, min(255, rgb.g + threshold))
+                    rgb.b = max(0, min(255, rgb.b + threshold))
+                }
+
+                let chosenIdx = closestPaletteIndex(rgb, from: palette)
+                bitmap.pixels[y][x] = UInt8(chosenIdx)
+
+                if dither == 1 {
+                    // Distribute quantization error to unvisited neighbours
+                    let chosenRGB = c64PaletteRGB[palette[chosenIdx]]
+                    let errR = rgb.r - Double(chosenRGB.r)
+                    let errG = rgb.g - Double(chosenRGB.g)
+                    let errB = rgb.b - Double(chosenRGB.b)
+
+                    if x + 1 < targetW {
+                        fsError[0][x + 1].r += errR * 7 / 16
+                        fsError[0][x + 1].g += errG * 7 / 16
+                        fsError[0][x + 1].b += errB * 7 / 16
+                    }
+                    if y + 1 < targetH {
+                        if x > 0 {
+                            fsError[1][x - 1].r += errR * 3 / 16
+                            fsError[1][x - 1].g += errG * 3 / 16
+                            fsError[1][x - 1].b += errB * 3 / 16
                         }
-
-                        // Advance FS rolling buffer at the end of each image scanline.
-                        if dither == 1 {
-                            fsError[0] = fsError[1]
-                            fsError[1] = Array(repeating: (r: 0.0, g: 0.0, b: 0.0), count: targetW + 1)
+                        fsError[1][x].r += errR * 5 / 16
+                        fsError[1][x].g += errG * 5 / 16
+                        fsError[1][x].b += errB * 5 / 16
+                        if x + 1 < targetW {
+                            fsError[1][x + 1].r += errR * 1 / 16
+                            fsError[1][x + 1].g += errG * 1 / 16
+                            fsError[1][x + 1].b += errB * 1 / 16
                         }
                     }
                 }
+            }
+
+            // Advance the rolling buffer at the end of each full scanline
+            if dither == 1 {
+                fsError[0] = fsError[1]
+                fsError[1] = Array(repeating: (r: 0.0, g: 0.0, b: 0.0), count: targetW + 1)
             }
         }
 

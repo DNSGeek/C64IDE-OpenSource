@@ -166,12 +166,15 @@ class C64Bitmap {
     // MARK: Multi-color enforcement
 
     private func trySetPixelMultiColor(x: Int, y: Int, cellCol: Int, cellRow: Int, color: UInt8) -> DrawPixelResult {
-        // Build the four slot values for this cell
+        // Build the four slot values for this cell.
+        // Invariant: cellForeground/cellBackground/cellColorRAM store RAW
+        // color indices (0-15). Nibble packing happens only in
+        // generateScreenRAM at export time.
         let slotColors: [UInt8] = [
-            backgroundColor,                        // slot 0 — global
-            cellForeground[cellRow][cellCol] >> 4,  // slot 1 — screen RAM hi
-            cellBackground[cellRow][cellCol] & 0x0F, // slot 2 — screen RAM lo
-            cellColorRAM[cellRow][cellCol],          // slot 3 — color RAM
+            backgroundColor,                     // slot 0 - global $D021
+            cellForeground[cellRow][cellCol],    // slot 1 - screen RAM hi (raw)
+            cellBackground[cellRow][cellCol],    // slot 2 - screen RAM lo (raw)
+            cellColorRAM[cellRow][cellCol],      // slot 3 - color RAM
         ]
 
         // Match existing slot
@@ -225,11 +228,15 @@ class C64Bitmap {
     }
 
     /// Write a color into the specified multi-color per-cell slot register.
+    /// Stores the RAW color index (0-15) in all three arrays; the hi/lo
+    /// nibble packing into Screen RAM bytes happens only at export time
+    /// (generateScreenRAM). Storing pre-shifted values here would corrupt
+    /// exports and disagree with importKoala/importArtStudio, which store raw.
     private func assignMultiColorSlot(cellCol: Int, cellRow: Int, slot: Int, color: UInt8) {
         switch slot {
-        case 1: cellForeground[cellRow][cellCol] = color << 4
+        case 1: cellForeground[cellRow][cellCol] = color & 0x0F
         case 2: cellBackground[cellRow][cellCol] = color & 0x0F
-        case 3: cellColorRAM[cellRow][cellCol] = color
+        case 3: cellColorRAM[cellRow][cellCol] = color & 0x0F
         default: break
         }
     }
@@ -245,8 +252,8 @@ class C64Bitmap {
         if isMultiColor {
             switch pixVal {
             case 0: return backgroundColor
-            case 1: return cellForeground[cellRow][cellCol] >> 4  // Screen RAM hi-nibble
-            case 2: return cellBackground[cellRow][cellCol] & 0x0F  // Screen RAM lo-nibble
+            case 1: return cellForeground[cellRow][cellCol]  // raw 0-15
+            case 2: return cellBackground[cellRow][cellCol]  // raw 0-15
             case 3: return cellColorRAM[cellRow][cellCol]
             default: return 0
             }
@@ -475,52 +482,107 @@ class C64Bitmap {
     // MARK: - Export: PRG (self-displaying program)
 
     /// Export as a self-contained PRG that loads at $0801 and displays the image.
-    /// Note: This generates a direct memory dump. The file will be padded to $2000
-    /// so that bitmap data lands at the correct VIC-II address.
+    ///
+    /// File layout (memory address = $0801 + file offset - 2):
+    ///   $0801-$080C  BASIC stub: 10 SYS 2061
+    ///   $080D-       display code (VIC-II setup + screen/color RAM copy + freeze)
+    ///   ...          zero padding up to $2000
+    ///   $2000-$3F3F  bitmap data (8000 bytes)
+    ///   $3F40-$4327  screen RAM data (1000 bytes, copied to $0400 at runtime)
+    ///   $4328-$470F  color RAM data (1000 bytes, multi-color only, copied to $D800)
+    ///
+    /// Screen/color RAM live below the load address ($0400/$D800), so they
+    /// cannot be load-populated; the startup code copies them with unrolled
+    /// four-page loops (1024 bytes each; the 24-byte overspill past the
+    /// visible 1000 hits only unused screen bytes / sprite pointers and the
+    /// unused tail of color RAM, both harmless with sprites off).
     func exportAsPRG() -> Data {
-        // Generate a small 6502 program that sets up the VIC-II and displays the image
         var code: [UInt8] = []
 
         // Load address $0801
         code.append(contentsOf: [0x01, 0x08])
 
-        // BASIC stub: 10 SYS 2064
-        code.append(contentsOf: [0x0B, 0x08, 0x0A, 0x00, 0x9E, 0x32, 0x30, 0x36, 0x34, 0x00, 0x00, 0x00])
+        // BASIC stub: 10 SYS 2061
+        //   $0801: 0B 08        link to next line ($080B)
+        //   $0803: 0A 00        line number 10
+        //   $0805: 9E           SYS token
+        //   $0806: 32 30 36 31  "2061" = $080D, first byte after the stub
+        //   $080A: 00           end of line
+        //   $080B: 00 00        end of program
+        code.append(contentsOf: [0x0B, 0x08, 0x0A, 0x00, 0x9E,
+                                 0x32, 0x30, 0x36, 0x31, 0x00, 0x00, 0x00])
 
-        // Machine code at $0810
-        let bitmap = generateBitmapData()
+        // -- Machine code, entry at $080D --
 
-        // SEI
-        code.append(0x78)
+        code.append(0x78)                                        // SEI
 
-        // Set bitmap mode: LDA #$3B : STA $D011
-        // $D011 bit 5 enables bitmap mode
-        code.append(contentsOf: [0xA9, 0x3B, 0x8D, 0x11, 0xD0])
+        // $D011 = $3B: YSCROLL=3, 25 rows, screen on, bitmap mode (bit 5)
+        code.append(contentsOf: [0xA9, 0x3B])                    // LDA #$3B
+        code.append(contentsOf: [0x8D, 0x11, 0xD0])              // STA $D011
 
-        // Set VIC memory: LDA #$18 : STA $D018 (bitmap at $2000, screen at $0400)
-        code.append(contentsOf: [0xA9, 0x18, 0x8D, 0x18, 0xD0])
+        // $D018 = $18: screen at $0400, bitmap at $2000
+        code.append(contentsOf: [0xA9, 0x18])                    // LDA #$18
+        code.append(contentsOf: [0x8D, 0x18, 0xD0])              // STA $D018
 
         if isMultiColor {
-            // Enable multi-color: LDA $D016 : ORA #$10 : STA $D016
-            // $D016 bit 4 enables multi-color mode
-            code.append(contentsOf: [0xAD, 0x16, 0xD0, 0x09, 0x10, 0x8D, 0x16, 0xD0])
-            // Set background: LDA #bg : STA $D021
-            code.append(contentsOf: [0xA9, backgroundColor, 0x8D, 0x21, 0xD0])
+            code.append(contentsOf: [0xAD, 0x16, 0xD0])          // LDA $D016
+            code.append(contentsOf: [0x09, 0x10])                // ORA #$10   (MC on)
+            code.append(contentsOf: [0x8D, 0x16, 0xD0])          // STA $D016
+            code.append(contentsOf: [0xA9, backgroundColor & 0x0F]) // LDA #bg
+            code.append(contentsOf: [0x8D, 0x21, 0xD0])          // STA $D021
+        } else {
+            code.append(contentsOf: [0xAD, 0x16, 0xD0])          // LDA $D016
+            code.append(contentsOf: [0x29, 0xEF])                // AND #$EF   (MC off)
+            code.append(contentsOf: [0x8D, 0x16, 0xD0])          // STA $D016
         }
 
-        // Infinite loop: JMP *
-        let loopAddr = 0x0810 + code.count - 2
-        code.append(0x4C)
-        code.append(UInt8(loopAddr & 0xFF))
-        code.append(UInt8(loopAddr >> 8))
+        // -- Copy screen (and color) data into place --
+        // Unrolled X-indexed loop: each pass copies one byte per page pair,
+        // X wraps after 256 iterations = 1024 bytes per destination block.
+        let screenSrc = 0x3F40                    // $2000 + 8000
+        let colorSrc  = screenSrc + 1000          // $4328
 
-        // Pad to $2000 for bitmap data (direct memory dump strategy)
+        var pagePairs: [(src: Int, dst: Int)] = (0..<4).map {
+            (screenSrc + $0 * 0x100, 0x0400 + $0 * 0x100)
+        }
+        if isMultiColor {
+            pagePairs += (0..<4).map {
+                (colorSrc + $0 * 0x100, 0xD800 + $0 * 0x100)
+            }
+        }
+
+        code.append(contentsOf: [0xA2, 0x00])                    // LDX #$00
+        var loopBody: [UInt8] = []                               // loop:
+        for (src, dst) in pagePairs {
+            loopBody.append(contentsOf: [0xBD, UInt8(src & 0xFF), UInt8(src >> 8)])  // LDA src,X
+            loopBody.append(contentsOf: [0x9D, UInt8(dst & 0xFF), UInt8(dst >> 8)])  // STA dst,X
+        }
+        loopBody.append(0xE8)                                    // INX
+        // BNE loop: relative offset from the byte AFTER the operand back to
+        // the loop start = -(bytes so far + 2 for the BNE itself).
+        // Hi-res: -(4*6 + 1 + 2) = -27; multi-color: -(8*6 + 1 + 2) = -51.
+        let branchBack = -(loopBody.count + 2)
+        loopBody.append(contentsOf: [0xD0, UInt8(bitPattern: Int8(branchBack))])     // BNE loop
+        code.append(contentsOf: loopBody)
+
+        // Freeze: JMP to own address. Address of this instruction is
+        // $0801 + (bytes emitted so far - 2 for the load address).
+        let jmpAddr = 0x0801 + (code.count - 2)
+        code.append(contentsOf: [0x4C,
+                                 UInt8(jmpAddr & 0xFF),
+                                 UInt8((jmpAddr >> 8) & 0xFF)])  // JMP jmpAddr
+
+        // Pad so the bitmap's first byte lands at $2000
         while code.count < 0x2000 - 0x0801 + 2 {
             code.append(0x00)
         }
 
-        // Bitmap at $2000
-        code.append(contentsOf: bitmap)
+        // Data blocks (see layout comment above)
+        code.append(contentsOf: generateBitmapData())            // $2000
+        code.append(contentsOf: generateScreenRAM())             // $3F40
+        if isMultiColor {
+            code.append(contentsOf: generateColorRAM())          // $4328
+        }
 
         return Data(code)
     }

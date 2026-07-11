@@ -327,11 +327,16 @@ class GfxEditorViewController: NSViewController, NSMenuItemValidation {
     }
 
     @objc private func modeChanged(_ sender: NSButton) {
+        // The mode switch clears the canvas, so it must be undoable.
+        // UndoState snapshots isMultiColor, so undo restores both the
+        // pixels and the mode (undoAction re-syncs this checkbox).
+        bitmap.saveUndo()
         bitmap.isMultiColor = sender.state == .on
         bitmap.clear()
         canvasView.needsDisplay = true
         updateCanvasSize()
         updateInfo()
+        onModified?()
     }
 
     @objc private func gridChanged(_ sender: NSButton) {
