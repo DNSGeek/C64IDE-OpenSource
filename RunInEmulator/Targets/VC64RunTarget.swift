@@ -280,6 +280,14 @@ final class VC64RunTarget: NSObject, @MainActor DebuggableTarget {
     func stepCycle()  { bridge.stepCycle();  notifyPause() }
     func finishLine() { bridge.finishLine() }
 
+    /// Sets PC to `address` and resumes. Not implemented yet: VC64Bridge
+    /// doesn't expose a PC setter, and the RetroShell syntax for register
+    /// writes needs verifying against the embedded VCCore version.
+    /// TODO: add a jump/setPC method to VC64Bridge and route this through it.
+    func goto(address: UInt16) {
+        log(String(format: "Go-to $%04X isn't implemented for VirtualC64 yet.", address), .warning)
+    }
+
     func setBreakpoint(at address: UInt16)    { bridge.setBreakpointAt(address) }
     func deleteBreakpoint(at address: UInt16) { bridge.deleteBreakpoint(at: address) }
     func deleteAllBreakpoints()               { bridge.retroShellExec("break delete") }

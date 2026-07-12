@@ -499,7 +499,9 @@ class DebuggerViewController: NSViewController {
     // MARK: - Breakpoints & Memory
 
     private func getAddress() -> UInt16 {
-        UInt16(addrField.stringValue, radix: 16) ?? 0x0800
+        var s = addrField.stringValue.trimmingCharacters(in: .whitespaces)
+        if s.hasPrefix("$") { s.removeFirst() }
+        return UInt16(s, radix: 16) ?? 0x0800
     }
 
     @objc private func setBP(_ sender: Any?) {
@@ -509,18 +511,26 @@ class DebuggerViewController: NSViewController {
     }
 
     @objc private func delBP(_ sender: Any?) {
+        // Address-based to mirror setBP and DebuggableTarget.deleteBreakpoint(at:).
         let alert = NSAlert()
         alert.messageText = "Delete Breakpoint"
-        alert.informativeText = "Enter breakpoint number:"
+        alert.informativeText = "Enter breakpoint address (hex):"
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 100, height: 24))
-        field.stringValue = "1"
+        field.stringValue = addrField.stringValue
         alert.accessoryView = field
         alert.addButton(withTitle: "Delete")
         alert.addButton(withTitle: "Cancel")
-        if alert.runModal() == .alertFirstButtonReturn, let num = Int(field.stringValue) {
-            debugTarget?.deleteBreakpoint(at: getAddress())
-            appendConsole("Deleting breakpoint #\(num)", color: warnYellow)
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        var s = field.stringValue.trimmingCharacters(in: .whitespaces)
+        if s.hasPrefix("$") { s.removeFirst() }
+        guard let addr = UInt16(s, radix: 16) else {
+            appendConsole("Invalid breakpoint address: \(field.stringValue)", color: .red)
+            return
         }
+        debugTarget?.deleteBreakpoint(at: addr)
+        appendConsole(String(format: "Deleting breakpoint at $%04X", addr), color: warnYellow)
     }
 
     @objc private func listBP(_ sender: Any?) {
@@ -529,7 +539,9 @@ class DebuggerViewController: NSViewController {
 
     @objc private func memAction(_ sender: Any?) {
         let addr = getAddress()
-        guard let data = debugTarget?.readMemory(from: addr, to: addr + 0x7F) else { return }
+        // Clamp the end so addr + 0x7F can't trap past $FFFF (e.g. user typed FFFF)
+        let end = UInt16(min(Int(addr) + 0x7F, 0xFFFF))
+        guard let data = debugTarget?.readMemory(from: addr, to: end) else { return }
         let bytesPerRow = 16
         for rowStart in stride(from: 0, to: data.count, by: bytesPerRow) {
             let rowEnd = min(rowStart + bytesPerRow, data.count)
@@ -571,10 +583,14 @@ class DebuggerViewController: NSViewController {
         regLabels["SP"]?.stringValue = String(format: "%02X", regs.sp)
         flagsLabel.stringValue = regs.flagsString
 
-        // Source-level debugging: map PC → source line via .dbg info
-        if let line = debugInfo?.lineForAddress(regs.pc) {
-            appendConsole(String(format: "  → Source line %d (PC=$%04X)", line, regs.pc), color: warnYellow)
-            onDebugLineChanged?(line)
+        // Source-level debugging: map PC → source location via .dbg info
+        if let info = debugInfo, let loc = info.location(forAddress: regs.pc) {
+            let file = info.fileName(forId: loc.fileId)
+                .map { ($0 as NSString).lastPathComponent } ?? "?"
+            appendConsole(String(format: "  → %@:%d (PC=$%04X)", file, loc.line, regs.pc), color: warnYellow)
+            // Only highlight primary-file lines; a line number from an
+            // include would highlight the wrong line in the main editor.
+            onDebugLineChanged?(loc.fileId == info.primaryFileId ? loc.line : nil)
         } else {
             // PC is in ROM or code without debug info — clear highlight
             onDebugLineChanged?(nil)
@@ -663,10 +679,14 @@ class DebuggerViewController: NSViewController {
     }
 
     @objc private func goAction(_ sender: Any?) {
+        guard let target = debugTarget else {
+            appendConsole("No debug session attached.", color: warnYellow)
+            return
+        }
         let addr = getAddress()
         appendConsole(String(format: "→ PC = $%04X", addr), color: promptCyan)
-        debugTarget?.resume()
-        _ = debugTarget?.registers
+        onDebugLineChanged?(nil)
+        target.goto(address: addr)
     }
 
     // MARK: - Cycle Counter

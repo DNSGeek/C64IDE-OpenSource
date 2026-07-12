@@ -165,6 +165,11 @@ protocol DebuggableTarget: EmulatorTarget {
     func stepCycle()
     func finishLine()
 
+    /// Sets the program counter to `address` and resumes execution from
+    /// there. Targets that cannot set PC should report the limitation via
+    /// `onLog` rather than silently resuming from the current PC.
+    func goto(address: UInt16)
+
     // ── Breakpoints ────────────────────────────────────────
     func setBreakpoint(at address: UInt16)
     func deleteBreakpoint(at address: UInt16)

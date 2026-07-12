@@ -14,8 +14,10 @@ import Foundation
 ///   - `line`: Source file line → span mapping
 ///   - `sym`: Symbol names → addresses
 ///
-/// The parser builds bidirectional mappings (`lineToAddress` and `addressToLine`)
-/// to enable IDE features like breakpoint setting and source highlighting.
+/// The parser builds bidirectional mappings (`fileLineToAddress` and
+/// `addressToLocation`), keyed by (file, line) so multi-file projects
+/// (.include) don't collide, to enable IDE features like breakpoint
+/// setting and source highlighting.
 class DebugInfoParser {
 
     // Parsed data
@@ -26,8 +28,14 @@ class DebugInfoParser {
     private(set) var symbols: [DebugSymbol] = []
 
     // Derived mappings
-    private(set) var lineToAddress: [Int: UInt16] = [:]      // source line → memory address
-    private(set) var addressToLine: [UInt16: Int] = [:]       // memory address → source line
+    private(set) var fileLineToAddress: [SourceLocation: UInt16] = [:]  // (file, line) → memory address
+    private(set) var addressToLocation: [UInt16: SourceLocation] = [:]  // memory address → (file, line)
+
+    /// The file assumed when no explicit file is given (editor breakpoints,
+    /// highlight callbacks). Defaults to the file contributing the most line
+    /// mappings, which in practice is the main source. Override with
+    /// `setPrimaryFile(named:)`.
+    private(set) var primaryFileId: Int?
     private(set) var symbolsByName: [String: DebugSymbol] = [:]
     private(set) var symbolsByAddress: [UInt16: DebugSymbol] = [:]
 
@@ -132,8 +140,10 @@ class DebugInfoParser {
         guard let id = intVal(props["id"]),
               let name = props["name"],
               let start = hexVal(props["start"]),
-              let size = hexVal(props["size"]) else { return }
-        segments[id] = DebugSegment(id: id, name: name, start: UInt16(start), size: Int(size))
+              let size = hexVal(props["size"]),
+              // Out-of-range start would trap UInt16(start); skip such segments
+              (0...0xFFFF).contains(start) else { return }
+        segments[id] = DebugSegment(id: id, name: name, start: UInt16(start), size: size)
     }
 
     private func parseSpan(_ props: [String: String]) {
@@ -147,13 +157,21 @@ class DebugInfoParser {
     private func parseLine(_ props: [String: String]) {
         guard let fileId = intVal(props["file"]),
               let lineNum = intVal(props["line"]) else { return }
-        let spanId = intVal(props["span"])
-        lines.append(DebugLine(fileId: fileId, lineNumber: lineNum, spanId: spanId))
+        // ld65 emits multi-span lines as `span=286+287` (common with macros).
+        // Parse every span so none of the line's code goes unmapped.
+        let spanIds = props["span"]?
+            .split(separator: "+")
+            .compactMap { intVal(String($0)) } ?? []
+        lines.append(DebugLine(fileId: fileId, lineNumber: lineNum, spanIds: spanIds))
     }
 
     private func parseSymbol(_ props: [String: String]) {
+        // ca65 equates can be 32-bit or negative (stored as large hex values).
+        // Anything outside the 6502 address space can't be a label or
+        // breakpoint target and would trap UInt16(val), so skip it.
         guard let name = props["name"],
-              let val = hexVal(props["val"]) else { return }
+              let val = hexVal(props["val"]),
+              (0...0xFFFF).contains(val) else { return }
         let segId = intVal(props["seg"])
         let size = intVal(props["size"])
         let sym = DebugSymbol(name: name, address: UInt16(val), segmentId: segId, size: size)
@@ -163,29 +181,44 @@ class DebugInfoParser {
     // MARK: - Build Mappings
 
     private func buildMappings() {
-        lineToAddress.removeAll()
-        addressToLine.removeAll()
+        fileLineToAddress.removeAll()
+        addressToLocation.removeAll()
         symbolsByName.removeAll()
         symbolsByAddress.removeAll()
 
-        // Build line → address mapping
+        // Build (file, line) → address mapping
         for line in lines {
-            guard let spanId = line.spanId,
-                  let span = spans[spanId],
-                  let seg = segments[span.segmentId] else { continue }
+            for spanId in line.spanIds {
+                guard let span = spans[spanId],
+                      let seg = segments[span.segmentId] else { continue }
 
-            let address = seg.start &+ UInt16(span.offset)
+                // Compute in Int so a corrupt or oversized offset can't
+                // trap UInt16(); addresses past $FFFF are skipped.
+                let addrInt = Int(seg.start) + span.offset
+                guard (0...0xFFFF).contains(addrInt) else { continue }
+                let address = UInt16(addrInt)
 
-            // Only map if we don't have a mapping for this line yet,
-            // or if this address is lower (first instruction on the line)
-            if lineToAddress[line.lineNumber] == nil || address < lineToAddress[line.lineNumber]! {
-                lineToAddress[line.lineNumber] = address
+                let loc = SourceLocation(fileId: line.fileId, line: line.lineNumber)
+
+                // Only map if we don't have a mapping for this line yet,
+                // or if this address is lower (first instruction on the line)
+                if fileLineToAddress[loc] == nil || address < fileLineToAddress[loc]! {
+                    fileLineToAddress[loc] = address
+                }
+
+                // Reverse mapping (prefer lower line numbers for the same address)
+                if addressToLocation[address] == nil || loc.line < addressToLocation[address]!.line {
+                    addressToLocation[address] = loc
+                }
             }
+        }
 
-            // Reverse mapping (prefer lower line numbers for the same address)
-            if addressToLine[address] == nil || line.lineNumber < addressToLine[address]! {
-                addressToLine[address] = line.lineNumber
-            }
+        // Default primary file: the one contributing the most line mappings.
+        // (A user-set primary file survives re-parsing only if it still exists.)
+        if primaryFileId == nil || files[primaryFileId!] == nil {
+            var counts: [Int: Int] = [:]
+            for loc in fileLineToAddress.keys { counts[loc.fileId, default: 0] += 1 }
+            primaryFileId = counts.max(by: { $0.value < $1.value })?.key
         }
 
         // Build symbol mappings
@@ -200,30 +233,60 @@ class DebugInfoParser {
 
     // MARK: - Queries
 
-    /// Returns the memory address for a given source line number.
-    func addressForLine(_ line: Int) -> UInt16? {
-        return lineToAddress[line]
+    /// Returns the memory address for a source line. When `fileId` is nil,
+    /// the primary file is assumed (i.e. editor breakpoints in the main source).
+    func addressForLine(_ line: Int, fileId: Int? = nil) -> UInt16? {
+        guard let fid = fileId ?? primaryFileId else { return nil }
+        return fileLineToAddress[SourceLocation(fileId: fid, line: line)]
     }
 
-    /// Returns the source line for a given memory address.
+    /// Returns the source location (file + line) for a memory address.
     ///
     /// Performs an exact match first. If none exists, finds the closest
     /// address that is `≤` the given address, enabling approximate source
     /// highlighting for ranges spanning multiple instructions.
-    func lineForAddress(_ address: UInt16) -> Int? {
+    func location(forAddress address: UInt16) -> SourceLocation? {
         // Exact match first
-        if let line = addressToLine[address] { return line }
+        if let loc = addressToLocation[address] { return loc }
 
         // Find the closest address that's ≤ the given address
-        var bestLine: Int?
+        var bestLoc: SourceLocation?
         var bestAddr: UInt16 = 0
-        for (addr, line) in addressToLine {
+        for (addr, loc) in addressToLocation {
             if addr <= address && addr >= bestAddr {
                 bestAddr = addr
-                bestLine = line
+                bestLoc = loc
             }
         }
-        return bestLine
+        return bestLoc
+    }
+
+    /// Returns the primary-file source line for a memory address, or `nil`
+    /// if the address maps into a different file (e.g. an include). Use
+    /// `location(forAddress:)` when the file matters.
+    func lineForAddress(_ address: UInt16) -> Int? {
+        guard let loc = location(forAddress: address),
+              loc.fileId == primaryFileId else { return nil }
+        return loc.line
+    }
+
+    /// Returns the source file name for a file ID.
+    func fileName(forId id: Int) -> String? {
+        return files[id]?.name
+    }
+
+    /// Sets the primary file by name, matched on the last path component
+    /// case-insensitively. Returns `true` if a matching file was found.
+    @discardableResult
+    func setPrimaryFile(named name: String) -> Bool {
+        let want = (name as NSString).lastPathComponent.lowercased()
+        for file in files.values {
+            if (file.name as NSString).lastPathComponent.lowercased() == want {
+                primaryFileId = file.id
+                return true
+            }
+        }
+        return false
     }
 
     /// Returns the address for a named symbol.
@@ -276,10 +339,13 @@ class DebugInfoParser {
 
     /// Returns a summary string of the parsed debug information.
     var summary: String {
-        let lineCount = lineToAddress.count
+        let lineCount = fileLineToAddress.count
+        let primaryName = primaryFileId
+            .flatMap { files[$0]?.name }
+            .map { " (primary: \(($0 as NSString).lastPathComponent))" } ?? ""
         let symCount = symbols.filter { !$0.name.hasPrefix("@") }.count
         let segNames = segments.values.map { $0.name }.joined(separator: ", ")
-        return "\(lineCount) line mappings, \(symCount) symbols, segments: \(segNames)"
+        return "\(lineCount) line mappings across \(files.count) file(s)\(primaryName), \(symCount) symbols, segments: \(segNames)"
     }
 
     // MARK: - Helpers
@@ -327,11 +393,17 @@ struct DebugSpan {
     let size: Int
 }
 
-/// Maps a source line to a span.
+/// Maps a source line to one or more spans.
 struct DebugLine {
     let fileId: Int
     let lineNumber: Int
-    let spanId: Int?
+    let spanIds: [Int]
+}
+
+/// A (file, line) pair identifying a location in source code.
+struct SourceLocation: Hashable {
+    let fileId: Int
+    let line: Int
 }
 
 /// Represents a symbol (variable, function, label) with its address.

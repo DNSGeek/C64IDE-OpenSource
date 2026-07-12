@@ -192,6 +192,13 @@ final class VICERunTarget: NSObject, @MainActor DebuggableTarget {
     func stepCycle() { sendRaw("z"); requestRegisters() }   // VICE: no single-cycle step
     func finishLine() { sendRaw("n") }
 
+    /// Sets the program counter to `address` and resumes execution from
+    /// there (VICE monitor `g`). The remote monitor accepts this whether
+    /// the machine is paused in the monitor or running.
+    func goto(address: UInt16) {
+        sendRaw(String(format: "g %04x", address))
+    }
+
     func setBreakpoint(at address: UInt16) {
         guard breakpointMap[address] == nil else { return }
         sendRaw(String(format: "break %04x", address))
@@ -203,6 +210,10 @@ final class VICERunTarget: NSObject, @MainActor DebuggableTarget {
     }
 
     func deleteBreakpoint(at address: UInt16) {
+        // The map only tracks breakpoints set via setBreakpoint(at:).
+        // Breakpoints created by the debug.mon file or a console command
+        // won't be in it, so on a miss, re-list before giving up.
+        if breakpointMap[address] == nil { refreshBreakpointMap() }
         guard let num = breakpointMap[address] else { return }
         sendRaw("delete \(num)")
         breakpointMap.removeValue(forKey: address)
