@@ -35,6 +35,12 @@ struct BuildResult {
     let assembleTime: TimeInterval
     let linkTime: TimeInterval
 
+    /// Per-disk bundle outcomes from the post-build bundle phase, if one ran.
+    /// Empty when there is no disk config or the compile phase failed.
+    /// (Has a default value, so the memberwise initializer used by existing
+    /// call sites is unchanged.)
+    var diskBundleResults: [DiskBundleResult] = []
+
     var totalTime: TimeInterval { assembleTime + linkTime }
 
     var errorCount: Int { diagnostics.filter { $0.severity == .error }.count }
@@ -114,6 +120,15 @@ class BuildManager {
 
     /// Build type of the currently executing build. Set at start of _buildSync, cleared on completion.
     private var currentBuildType: BuildType?
+
+    // MARK: - Project Context
+
+    /// The currently open project. Set by MainWindowController when a project
+    /// opens or closes. `nil` in loose-file mode - disk bundling is skipped.
+    var project: C64Project?
+
+    /// Root directory of the project file. Set alongside `project`.
+    var projectRoot: URL?
 
     init(config: BuildConfiguration) {
         self.config = config
@@ -220,10 +235,16 @@ class BuildManager {
 
         let linkerConfig: String
         switch type {
-        case .assemblyPrg,
-             .assemblyToData:   linkerConfig = LinkerConfigs.c64Prg
+        case .assemblyPrg:      linkerConfig = LinkerConfigs.c64Prg
         case .assemblyRaw:      linkerConfig = LinkerConfigs.c64Raw
         case .assemblyUpperRAM: linkerConfig = LinkerConfigs.c64UpperRAM
+        case .assemblyToData:
+            // Must NOT use the $0801 layout: the generated DATA loader is
+            // itself a BASIC program living at $0801, so POKEing the payload
+            // there would overwrite the running loader. $C000 is the classic
+            // "SYS 49152" home for DATA-loaded ML and matches loadAddr == entry,
+            // which the generated SYS line assumes.
+            linkerConfig = LinkerConfigs.c64UpperRAM
         }
 
         let configPath: String

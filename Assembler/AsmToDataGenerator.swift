@@ -56,6 +56,12 @@ struct AsmToDataGenerator {
             return .failure(AsmToDataError(message: "PRG file has no payload bytes after the load address header."))
         }
 
+        // The loader POKEs loadAddr..loadAddr+byteCount-1; POKE can't reach past $FFFF.
+        guard Int(loadAddr) + byteCount <= 0x10000 else {
+            return .failure(AsmToDataError(message:
+                "Payload of \(byteCount) bytes at $\(String(format: "%04X", loadAddr)) runs past $FFFF."))
+        }
+
         var output: [String] = []
         var lineNum = params.startLine
         let inc     = params.lineIncrement
@@ -91,6 +97,32 @@ struct AsmToDataGenerator {
             output.append("\(lineNum) DATA \(csv)")
             lineNum += inc
             offset  += params.bytesPerRow
+        }
+
+        // Self-overlap guard: the generated program is itself a BASIC program
+        // occupying memory from $0801 upward, and BASIC variables (I, V) live
+        // immediately after the program text. If the POKE target range
+        // intersects that region, the loader destroys itself at RUN.
+        //
+        // Tokenized program size is bounded above by the raw text size plus a
+        // small per-line overhead: tokenizing only shrinks keywords, digits
+        // and commas are 1:1, and 6 bytes per line generously covers the
+        // link pointer, binary line number, and terminator versus the text's
+        // line-number prefix. 256 bytes of slack covers the loader's variables.
+        let basicStart     = 0x0801
+        let tokenizedBound = output.reduce(0) { $0 + $1.utf8.count + 6 } + 2
+        let basicEnd       = basicStart + tokenizedBound + 256
+        let loadStart      = Int(loadAddr)
+        let loadEnd        = loadStart + byteCount
+
+        if loadStart < basicEnd && loadEnd > basicStart {
+            let hexAddr = String(format: "%04X", loadAddr)
+            let hexEnd  = String(format: "%04X", basicEnd - 1)
+            return .failure(AsmToDataError(message:
+                "Load address $\(hexAddr) overlaps the generated BASIC program " +
+                "(approx. $0801-$\(hexEnd) including variables). The DATA loader " +
+                "would POKE over itself at RUN. Link the code above the BASIC " +
+                "program instead, e.g. with the Upper RAM ($C000) layout."))
         }
 
         return .success(output.joined(separator: "\n"))

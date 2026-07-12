@@ -6,6 +6,7 @@
 
 import Cocoa
 import SwiftUI
+import Combine
 
 // MARK: - Build Preferences View
 
@@ -304,6 +305,7 @@ class BuildPreferencesViewModel: ObservableObject {
     @Published var preferredC64Emulator: RunTarget = .vc64
 
     private let config: BuildConfiguration
+    private var cancellables = Set<AnyCancellable>()
 
     init(config: BuildConfiguration) {
         self.config = config
@@ -325,17 +327,47 @@ class BuildPreferencesViewModel: ObservableObject {
         self.videoStandard = config.viceVideoStandard
         self.preferredC64Emulator = config.preferredC64Emulator
         validate()
+
+        // Live revalidation: re-check whenever any path or ROM field changes,
+        // whether typed or set via Browse (both go through the @Published
+        // bindings). Debounced so we don't stat() on every keystroke while
+        // the user is mid-path. Each publisher replays its current value on
+        // subscription; the debounce collapses those into one redundant
+        // validate() shortly after init, which is harmless.
+        let pathPublishers: [AnyPublisher<Void, Never>] = [
+            $ca65Path, $ld65Path, $vicePath, $x128Path, $xpetPath, $xemuPath,
+            $kernalROM, $basicROM, $chargenROM,
+        ].map { $0.map { _ in () }.eraseToAnyPublisher() }
+
+        Publishers.MergeMany(pathPublishers)
+            .debounce(for: .milliseconds(300), scheduler: DispatchQueue.main)
+            .sink { [weak self] in self?.validate() }
+            .store(in: &cancellables)
     }
 
     /// Auto-detects toolchain paths from common locations and Homebrew.
+    ///
+    /// Detects into a scratch configuration seeded with the current field
+    /// values, so paths that aren't found keep what the user entered.
+    /// Previously this mutated the live shared `BuildConfiguration` directly,
+    /// which meant Cancel still left the in-memory config changed (unsaved
+    /// but active) until relaunch. Now nothing touches the shared config
+    /// until `save()`.
     func autoDetect() {
-        config.autoDetect()
-        ca65Path = config.ca65Path
-        ld65Path = config.ld65Path
-        vicePath = config.vicePath
-        x128Path = config.x128Path
-        xpetPath = config.xpetPath
-        xemuPath = config.xemuPath
+        let scratch = BuildConfiguration()
+        scratch.ca65Path = ca65Path
+        scratch.ld65Path = ld65Path
+        scratch.vicePath = vicePath
+        scratch.x128Path = x128Path
+        scratch.xpetPath = xpetPath
+        scratch.xemuPath = xemuPath
+        scratch.autoDetect()
+        ca65Path = scratch.ca65Path
+        ld65Path = scratch.ld65Path
+        vicePath = scratch.vicePath
+        x128Path = scratch.x128Path
+        xpetPath = scratch.xpetPath
+        xemuPath = scratch.xemuPath
         validate()
     }
 

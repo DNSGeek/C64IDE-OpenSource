@@ -29,23 +29,14 @@ struct DiskBundleResult {
 
 // MARK: - BuildResult extension
 
-// Swift doesn't allow stored-property extensions, so we use a parallel
-// container vended through a static dictionary keyed by ObjectIdentifier.
-private var diskResultsStore: [ObjectIdentifier: [DiskBundleResult]] = [:]
-
-private enum Keys {
-    static var project:     UInt8 = 1
-    static var projectRoot: UInt8 = 2
-}
+// NOTE: `diskBundleResults` is now a stored property on BuildResult itself
+// (see BuildManager.swift). The previous implementation vended it through a
+// global dictionary keyed by ObjectIdentifier(self as AnyObject), which is
+// broken for structs: every bridge to AnyObject boxes the value into a fresh
+// object, so the getter and setter never agreed on a key and the getter
+// always returned []. The dictionary also never evicted entries.
 
 extension BuildResult {
-
-    /// Per-disk bundle outcomes from the bundle phase, if one ran.
-    /// Empty when there is no disk config or the compile phase failed.
-    var diskBundleResults: [DiskBundleResult] {
-        get { diskResultsStore[ObjectIdentifier(self as AnyObject)] ?? [] }
-        set { diskResultsStore[ObjectIdentifier(self as AnyObject)] = newValue }
-    }
 
     /// Summary line appended to the build log after all disk phases.
     var diskBundleSummary: String? {
@@ -67,31 +58,11 @@ extension BuildResult {
 
 extension BuildManager {
 
-    // MARK: - Project context
-
-    /// The currently open project. Set by MainWindowController when a project opens or closes.
-    /// `nil` in loose-file mode — disk bundling is skipped.
-    var project: C64Project? {
-        get { _project }
-        set { _project = newValue }
-    }
-
-    /// Root directory of the project file. Set alongside `project`.
-    var projectRoot: URL? {
-        get { _projectRoot }
-        set { _projectRoot = newValue }
-    }
-
-    // Backing storage via associated objects (avoids stored-property restrictions on class extensions).
-    private var _project: C64Project? {
-        get { objc_getAssociatedObject(self, &Keys.project) as? C64Project }
-        set { objc_setAssociatedObject(self, &Keys.project, newValue, .OBJC_ASSOCIATION_RETAIN_NONATOMIC) }
-    }
-
-    private var _projectRoot: URL? {
-        get { objc_getAssociatedObject(self, &Keys.projectRoot) as? URL }
-        set { objc_setAssociatedObject(self, &Keys.projectRoot, newValue, .OBJC_ASSOCIATION_RETAIN_NONATOMIC) }
-    }
+    // NOTE: `project` and `projectRoot` are now stored properties on
+    // BuildManager (see BuildManager.swift). The associated-object backing
+    // that used to live here was only needed because stored properties are
+    // not allowed in extensions - moving them into the class removes the
+    // objc runtime dependency entirely.
 
     // MARK: - Bundle phase entry point
 
@@ -213,4 +184,3 @@ extension BuildManager {
         return results
     }
 }
-

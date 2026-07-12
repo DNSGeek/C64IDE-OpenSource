@@ -144,7 +144,15 @@ class BuildConfiguration: Codable {
                     "/opt/homebrew/bin/x64sc",
                     "/usr/local/bin/x64sc",
                 ]
-                if !alternatives.contains(where: { FileManager.default.isExecutableFile(atPath: $0) }) {
+                if let found = alternatives.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) {
+                    // Self-heal: adopt the working binary for this session so the
+                    // launch that follows validation actually uses it. Previously
+                    // we suppressed the error here but kept the stale vicePath,
+                    // so validation passed and the launch then failed anyway.
+                    // Intentionally not persisted - Preferences and autoDetect()
+                    // remain the ways to save a path change.
+                    vicePath = found
+                } else {
                     errors.append("VICE (x64sc) not found at: \(vicePath)")
                 }
             }
