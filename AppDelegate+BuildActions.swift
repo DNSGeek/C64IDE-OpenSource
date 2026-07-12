@@ -95,7 +95,10 @@ extension AppDelegate {
 
         // Bind the debugger immediately after the coordinator launches the target.
         // This ensures the debugger captures the session before execution begins.
+        // The closure is one-shot: it clears itself so a later plain Build & Run
+        // doesn't silently rebind the debugger with stale debug info.
         EmulatorCoordinator.shared.onDidLaunch = { [weak self] launched in
+            EmulatorCoordinator.shared.onDidLaunch = nil
             guard let self = self,
                   let dbgVC = self.debuggerController?.debuggerVC else { return }
             dbgVC.debugInfo   = self.mainWindowController?.buildManager.lastDebugInfo
@@ -134,13 +137,18 @@ extension AppDelegate {
     // MARK: - Build & Save to Disk
 
     /// Compiles the current file and exports it to a D64/D81 disk image.
+    ///
+    /// BASIC files are tokenized synchronously; assembly files are built through
+    /// the (asynchronous) build pipeline, and the disk export runs from the build
+    /// completion callback rather than immediately, so the PRG on disk is never stale.
+    @MainActor
     @objc func buildAndSaveToD64(_ sender: Any?) {
         guard let wc = mainWindowController else { return }
 
         if wc.editorViewController.document.fileURL == nil {
             wc.bottomPanelController.appendBuildOutput("File must be saved before building.", type: .warning)
             wc.editorViewController.saveDocumentAs { [weak self] success in
-                if success { self?.buildAndSaveToD64(sender) }
+                if success { Task { @MainActor in self?.buildAndSaveToD64(sender) } }
             }
             return
         }
@@ -156,6 +164,7 @@ extension AppDelegate {
         wc.bottomPanelController.selectTab(.build)
 
         if doc.fileType.usesBasicHighlighting {
+            // Tokenization is synchronous, so the PRG is ready as soon as it succeeds.
             do {
                 try FileManager.default.createDirectory(at: buildDir, withIntermediateDirectories: true)
                 try BasicTokenizer.tokenizeToFile(doc.content, outputURL: prgURL,
@@ -165,13 +174,35 @@ extension AppDelegate {
                 wc.bottomPanelController.appendBuildOutput("✗ Tokenization failed: \(error.localizedDescription)", type: .error)
                 return
             }
+            promptDiskExport(prgURL: prgURL, baseName: baseName, wc: wc)
         } else if doc.fileType.usesAssemblyHighlighting {
+            // The build runs asynchronously. Hook the completion callback (restoring
+            // any prior handler, same pattern as buildAndDebug) and export from there.
+            let bm = wc.buildManager
+            let priorCompletion = bm?.onBuildComplete
+            bm?.onBuildComplete = { [weak self] result in
+                bm?.onBuildComplete = priorCompletion
+                priorCompletion?(result)
+                Task { @MainActor in
+                    guard let self, let wc = self.mainWindowController else { return }
+                    guard result.success else {
+                        wc.bottomPanelController.appendBuildOutput(
+                            "Build failed. Disk export cancelled.", type: .error)
+                        return
+                    }
+                    self.promptDiskExport(prgURL: prgURL, baseName: baseName, wc: wc)
+                }
+            }
             wc.performBuildOnly(sender)
         } else {
             wc.bottomPanelController.appendBuildOutput("Unknown file type.", type: .error)
             return
         }
+    }
 
+    /// Verifies the built PRG exists on disk and prompts for the export destination.
+    @MainActor
+    private func promptDiskExport(prgURL: URL, baseName: String, wc: MainWindowController) {
         guard FileManager.default.fileExists(atPath: prgURL.path),
               let prgData = try? Data(contentsOf: prgURL) else {
             wc.bottomPanelController.appendBuildOutput("No PRG file found. Build may have failed.", type: .error)
@@ -218,8 +249,12 @@ extension AppDelegate {
                 : D64Image(diskName: baseName.uppercased(), diskID: "C6")
             let filename = String(baseName.uppercased().prefix(16))
             if disk.writeFile(name: filename, type: 0x82, data: Array(prgData)) {
-                try? disk.save(to: url)
-                wc.bottomPanelController.appendBuildOutput("✓ Saved to \(ext.uppercased()): \(url.lastPathComponent)", type: .success)
+                do {
+                    try disk.save(to: url)
+                    wc.bottomPanelController.appendBuildOutput("✓ Saved to \(ext.uppercased()): \(url.lastPathComponent)", type: .success)
+                } catch {
+                    wc.bottomPanelController.appendBuildOutput("✗ Could not save disk image: \(error.localizedDescription)", type: .error)
+                }
             } else {
                 wc.bottomPanelController.appendBuildOutput("✗ Failed to write to disk image.", type: .error)
             }

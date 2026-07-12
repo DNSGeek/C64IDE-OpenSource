@@ -193,7 +193,10 @@ extension AppDelegate {
         let charItem = NSMenuItem(title: "Character Set Editor", action: #selector(openCharEditor(_:)), keyEquivalent: "d")
         charItem.keyEquivalentModifierMask = [.command, .shift]
         menu.addItem(charItem)
-        menu.addItem(NSMenuItem(title: "ROM Character Set Viewer", action: #selector(openCharROMViewer(_:)), keyEquivalent: "c"))
+        // Note: plain Cmd+C would collide with Edit > Copy, so use Cmd+Option+C.
+        let romViewerItem = NSMenuItem(title: "ROM Character Set Viewer", action: #selector(openCharROMViewer(_:)), keyEquivalent: "c")
+        romViewerItem.keyEquivalentModifierMask = [.command, .option]
+        menu.addItem(romViewerItem)
         menu.addItem(.separator())
         let debugItem = NSMenuItem(title: "Debugger", action: #selector(openDebugger(_:)), keyEquivalent: "y")
         debugItem.keyEquivalentModifierMask = [.command, .option]

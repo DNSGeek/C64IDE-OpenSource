@@ -53,6 +53,9 @@ extension AppDelegate {
 
     /// Cleans up UI state when a project is closed.
     @MainActor @objc func handleProjectDidClose(_ notification: Notification) {
+        // Close the project's tabs; otherwise a subsequent restoreSession() would
+        // merge the previous non-project tabs into the still-open project tabs.
+        mainWindowController?.closeAllTabs()
         mainWindowController?.window?.title = "C64 IDE"
         mainWindowController?.clearGitStatus()
         rebuildRecentProjectsMenu()
@@ -127,8 +130,8 @@ extension AppDelegate {
 
     /// Opens a project from the recent projects list.
     @MainActor @objc func openRecentProject(_ sender: NSMenuItem) {
-        let url = URL(fileURLWithPath: sender.representedObject as! String)
-        ProjectManager.shared.openProject(at: url)
+        guard let path = sender.representedObject as? String else { return }
+        ProjectManager.shared.openProject(at: URL(fileURLWithPath: path))
     }
 
     /// Saves the current project state and captures the active session.
@@ -142,12 +145,15 @@ extension AppDelegate {
                 }
                 return 0
             }()
+            // uniquingKeysWith merges duplicates: if the same file is open in two
+            // tabs, uniqueKeysWithValues would trap at runtime.
             let breakpoints = Dictionary(
-                uniqueKeysWithValues: wc.allEditors.compactMap { editor -> (URL, [Int])? in
+                wc.allEditors.compactMap { editor -> (URL, [Int])? in
                     guard let url = editor.document.fileURL else { return nil }
                     let lines = Array(editor.breakpointLines).sorted()
                     return lines.isEmpty ? nil : (url, lines)
-                }
+                },
+                uniquingKeysWith: { Array(Set($0 + $1)).sorted() }
             )
             ProjectManager.shared.captureSession(
                 openFilePaths: openFileURLs,

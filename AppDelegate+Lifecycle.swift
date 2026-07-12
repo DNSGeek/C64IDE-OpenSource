@@ -30,6 +30,10 @@ extension AppDelegate {
 
     /// Restores the last active project from user defaults.
     @MainActor private func restoreLastProject() {
+        // A project opened at launch (Finder double-click, URL scheme) takes
+        // precedence over auto-reopen. Without this guard, restoring the last
+        // project would close all the tabs the just-opened project restored.
+        guard !ProjectManager.shared.isProjectOpen else { return }
         guard let path = UserDefaults.standard.string(forKey: "lastProjectURL") else { return }
         let url = URL(fileURLWithPath: path)
         guard FileManager.default.fileExists(atPath: url.path) else {
@@ -98,12 +102,15 @@ extension AppDelegate {
         }()
 
         if ProjectManager.shared.isProjectOpen {
+            // uniquingKeysWith merges duplicates: if the same file is open in two
+            // tabs, uniqueKeysWithValues would trap at runtime.
             let breakpoints = Dictionary(
-                uniqueKeysWithValues: wc.allEditors.compactMap { editor -> (URL, [Int])? in
+                wc.allEditors.compactMap { editor -> (URL, [Int])? in
                     guard let url = editor.document.fileURL else { return nil }
                     let lines = Array(editor.breakpointLines).sorted()
                     return lines.isEmpty ? nil : (url, lines)
-                }
+                },
+                uniquingKeysWith: { Array(Set($0 + $1)).sorted() }
             )
             ProjectManager.shared.captureSession(
                 openFilePaths: openFileURLs,
