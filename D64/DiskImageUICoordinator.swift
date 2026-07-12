@@ -384,7 +384,7 @@ extension BuildManager {
     /// `zip(results, diskConfig.disks)`) silently mispaired whenever
     /// `bundleDisks` skipped or reordered a disk - and a mispaired recovery
     /// would rewrite the wrong disk's filename in the project model.
-    func bundleDisksWithRecovery(outputPRG: URL, buildDir: URL, parentWindow: NSWindow) {
+    @MainActor func bundleDisksWithRecovery(outputPRG: URL, buildDir: URL, parentWindow: NSWindow) {
         guard let proj = project, let diskConfig = proj.diskConfig else { return }
 
         let results = bundleDisks(outputPRG: outputPRG, buildDir: buildDir)
@@ -415,7 +415,7 @@ extension BuildManager {
     /// Finds the `ProjectDisk` whose image path resolves to `url`.
     /// Falls back to a filename match if full-path resolution finds nothing
     /// (e.g. project root unavailable, or symlinked build directories).
-    private static func disk(matching url: URL, in config: ProjectDiskConfig) -> ProjectDisk? {
+    @MainActor private static func disk(matching url: URL, in config: ProjectDiskConfig) -> ProjectDisk? {
         let target = url.standardizedFileURL.path
         if let match = config.disks.first(where: {
             imageURL(for: $0)?.standardizedFileURL.path == target
@@ -430,7 +430,7 @@ extension BuildManager {
     /// Resolves a disk's stored filename. Relative filenames are anchored at
     /// the project root; absolute filenames (set by the Locate flow for
     /// images outside the project) pass through unchanged.
-    private static func imageURL(for disk: ProjectDisk) -> URL? {
+    @MainActor private static func imageURL(for disk: ProjectDisk) -> URL? {
         if disk.filename.hasPrefix("/") {
             return URL(fileURLWithPath: disk.filename)
         }
