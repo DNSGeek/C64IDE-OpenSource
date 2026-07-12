@@ -30,10 +30,20 @@ struct BasicKeywordMatcher {
 
     init(keywords: [String]) {
         self.sorted = keywords.sorted { $0.count > $1.count }
-        // Precompute keywords that have a longer sibling starting with the same prefix.
-        // Used for the letter-boundary lookahead guard.
+        // Precompute keywords that have a LONGER sibling starting with the
+        // same prefix AND continuing with a letter. Only those siblings can
+        // ever match when a letter follows the short keyword, so only they
+        // justify skipping the short match. The old rule counted any longer
+        // sibling: PRINT# put PRINT in the set, so "PRINTA" matched neither
+        // PRINT# (wrong char) nor PRINT (guard fired) and the keyword went
+        // unhighlighted — even though hardware crunches it as PRINT + A.
+        // This mirrors BasicDialectManager.keywordsWithLongerLetterSibling.
         self.longerSiblings = Set(keywords.filter { kw in
-            keywords.contains(where: { $0.count > kw.count && $0.hasPrefix(kw) })
+            keywords.contains(where: { longer in
+                guard longer.count > kw.count && longer.hasPrefix(kw) else { return false }
+                let next = longer[longer.index(longer.startIndex, offsetBy: kw.count)]
+                return next.isLetter
+            })
         })
     }
 

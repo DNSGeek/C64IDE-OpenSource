@@ -207,18 +207,14 @@ class BasicDialectManager {
     private(set) var unifiedKeywordTable: [UnifiedKeywordEntry] = []
     private(set) var unifiedKeywordStrings: [String] = []
     private(set) var keywordsWithLongerSibling: Set<String> = []
-    
-    /// Keywords that require a letter-boundary guard per C64 ROM tokenization rules.
-    var keywordsWithLongerLetterSibling: Set<String> {
-        let all = Set(unifiedKeywordStrings)
-        return Set(unifiedKeywordStrings.filter { kw in
-            all.contains(where: { longer in
-                guard longer.count > kw.count && longer.hasPrefix(kw) else { return false }
-                let nextChar = longer[longer.index(longer.startIndex, offsetBy: kw.count)]
-                return nextChar.isLetter
-            })
-        })
-    }
+
+    /// Keywords that require a letter-boundary guard per C64 ROM tokenization
+    /// rules: keywords with a LONGER sibling sharing the prefix and continuing
+    /// with a letter (e.g. a dialect's PRINTUSING over PRINT). Precomputed in
+    /// rebuildKeywordSet. This used to be a computed property that rebuilt the
+    /// whole set with an O(keywords^2) filter on every access — and the
+    /// tokenizer read it inside its inner match loop.
+    private(set) var keywordsWithLongerLetterSibling: Set<String> = []
 
     var onDialectChanged: (() -> Void)?
 
@@ -469,6 +465,21 @@ class BasicDialectManager {
             unifiedKeywordStrings.filter { kw in
                 unifiedKeywordStrings.contains(where: {
                     $0.count > kw.count && $0.hasPrefix(kw)
+                })
+            }
+        )
+
+        // Refined variant used by the tokenizer's guard: only siblings that
+        // continue with a LETTER matter, because only those can win when a
+        // letter follows the short keyword. PRINT# does not put PRINT in
+        // this set ('#' is not a letter), so PRINTA still crunches as
+        // PRINT + A, exactly like the ROM.
+        keywordsWithLongerLetterSibling = Set(
+            unifiedKeywordStrings.filter { kw in
+                unifiedKeywordStrings.contains(where: { longer in
+                    guard longer.count > kw.count && longer.hasPrefix(kw) else { return false }
+                    let nextChar = longer[longer.index(longer.startIndex, offsetBy: kw.count)]
+                    return nextChar.isLetter
                 })
             }
         )

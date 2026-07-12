@@ -211,8 +211,24 @@ public class BasicTokenizer {
             lines.append(BasicLine(number: lineNum, content: String(trimmed[idx...])))
         }
 
-        lines.sort { $0.number < $1.number }
-        return lines
+        // Duplicate line numbers: last definition wins, matching both real
+        // hardware (retyping a line number replaces the line) and
+        // BasicParser.parse. Previously duplicates were kept and fed to a
+        // sort that Swift does not guarantee to be stable, so which copy
+        // came first in the PRG was nondeterministic.
+        var indexByNumber: [UInt16: Int] = [:]
+        var deduped: [BasicLine] = []
+        for line in lines {
+            if let i = indexByNumber[line.number] {
+                deduped[i] = line
+            } else {
+                indexByNumber[line.number] = deduped.count
+                deduped.append(line)
+            }
+        }
+
+        deduped.sort { $0.number < $1.number }
+        return deduped
     }
 
     // MARK: - Line Tokenization
@@ -243,6 +259,12 @@ public class BasicTokenizer {
         // Snapshot the unified table once per line so a mid-tokenize dialect
         // change (pathological but possible) can't corrupt the output.
         let table = BasicDialectManager.shared.unifiedKeywordTable
+        // Same for the letter-boundary guard set. This used to be read
+        // inside the per-keyword match loop, and it was a computed property
+        // that rebuilt an O(keywords^2) filtered set on EVERY access — an
+        // enormous amount of redundant work per line. It is now precomputed
+        // in rebuildKeywordSet and snapshotted here.
+        let letterSiblings = BasicDialectManager.shared.keywordsWithLongerLetterSibling
 
         while pos < upper.endIndex {
             let ch = upper[pos]
@@ -309,7 +331,7 @@ public class BasicTokenizer {
                 // Letter-boundary lookahead guard (C64 ROM $A57C behaviour).
                 if let lastCh = entry.keyword.last, lastCh.isLetter,
                    afterKW < upper.endIndex, upper[afterKW].isLetter,
-                   BasicDialectManager.shared.keywordsWithLongerLetterSibling.contains(entry.keyword) {
+                   letterSiblings.contains(entry.keyword) {
                     continue
                 }
 
@@ -597,7 +619,10 @@ public class BasicTokenizer {
         // any file over 64KB, crashing the app on the one input this
         // function exists to reject gracefully.
         let loadAddr = Int(data[0]) | (Int(data[1]) << 8)
-        guard loadAddr >= 0x0800 && loadAddr <= 0x2100 else { return false }
+        // Lower bound covers the PET ($0401) and VIC-20 ($1001/$1201)
+        // BASIC start addresses; the old 0x0800 floor rejected every PET
+        // PRG despite petStartAddress support elsewhere in this class.
+        guard loadAddr >= 0x0401 && loadAddr <= 0x2100 else { return false }
         let nextLine = Int(data[2]) | (Int(data[3]) << 8)
         guard nextLine > loadAddr && nextLine < loadAddr + data.count else { return false }
         return true

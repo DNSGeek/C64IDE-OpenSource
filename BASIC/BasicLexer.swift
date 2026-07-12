@@ -67,7 +67,12 @@ struct LexError: Error, CustomStringConvertible {
 /// Converts a single logical BASIC line into a token stream.
 ///
 /// Key Behaviors:
-///   • Input is uppercased on entry.
+///   • The original line is kept verbatim; keyword and identifier matching is
+///     case-insensitive (ASCII only), but string literals and DATA items keep
+///     the case the user typed. The old implementation uppercased the whole
+///     line on entry, which destroyed case inside string literals — PRINT
+///     "hello" compiled as PRINT "HELLO". Identifiers are still normalised to
+///     uppercase in their tokens, matching BASIC's case-insensitive variables.
 ///   • Keywords are matched greedily using the unified keyword table.
 ///   • REM consumes the remainder of the line without tokenization.
 ///   • Scientific notation and leading-dot floats are supported.
@@ -78,6 +83,31 @@ struct BasicLexer {
     private let source: String
     private var idx: String.Index
     private let matcher: BasicKeywordMatcher
+
+    /// ASCII-only uppercase for match comparisons. Deliberately NOT
+    /// Character.uppercased(): that can change length (ß → SS) and returns
+    /// a String. Non-ASCII characters pass through unchanged, so positions
+    /// in the original line always stay valid.
+    private static func upperChar(_ ch: Character) -> Character {
+        if let a = ch.asciiValue, a >= 0x61, a <= 0x7A {
+            return Character(UnicodeScalar(a - 0x20))
+        }
+        return ch
+    }
+
+    /// Case-insensitive test for keyword `kw` (uppercase ASCII) starting at
+    /// `start` in the original source. Compares character-by-character so
+    /// no uppercased copy of the line is ever made.
+    private func hasKeywordPrefix(_ kw: String, at start: String.Index) -> Bool {
+        var i = start
+        for k in kw {
+            guard i < source.endIndex, BasicLexer.upperChar(source[i]) == k else {
+                return false
+            }
+            i = source.index(after: i)
+        }
+        return true
+    }
 
     /// The compiler targets BASIC V2 exclusively, so the lexer matches the
     /// pure V2 keyword set. Previously this pulled the active dialect's
@@ -91,7 +121,7 @@ struct BasicLexer {
     )
 
     init(_ line: String) {
-        self.source = line.uppercased()
+        self.source = line          // original case preserved; see header note
         self.idx = source.startIndex
         self.matcher = BasicLexer.v2Matcher
     }
@@ -236,14 +266,25 @@ struct BasicLexer {
             buf.append(current); advance()
         }
 
-        if !atEnd && current == "E" {
-            hasExp = true
-            buf.append(current); advance()
-            if !atEnd && (current == "+" || current == "-") {
-                buf.append(current); advance()
+        // Exponent: only commit to the E if a digit (optionally signed)
+        // actually follows. Consuming it unconditionally turned "5END"
+        // into float(0) + identifier ND; on real hardware the tokeniser
+        // crunches END first, so it must lex as 5 + END. Same for 5EXP(2).
+        if !atEnd && (current == "E" || current == "e") {
+            var look = source.index(after: idx)
+            if look < source.endIndex,
+               source[look] == "+" || source[look] == "-" {
+                look = source.index(after: look)
             }
-            while !atEnd && current.isNumber {
-                buf.append(current); advance()
+            if look < source.endIndex, source[look].isNumber {
+                hasExp = true
+                buf.append("E"); advance()
+                if !atEnd && (current == "+" || current == "-") {
+                    buf.append(current); advance()
+                }
+                while !atEnd && current.isNumber {
+                    buf.append(current); advance()
+                }
             }
         }
 
@@ -271,7 +312,7 @@ struct BasicLexer {
             // identifier just like an embedded keyword does. Without this
             // break, Swift's isLetter would absorb it into the name.
             if current == "\u{03C0}" { break }
-            name.append(current); advance()
+            name.append(BasicLexer.upperChar(current)); advance()
         }
         if !atEnd && current == "$" {
             name.append(current); advance()
@@ -290,9 +331,24 @@ struct BasicLexer {
     // "GOTO10" → [GOTO, 10] and "FORI" → [FOR, I] as on real hardware.
     private mutating func tryKeyword() -> String? {
         for kw in matcher.sortedKeywords {
-            guard source[idx...].hasPrefix(kw) else { continue }
-            let after = source.index(idx, offsetBy: kw.count)
-            idx = after
+            guard hasKeywordPrefix(kw, at: idx) else { continue }
+
+            // TI and ST are pseudo-keywords, not ROM tokens, so they must
+            // only match as standalone system variables. Without this
+            // guard, STAR lexed as ST + AR, TIP as TI + P, and TI$ as TI
+            // followed by a silently-dropped '$'. When the next character
+            // continues an identifier, fall through to scanIdentifier.
+            if BasicLexer.nonTokenKeywords.contains(kw) {
+                let after = source.index(idx, offsetBy: kw.count)
+                if after < source.endIndex {
+                    let n = source[after]
+                    if n.isLetter || n.isNumber || n == "$" || n == "%" {
+                        continue
+                    }
+                }
+            }
+
+            idx = source.index(idx, offsetBy: kw.count)
             return kw
         }
         return nil
@@ -313,7 +369,7 @@ struct BasicLexer {
     private func keywordStartsHere() -> Bool {
         for kw in matcher.sortedKeywords {
             guard !BasicLexer.nonTokenKeywords.contains(kw) else { continue }
-            if source[idx...].hasPrefix(kw) { return true }
+            if hasKeywordPrefix(kw, at: idx) { return true }
         }
         return false
     }

@@ -180,94 +180,119 @@ public class BasicRenumber {
     ///
     /// This method uses a heuristic approach: it scans for keywords known to be
     /// followed by line numbers (e.g., `GOTO`, `THEN`) and replaces any integer
-    /// found immediately after them.
+    /// found immediately after them, including comma-separated lists
+    /// (ON...GOTO / ON...GOSUB).
+    ///
+    /// Implementation notes:
+    ///   - Works on a single [Character] array with integer offsets. The old
+    ///     version derived String.Index values from an uppercased copy of the
+    ///     content and used them to subscript the ORIGINAL string; indices are
+    ///     only valid for the string that produced them, and uppercasing can
+    ///     change the layout (e.g. "\u{00DF}" uppercases to "SS"), so that was
+    ///     corruption waiting to happen.
+    ///   - Replacements are applied in descending position order. The old code
+    ///     applied them in reversed COLLECTION order, which is grouped by
+    ///     keyword rather than sorted by position: on "GOSUB 900:GOTO 20" the
+    ///     GOSUB replacement (collected second, positioned first) was applied
+    ///     before the GOTO replacement, and if the new GOSUB target had a
+    ///     different digit count the GOTO offsets went stale and the line was
+    ///     mangled.
+    ///   - Keyword matches inside string literals are ignored, so
+    ///     PRINT "GOTO 10" is no longer rewritten.
     ///
     /// **Limitations:**
-    /// - Does not protect line numbers inside string literals (e.g., `PRINT "10"`).
     /// - `THEN` handling assumes a number immediately following it is a line target.
     private static func updateLineReferences(in content: String, mapping: [Int: Int]) -> String {
-        var replacements: [(startIndex: Int, length: Int, replacement: String)] = []
-        let upper = content.uppercased()
+        let chars = Array(content)
+        // ASCII-only uppercase: per-character and length-preserving, so the
+        // same integer offset is valid in both arrays.
+        let upper: [Character] = chars.map { ch in
+            if let a = ch.asciiValue, a >= 0x61, a <= 0x7A {
+                return Character(UnicodeScalar(a - 0x20))
+            }
+            return ch
+        }
 
-        // Find each keyword that references line numbers
-        for keyword in lineRefKeywords {
-            var searchFrom = upper.startIndex
-
-            while let range = upper[searchFrom...].range(of: keyword) {
-                var afterKeyword = range.upperBound
-
-                // Skip whitespace after keyword
-                while afterKeyword < upper.endIndex && upper[afterKeyword] == " " {
-                    afterKeyword = upper.index(after: afterKeyword)
-                }
-
-                // Read the line number(s) — could be comma-separated (ON...GOTO)
-                let numbersStart = afterKeyword
-                var pos = afterKeyword
-                var newNumbers: [String] = []
-                var foundNumber = false
-
-                while pos < upper.endIndex {
-                    // Read a number
-                    var numStart = pos
-                    // Skip spaces
-                    while numStart < upper.endIndex && upper[numStart] == " " {
-                        numStart = upper.index(after: numStart)
-                    }
-
-                    var numEnd = numStart
-                    while numEnd < upper.endIndex && upper[numEnd].isNumber {
-                        numEnd = upper.index(after: numEnd)
-                    }
-
-                    if numEnd > numStart {
-                        let numStr = String(upper[numStart..<numEnd])
-                        if let oldNum = Int(numStr), let newNum = mapping[oldNum] {
-                            newNumbers.append(String(newNum))
-                            foundNumber = true
-                        } else {
-                            newNumbers.append(String(content[numStart..<numEnd]))
-                            foundNumber = true
-                        }
-
-                        pos = numEnd
-                        // Skip spaces and check for comma (ON...GOTO list)
-                        while pos < upper.endIndex && upper[pos] == " " {
-                            pos = upper.index(after: pos)
-                        }
-                        if pos < upper.endIndex && upper[pos] == "," {
-                            pos = upper.index(after: pos)
-                            continue
-                        }
-                    }
-                    break
-                }
-
-                if foundNumber {
-                    let numbersEnd = pos
-                    let contentOffset = content.distance(from: content.startIndex, to: numbersStart)
-                    let contentLength = content.distance(from: numbersStart, to: numbersEnd)
-                    
-                    // Store replacement info (using indices in original content)
-                    replacements.append((startIndex: contentOffset, length: contentLength, replacement: newNumbers.joined(separator: ",")))
-                }
-
-                // Move search past this match
-                searchFrom = range.upperBound
-                if searchFrom >= upper.endIndex { break }
+        // Mark positions inside string literals (quotes included) as
+        // off-limits for keyword matching.
+        var inString = [Bool](repeating: false, count: chars.count)
+        var quoted = false
+        for (i, ch) in chars.enumerated() {
+            if ch == "\"" {
+                inString[i] = true          // the quote itself is protected
+                quoted.toggle()
+            } else {
+                inString[i] = quoted
             }
         }
 
-        // Apply replacements in reverse order to preserve indices
-        var result = content
-        for replacement in replacements.reversed() {
-            let lowerBound = result.index(result.startIndex, offsetBy: replacement.startIndex)
-            let upperBound = result.index(result.startIndex, offsetBy: replacement.startIndex + replacement.length)
-            let range = lowerBound..<upperBound
-            result.replaceSubrange(range, with: replacement.replacement)
+        var replacements: [(start: Int, length: Int, replacement: String)] = []
+
+        for keyword in lineRefKeywords {
+            let kw = Array(keyword)
+            guard kw.count <= upper.count else { continue }
+            var search = 0
+
+            while search + kw.count <= upper.count {
+                guard !inString[search],
+                      upper[search..<(search + kw.count)].elementsEqual(kw) else {
+                    search += 1
+                    continue
+                }
+
+                var pos = search + kw.count
+                while pos < upper.count && upper[pos] == " " { pos += 1 }
+
+                let numbersStart = pos
+                var numbersEnd = pos            // end of the LAST digit run
+                var newNumbers: [String] = []
+                var foundNumber = false
+
+                while pos < upper.count {
+                    while pos < upper.count && upper[pos] == " " { pos += 1 }
+                    let numStart = pos
+                    while pos < upper.count && upper[pos].isNumber { pos += 1 }
+                    guard pos > numStart else { break }
+
+                    let numStr = String(upper[numStart..<pos])
+                    if let oldNum = Int(numStr), let newNum = mapping[oldNum] {
+                        newNumbers.append(String(newNum))
+                    } else {
+                        newNumbers.append(numStr)
+                    }
+                    foundNumber = true
+                    numbersEnd = pos
+
+                    // A comma continues an ON...GOTO / ON...GOSUB list.
+                    var look = pos
+                    while look < upper.count && upper[look] == " " { look += 1 }
+                    if look < upper.count && upper[look] == "," {
+                        pos = look + 1
+                    } else {
+                        break
+                    }
+                }
+
+                if foundNumber {
+                    replacements.append((start: numbersStart,
+                                         length: numbersEnd - numbersStart,
+                                         replacement: newNumbers.joined(separator: ",")))
+                }
+
+                search += kw.count
+            }
         }
 
-        return result
+        guard !replacements.isEmpty else { return content }
+
+        // Apply strictly right-to-left so earlier replacements can never
+        // invalidate the offsets of later ones.
+        var out = chars
+        for r in replacements.sorted(by: { $0.start > $1.start }) {
+            out.replaceSubrange(r.start..<(r.start + r.length),
+                                with: Array(r.replacement))
+        }
+        return String(out)
     }
 
     // MARK: - Auto-Number

@@ -288,7 +288,11 @@ public enum BasicShortcutExpander {
         if let prev = prevChar, prev.isLetter { return nil }
 
         for kw in ["REM", "DATA"] {
-            guard source[index...].uppercased().hasPrefix(kw) else { continue }
+            // Compare only kw.count characters. The old code uppercased the
+            // ENTIRE remainder of the source for every character position
+            // (twice — once per keyword), making expansion O(n^2); large
+            // pastes and file loads visibly hung.
+            guard source[index...].prefix(kw.count).uppercased() == kw else { continue }
             let after = source.index(index, offsetBy: kw.count)
             if after < source.endIndex, source[after].isLetter { continue }
             return after
