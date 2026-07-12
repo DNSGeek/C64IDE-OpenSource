@@ -169,7 +169,10 @@ class D81Image: DiskImage {
         guard let (bamSector, entryIndex) = bamLocation(forTrack: track),
               var bam = readSector(track: Self.systemTrack, sector: bamSector) else { return }
         let entryOff = bamEntryOffset(entryIndex: entryIndex)
-        bam[entryOff] -= 1
+        // Saturate rather than trap: a corrupt or externally modified image
+        // can have a free count of 0 while a bitmap bit still reads free.
+        // UInt8 underflow here would crash the app on hostile/damaged disks.
+        if bam[entryOff] > 0 { bam[entryOff] -= 1 }
         let byteIndex = 1 + sector / 8
         let bitIndex  = sector % 8
         bam[entryOff + byteIndex] &= ~(1 << bitIndex)
@@ -180,7 +183,10 @@ class D81Image: DiskImage {
         guard let (bamSector, entryIndex) = bamLocation(forTrack: track),
               var bam = readSector(track: Self.systemTrack, sector: bamSector) else { return }
         let entryOff = bamEntryOffset(entryIndex: entryIndex)
-        bam[entryOff] += 1
+        // Cap at the physical sector count: double-freeing (stale directory
+        // entries, cross-linked chains) must neither trap on overflow nor
+        // inflate the free count past what the track holds.
+        if bam[entryOff] < UInt8(Self.sectorsPerTrack) { bam[entryOff] += 1 }
         let byteIndex = 1 + sector / 8
         let bitIndex  = sector % 8
         bam[entryOff + byteIndex] |= (1 << bitIndex)
@@ -266,14 +272,30 @@ class D81Image: DiskImage {
         var prevTrack = 0, prevSector = 0
         var blocksUsed = 0
 
+        // Track every sector this call allocates so a mid-write failure can
+        // be rolled back. Without this, a disk-full return leaves phantom
+        // allocations in the in-memory BAM - and a caller holding a live
+        // image (e.g. the disk browser) will persist that leak on its next
+        // successful save.
+        var allocated: [(track: Int, sector: Int)] = []
+        func rollbackAllocations() {
+            for (t, s) in allocated { freeSector(track: t, sector: s) }
+        }
+
         while !remaining.isEmpty {
-            guard let (track, sector) = findFreeSector() else { return false }
+            guard let (track, sector) = findFreeSector() else {
+                rollbackAllocations()
+                return false
+            }
 
             if firstTrack == 0 { firstTrack = track; firstSector = sector }
 
             // Patch the previous sector's chain link now that we know this sector's address
             if prevTrack != 0 {
-                guard var prevBytes = readSector(track: prevTrack, sector: prevSector) else { return false }
+                guard var prevBytes = readSector(track: prevTrack, sector: prevSector) else {
+                    rollbackAllocations()
+                    return false
+                }
                 prevBytes[0] = UInt8(track)
                 prevBytes[1] = UInt8(sector)
                 writeSector(track: prevTrack, sector: prevSector, bytes: prevBytes)
@@ -292,11 +314,15 @@ class D81Image: DiskImage {
 
             writeSector(track: track, sector: sector, bytes: sectorBytes)
             allocateSector(track: track, sector: sector)
+            allocated.append((track, sector))
             prevTrack = track; prevSector = sector
             blocksUsed += 1
         }
 
-        guard var dirSector = readSector(track: dirSlot.track, sector: dirSlot.sector) else { return false }
+        guard var dirSector = readSector(track: dirSlot.track, sector: dirSlot.sector) else {
+            rollbackAllocations()
+            return false
+        }
         let base = dirSlot.index * 32
         dirSector[base + 2] = type
         dirSector[base + 3] = UInt8(firstTrack)

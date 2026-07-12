@@ -115,7 +115,10 @@ class D64Image: DiskImage {
         guard track >= 1, track <= Self.trackCount else { return }
         guard var bam = readSector(track: Self.bamTrack, sector: Self.bamSector) else { return }
         let bamOffset = 4 + (track - 1) * 4
-        bam[bamOffset] -= 1
+        // Saturate rather than trap: a corrupt or externally modified image
+        // can have a free count of 0 while a bitmap bit still reads free.
+        // UInt8 underflow here would crash the app on hostile/damaged disks.
+        if bam[bamOffset] > 0 { bam[bamOffset] -= 1 }
         let byteIndex = 1 + sector / 8
         let bitIndex  = sector % 8
         bam[bamOffset + byteIndex] &= ~(1 << bitIndex)
@@ -126,7 +129,10 @@ class D64Image: DiskImage {
         guard track >= 1, track <= Self.trackCount else { return }
         guard var bam = readSector(track: Self.bamTrack, sector: Self.bamSector) else { return }
         let bamOffset = 4 + (track - 1) * 4
-        bam[bamOffset] += 1
+        // Cap at the track's physical sector count: double-freeing (stale
+        // directory entries, cross-linked chains) must neither trap on
+        // overflow nor inflate the free count past what the track holds.
+        if bam[bamOffset] < UInt8(Self.sectorsPerTrack[track]) { bam[bamOffset] += 1 }
         let byteIndex = 1 + sector / 8
         let bitIndex  = sector % 8
         bam[bamOffset + byteIndex] |= (1 << bitIndex)
@@ -206,8 +212,21 @@ class D64Image: DiskImage {
         var prevOffset: Int? = nil
         var blocksUsed = 0
 
+        // Track every sector this call allocates so a mid-write failure can
+        // be rolled back. Without this, a disk-full return leaves phantom
+        // allocations in the in-memory BAM - and a caller holding a live
+        // image (e.g. the disk browser) will persist that leak on its next
+        // successful save.
+        var allocated: [(track: Int, sector: Int)] = []
+        func rollbackAllocations() {
+            for (t, s) in allocated { freeSector(track: t, sector: s) }
+        }
+
         while !remaining.isEmpty {
-            guard let (track, sector) = findFreeSector() else { return false }
+            guard let (track, sector) = findFreeSector() else {
+                rollbackAllocations()
+                return false
+            }
 
             if firstTrack == 0 { firstTrack = track; firstSector = sector }
 
@@ -230,11 +249,15 @@ class D64Image: DiskImage {
 
             writeSector(track: track, sector: sector, bytes: sectorBytes)
             allocateSector(track: track, sector: sector)
+            allocated.append((track, sector))
             prevOffset = offset(track: track, sector: sector)
             blocksUsed += 1
         }
 
-        guard var dirSector = readSector(track: dirSlot.track, sector: dirSlot.sector) else { return false }
+        guard var dirSector = readSector(track: dirSlot.track, sector: dirSlot.sector) else {
+            rollbackAllocations()
+            return false
+        }
         let base = dirSlot.index * 32
         dirSector[base + 2] = type
         dirSector[base + 3] = UInt8(firstTrack)

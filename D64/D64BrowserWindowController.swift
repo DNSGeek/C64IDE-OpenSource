@@ -95,6 +95,11 @@ class D64BrowserViewController: NSViewController, NSTableViewDataSource, NSTable
     private var diskImage: (any DiskImage)?
     private var directoryEntries: [CBMDirectoryEntry] = []
 
+    /// Modification date of the image file at the time it was last loaded or
+    /// saved by this window. Used to detect the image changing underneath us
+    /// (e.g. the build pipeline writing through DiskImageService).
+    private var loadedModificationDate: Date?
+
     private var tableView: NSTableView!
     private var scrollView: NSScrollView!
     private var headerLabel: NSTextField!
@@ -228,6 +233,7 @@ class D64BrowserViewController: NSViewController, NSTableViewDataSource, NSTable
     override func viewWillAppear() {
         super.viewWillAppear()
         applyThemeColors()
+        reloadIfChangedOnDisk()
     }
 
     private func applyThemeColors() {
@@ -240,16 +246,69 @@ class D64BrowserViewController: NSViewController, NSTableViewDataSource, NSTable
         tableView.reloadData()
     }
 
-    // MARK: - Auto-Save
+    // MARK: - External Change Coordination
 
-    /// Automatically saves the disk image if it has been modified and has a file URL.
-    private func autoSaveDisk() {
-        guard let disk = diskImage, disk.isModified, disk.fileURL != nil else { return }
+    // The browser used to mutate its private in-memory DiskImage and
+    // auto-save directly, which made it a second, unserialized writer to
+    // files the build pipeline also writes through DiskImageService.
+    // Two rules fix that:
+    //
+    // 1. Mutations on an image that exists on disk are routed through
+    //    DiskImageService (serialized on its queue), then the browser
+    //    reloads the authoritative on-disk state.
+    // 2. Every user action first checks whether the file changed underneath
+    //    us (reload-on-access) and reloads if so.
+    //
+    // Images without a fileURL (freshly created, not yet saved) are mutated
+    // in memory as before - there is no file to conflict with.
+
+    private static func modificationDate(of url: URL) -> Date? {
+        (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
+    }
+
+    /// Reloads the image from disk if it changed since we last loaded or
+    /// saved it. If there are also unsaved in-memory changes, asks the user
+    /// which side wins instead of silently discarding either.
+    private func reloadIfChangedOnDisk() {
+        guard let disk = diskImage, let url = disk.fileURL else { return }
+        let current = Self.modificationDate(of: url)
+        guard current != loadedModificationDate else { return }
+
+        if disk.isModified {
+            let alert = NSAlert()
+            alert.messageText     = "\"\(url.lastPathComponent)\" changed on disk"
+            alert.informativeText = "The disk image was modified outside this window (possibly by a build), and you have unsaved changes here. Reload from disk and lose your changes, or keep editing in memory?"
+            alert.alertStyle      = .warning
+            alert.addButton(withTitle: "Reload")
+            alert.addButton(withTitle: "Keep My Changes")
+            guard alert.runModal() == .alertFirstButtonReturn else {
+                // User kept the in-memory copy. Remember the on-disk date so
+                // we do not re-prompt until the file changes again.
+                loadedModificationDate = current
+                return
+            }
+        }
+
         do {
-            try disk.save()
-            statusLabel.stringValue = "Saved \(disk.fileURL?.lastPathComponent ?? "disk")"
+            diskImage = try Self.loadDiskImage(from: url)
+            loadedModificationDate = current
+            refreshDirectory()
+            statusLabel.stringValue = "Reloaded \(url.lastPathComponent) (changed on disk)."
         } catch {
-            statusLabel.stringValue = "Auto-save failed: \(error.localizedDescription)"
+            statusLabel.stringValue = "Reload failed: \(error.localizedDescription)"
+        }
+    }
+
+    /// Reloads the image after a DiskImageService mutation so the browser
+    /// reflects the authoritative on-disk state the service just wrote.
+    private func reloadAfterServiceMutation(url: URL, status: String) {
+        do {
+            diskImage = try Self.loadDiskImage(from: url)
+            loadedModificationDate = Self.modificationDate(of: url)
+            refreshDirectory()
+            statusLabel.stringValue = status
+        } catch {
+            statusLabel.stringValue = "Reload failed: \(error.localizedDescription)"
         }
     }
 
@@ -272,8 +331,9 @@ class D64BrowserViewController: NSViewController, NSTableViewDataSource, NSTable
 
         switch alert.runModal() {
         case .alertFirstButtonReturn:
-            if disk.fileURL != nil {
+            if let url = disk.fileURL {
                 try? disk.save()
+                loadedModificationDate = Self.modificationDate(of: url)
             } else {
                 saveAs(disk: disk)
             }
@@ -329,6 +389,7 @@ class D64BrowserViewController: NSViewController, NSTableViewDataSource, NSTable
             guard response == .OK, let url = panel.url else { return }
             do {
                 self?.diskImage = try Self.loadDiskImage(from: url)
+                self?.loadedModificationDate = Self.modificationDate(of: url)
                 self?.refreshDirectory()
             } catch {
                 NSAlert(error: error).runModal()
@@ -408,9 +469,10 @@ class D64BrowserViewController: NSViewController, NSTableViewDataSource, NSTable
 
     @objc private func saveDisk(_ sender: Any?) {
         guard let disk = diskImage else { return }
-        if disk.fileURL != nil {
+        if let url = disk.fileURL {
             do {
                 try disk.save()
+                loadedModificationDate = Self.modificationDate(of: url)
                 statusLabel.stringValue = "Saved."
             } catch {
                 NSAlert(error: error).runModal()
@@ -436,6 +498,7 @@ class D64BrowserViewController: NSViewController, NSTableViewDataSource, NSTable
             guard response == .OK, let url = panel.url else { return }
             do {
                 try disk.save(to: url)
+                self?.loadedModificationDate = Self.modificationDate(of: url)
                 let formatTag = isD81 ? "D81" : "D64"
                 self?.view.window?.title = "\(formatTag) — \(url.lastPathComponent)"
                 self?.statusLabel.stringValue = "Saved to \(url.lastPathComponent)"
@@ -448,6 +511,7 @@ class D64BrowserViewController: NSViewController, NSTableViewDataSource, NSTable
     // MARK: - File Actions
 
     @objc private func extractFile(_ sender: Any?) {
+        reloadIfChangedOnDisk()
         guard let disk = diskImage, let entry = selectedEntry() else { return }
 
         let panel = NSSavePanel()
@@ -462,33 +526,48 @@ class D64BrowserViewController: NSViewController, NSTableViewDataSource, NSTable
     }
 
     @objc private func addFile(_ sender: Any?) {
-        guard let disk = diskImage else {
+        guard diskImage != nil else {
             statusLabel.stringValue = "Open or create a disk image first."
             return
         }
+        reloadIfChangedOnDisk()
+        guard let disk = diskImage else { return }
 
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.init(filenameExtension: "prg")!]
         panel.title = "Add PRG to Disk"
 
         panel.begin { [weak self] response in
-            guard response == .OK, let url = panel.url else { return }
+            guard let self, response == .OK, let url = panel.url else { return }
             guard let fileData = try? Data(contentsOf: url) else { return }
 
-            let filename = url.deletingPathExtension().lastPathComponent.uppercased().prefix(16)
-            let success  = disk.writeFile(name: String(filename), type: 0x82, data: Array(fileData))
+            let filename = String(url.deletingPathExtension().lastPathComponent.uppercased().prefix(16))
 
-            if success {
-                self?.autoSaveDisk()
-                self?.refreshDirectory()
-                self?.statusLabel.stringValue = "Added \"\(filename)\" to disk."
+            if let imageURL = disk.fileURL {
+                // On-disk image: write through DiskImageService so the
+                // operation is serialized with the build pipeline, then
+                // reload the authoritative state.
+                do {
+                    try DiskImageService.shared.addFile(named: filename, data: fileData, to: imageURL)
+                    self.reloadAfterServiceMutation(url: imageURL, status: "Added \"\(filename)\" to disk.")
+                } catch {
+                    self.statusLabel.stringValue = "Add failed: \(error.localizedDescription)"
+                }
             } else {
-                self?.statusLabel.stringValue = "Failed to write — disk may be full."
+                // Unsaved in-memory image: mutate directly. Persisted later
+                // via Save As.
+                if disk.writeFile(name: filename, type: 0x82, data: Array(fileData)) {
+                    self.refreshDirectory()
+                    self.statusLabel.stringValue = "Added \"\(filename)\" to disk."
+                } else {
+                    self.statusLabel.stringValue = "Failed to write - disk may be full."
+                }
             }
         }
     }
 
     @objc private func deleteFile(_ sender: Any?) {
+        reloadIfChangedOnDisk()
         guard let disk = diskImage, let entry = selectedEntry() else { return }
 
         let alert = NSAlert()
@@ -500,13 +579,22 @@ class D64BrowserViewController: NSViewController, NSTableViewDataSource, NSTable
 
         guard alert.runModal() == .alertFirstButtonReturn else { return }
 
-        disk.deleteFile(entry)
-        autoSaveDisk()
-        refreshDirectory()
-        statusLabel.stringValue = "Deleted \"\(entry.name)\"."
+        if let imageURL = disk.fileURL {
+            do {
+                try DiskImageService.shared.deleteFile(named: entry.name, from: imageURL)
+                reloadAfterServiceMutation(url: imageURL, status: "Deleted \"\(entry.name)\".")
+            } catch {
+                statusLabel.stringValue = "Delete failed: \(error.localizedDescription)"
+            }
+        } else {
+            disk.deleteFile(entry)
+            refreshDirectory()
+            statusLabel.stringValue = "Deleted \"\(entry.name)\"."
+        }
     }
 
     @objc private func renameFile(_ sender: Any?) {
+        reloadIfChangedOnDisk()
         guard let disk = diskImage, let entry = selectedEntry() else {
             statusLabel.stringValue = "Select a file to rename."
             return
@@ -530,19 +618,30 @@ class D64BrowserViewController: NSViewController, NSTableViewDataSource, NSTable
 
         let newName = nameField.stringValue.trimmingCharacters(in: .whitespaces)
         guard !newName.isEmpty else { statusLabel.stringValue = "Name cannot be empty."; return }
-        guard newName.count <= 16 else { statusLabel.stringValue = "Name too long — max 16 characters."; return }
+        guard newName.count <= 16 else { statusLabel.stringValue = "Name too long - max 16 characters."; return }
 
-        let success = disk.renameFile(entry, to: newName)
-        if success {
-            autoSaveDisk()
-            refreshDirectory()
-            statusLabel.stringValue = "Renamed \"\(entry.name)\" → \"\(newName.uppercased())\"."
+        if let imageURL = disk.fileURL {
+            do {
+                try DiskImageService.shared.renameFile(named: entry.name, to: newName, on: imageURL)
+                reloadAfterServiceMutation(
+                    url: imageURL,
+                    status: "Renamed \"\(entry.name)\" to \"\(newName.uppercased())\"."
+                )
+            } catch {
+                statusLabel.stringValue = "Rename failed: \(error.localizedDescription)"
+            }
         } else {
-            statusLabel.stringValue = "A file named \"\(newName.uppercased())\" already exists."
+            if disk.renameFile(entry, to: newName) {
+                refreshDirectory()
+                statusLabel.stringValue = "Renamed \"\(entry.name)\" to \"\(newName.uppercased())\"."
+            } else {
+                statusLabel.stringValue = "A file named \"\(newName.uppercased())\" already exists."
+            }
         }
     }
 
     @objc private func openInIDE(_ sender: Any?) {
+        reloadIfChangedOnDisk()
         guard let disk = diskImage, let entry = selectedEntry(), entry.isPRG else {
             statusLabel.stringValue = "Select a PRG file to open."
             return
@@ -586,6 +685,7 @@ class D64BrowserViewController: NSViewController, NSTableViewDataSource, NSTable
     }
 
     @objc private func disassembleFile(_ sender: Any?) {
+        reloadIfChangedOnDisk()
         guard let disk = diskImage, let entry = selectedEntry(), entry.isPRG else {
             statusLabel.stringValue = "Select a PRG file to disassemble."
             return

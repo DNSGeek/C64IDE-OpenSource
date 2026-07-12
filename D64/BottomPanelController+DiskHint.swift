@@ -85,26 +85,39 @@ extension BottomPanelController {
 
     // MARK: - Manifest check (pure, no I/O)
 
-    /// Returns `(disk, cbmName)` if `fileURL` is covered by any asset folder
-    /// on any disk in the config, or nil if it is not.
+    /// Returns `(disk, cbmName)` if `fileURL` would actually be bundled by
+    /// any disk's manifest, or nil if it would not.
+    ///
+    /// Runs the real `ManifestResolver` against a filesystem stub containing
+    /// only this one file, so the hint honors exactly the same rules as the
+    /// build: exclude globs, explicit-file renames, and the auto-naming
+    /// substitution rules. The old folder-prefix heuristic showed
+    /// "Will bundle" for excluded files and could display a CBM name that
+    /// differed from what the build actually writes.
     private func resolvedEntry(
         for fileURL: URL,
         root: URL,
         config: ProjectDiskConfig
     ) -> (ProjectDisk, String)? {
-        for disk in config.disks {
-            for folder in disk.assetFolders {
-                let folderURL = root.appendingPathComponent(folder)
-                    .standardizedFileURL
-                let fileStd   = fileURL.standardizedFileURL
+        let fileStd    = fileURL.standardizedFileURL
+        let resolver   = ManifestResolver()
+        let enumerator = SingleFileEnumerator(file: fileStd)
 
-                if fileStd.path.hasPrefix(folderURL.path + "/") ||
-                   fileStd.path == folderURL.path {
-                    // File is inside this asset folder — derive CBM name.
-                    let stem  = fileURL.deletingPathExtension().lastPathComponent
-                    let upper = String(stem.uppercased().prefix(16))
-                    return (disk, upper)
-                }
+        for disk in config.disks {
+            // Resolution can throw (e.g. a naming collision among explicit
+            // entries). For hint purposes, treat that as "not resolvable"
+            // and move on - the build itself will surface the real error.
+            guard let files = try? resolver.resolve(
+                disk: disk,
+                projectRoot: root,
+                buildOutput: nil,
+                fileSystem: enumerator
+            ) else { continue }
+
+            if let match = files.first(where: {
+                $0.sourceURL.standardizedFileURL.path == fileStd.path
+            }) {
+                return (disk, match.cbmName)
             }
         }
         return nil
@@ -113,6 +126,18 @@ extension BottomPanelController {
     // MARK: - Show / hide
 
     enum DiskHintStyle { case bundled, notBundled }
+
+    /// `FileSystemEnumerator` stub exposing exactly one file, and only when
+    /// the queried directory actually contains it. Lets the disk hint reuse
+    /// `ManifestResolver` per-file without walking the whole project tree.
+    private struct SingleFileEnumerator: FileSystemEnumerator {
+        /// Must already be standardized by the caller.
+        let file: URL
+        func filesInDirectory(_ directory: URL) -> [URL] {
+            let dir = directory.standardizedFileURL.path
+            return file.path.hasPrefix(dir + "/") ? [file] : []
+        }
+    }
 
     private func showDiskHint(_ text: String, style: DiskHintStyle) {
         let label = diskHintLabel

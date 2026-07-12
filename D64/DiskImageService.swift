@@ -43,12 +43,33 @@ final class DiskImageService {
     /// Creates a new, blank, formatted disk image and writes it to `url`.
     ///
     /// - Parameters:
-    ///   - url:      Destination path. Extension determines format (`.d64` or `.d81`).
+    ///   - url:      Destination path.
+    ///   - format:   Explicit disk format. Pass this whenever the caller's UI
+    ///               lets the user choose a format, so a stale path extension
+    ///               can never silently override the user's choice. When nil,
+    ///               the format is derived from the URL's extension.
     ///   - diskName: CBM disk name (ASCII, max 16 chars). Silently truncated.
     ///   - diskID:   CBM disk ID (ASCII, max 2 chars). Silently truncated.
-    func createImage(at url: URL, diskName: String = "NEW DISK", diskID: String = "C6") throws {
+    /// - Throws: `.unsupportedFormat` if `format` is nil and the extension is
+    ///           not recognised, or if an explicit `format` contradicts a
+    ///           recognised extension (a mismatched file would confuse every
+    ///           tool that trusts the extension, including this service).
+    func createImage(at url: URL, format explicitFormat: DiskFormat? = nil,
+                     diskName: String = "NEW DISK", diskID: String = "C6") throws {
         try queue.sync {
-            let image = try makeBlankImage(url: url, diskName: diskName, diskID: diskID)
+            let fmt: DiskFormat
+            if let explicitFormat {
+                // If the extension is recognised, it must agree with the
+                // explicit format - otherwise loadImage() would later open
+                // this file as the wrong type.
+                if let extFormat = try? format(for: url), extFormat != explicitFormat {
+                    throw DiskImageError.unsupportedFormat
+                }
+                fmt = explicitFormat
+            } else {
+                fmt = try format(for: url)
+            }
+            let image = makeBlankImage(format: fmt, diskName: diskName, diskID: diskID)
             try image.save(to: url)
         }
     }
@@ -241,9 +262,9 @@ final class DiskImageService {
         }
     }
 
-    /// Creates a blank formatted image based on `url`'s extension.
-    private func makeBlankImage(url: URL, diskName: String, diskID: String) throws -> any DiskImage {
-        switch try format(for: url) {
+    /// Creates a blank formatted image of the given format.
+    private func makeBlankImage(format: DiskFormat, diskName: String, diskID: String) -> any DiskImage {
+        switch format {
         case .d64: return D64Image(diskName: diskName, diskID: diskID)
         case .d81: return D81Image(diskName: diskName, diskID: diskID)
         }

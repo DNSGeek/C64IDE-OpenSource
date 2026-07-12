@@ -107,6 +107,10 @@ final class DiskImageUICoordinator {
         let rootView = NewDiskImageView(suggestedURL: suggestedURL, disk: disk) { [weak self] result in
             if let sheet = sheetWindow {
                 parentWindow.endSheet(sheet)
+                // Break the retain cycle: sheet -> hostingController -> rootView
+                // -> this closure -> captured sheetWindow box -> sheet. Without
+                // this, every New Disk Image sheet leaks its NSWindow.
+                sheetWindow = nil
             }
             guard let self else { return }
             if case .created(let url) = result {
@@ -235,6 +239,15 @@ struct NewDiskImageView: View {
                     Text("D64  (1541, 170KB)").tag(DiskFormat.d64)
                 }
                 .pickerStyle(.segmented)
+                .onChange(of: format) { f in
+                    // Keep the output path's extension in lockstep with the
+                    // chosen format. Without this, a recovery-suggested URL
+                    // like "game.d81" plus a D64 selection would create the
+                    // wrong image type.
+                    outputURL = outputURL
+                        .deletingPathExtension()
+                        .appendingPathExtension(f == .d81 ? "d81" : "d64")
+                }
             }
 
             HStack(alignment: .top, spacing: 12) {
@@ -335,11 +348,18 @@ struct NewDiskImageView: View {
     private func createImage() {
         isCreating = true
         errorMsg = nil
+
+        // Belt and braces: normalize the extension to the chosen format and
+        // pass the format explicitly so the service never has to guess.
+        let url = outputURL
+            .deletingPathExtension()
+            .appendingPathExtension(format == .d81 ? "d81" : "d64")
+
         do {
             try DiskImageService.shared.createImage(
-                at: outputURL, diskName: diskName, diskID: diskID
+                at: url, format: format, diskName: diskName, diskID: diskID
             )
-            onComplete(.created(outputURL))
+            onComplete(.created(url))
         } catch {
             isCreating = false
             errorMsg = error.localizedDescription
@@ -359,17 +379,26 @@ extension BuildManager {
     /// the recovery sheet appears. Upon successful creation or relocation,
     /// the bundle phase automatically retries.
     ///
-    /// - Note: Uses `zip(results, diskConfig.disks)` which assumes the build
-    ///   results array and disk configuration are the same length.
+    /// The failed result is matched to its `ProjectDisk` by resolving each
+    /// disk's image path against the missing URL. Positional pairing (the old
+    /// `zip(results, diskConfig.disks)`) silently mispaired whenever
+    /// `bundleDisks` skipped or reordered a disk - and a mispaired recovery
+    /// would rewrite the wrong disk's filename in the project model.
     func bundleDisksWithRecovery(outputPRG: URL, buildDir: URL, parentWindow: NSWindow) {
         guard let proj = project, let diskConfig = proj.diskConfig else { return }
 
         let results = bundleDisks(outputPRG: outputPRG, buildDir: buildDir)
 
-        for (result, disk) in zip(results, diskConfig.disks) {
+        for result in results {
             guard !result.success,
                   let error = result.error,
                   case DiskImageError.imageNotFound(let url) = error else { continue }
+
+            guard let disk = Self.disk(matching: url, in: diskConfig) else {
+                // No configured disk resolves to the missing path. Recovery
+                // would guess, and guessing rewrites project state - skip.
+                continue
+            }
 
             DiskImageUICoordinator.shared.recover(
                 missingURL: url,
@@ -381,6 +410,32 @@ extension BuildManager {
             }
             return  // Process one missing image at a time
         }
+    }
+
+    /// Finds the `ProjectDisk` whose image path resolves to `url`.
+    /// Falls back to a filename match if full-path resolution finds nothing
+    /// (e.g. project root unavailable, or symlinked build directories).
+    private static func disk(matching url: URL, in config: ProjectDiskConfig) -> ProjectDisk? {
+        let target = url.standardizedFileURL.path
+        if let match = config.disks.first(where: {
+            imageURL(for: $0)?.standardizedFileURL.path == target
+        }) {
+            return match
+        }
+        return config.disks.first {
+            URL(fileURLWithPath: $0.filename).lastPathComponent == url.lastPathComponent
+        }
+    }
+
+    /// Resolves a disk's stored filename. Relative filenames are anchored at
+    /// the project root; absolute filenames (set by the Locate flow for
+    /// images outside the project) pass through unchanged.
+    private static func imageURL(for disk: ProjectDisk) -> URL? {
+        if disk.filename.hasPrefix("/") {
+            return URL(fileURLWithPath: disk.filename)
+        }
+        guard let root = ProjectManager.shared.projectRoot else { return nil }
+        return root.appendingPathComponent(disk.filename)
     }
 }
 

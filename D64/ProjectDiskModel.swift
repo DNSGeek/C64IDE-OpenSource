@@ -289,7 +289,12 @@ struct ManifestResolver {
 
         // ── Step 3: Build output injection ──────────────────
 
-        var files = Array(resolved.values)
+        // Deterministic order: Dictionary.values has unspecified order, which
+        // would make disk layout (and the "first file" that LOAD"*",8,1 picks
+        // up when bootProgramName is nil) vary between otherwise identical
+        // builds. Sort by source path so identical inputs always produce
+        // identical disks.
+        var files = resolved.values.sorted { $0.sourceURL.path < $1.sourceURL.path }
         if let output = buildOutput {
             // Remove any auto-discovered or explicit entry that has the same
             // CBM name as the build output (the build output wins).
