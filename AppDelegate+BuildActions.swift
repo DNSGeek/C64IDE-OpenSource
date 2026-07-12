@@ -107,21 +107,44 @@ extension AppDelegate {
 
         // Clear the debugger binding if the build fails to prevent stale closures
         // from affecting subsequent launches.
-        let bm = wc.buildManager
-        let priorCompletion = bm?.onBuildComplete
-        bm?.onBuildComplete = { result in
-            bm?.onBuildComplete = priorCompletion
-            priorCompletion?(result)
+        runAfterNextBuild(wc) { result in
             if !result.success {
-                Task { @MainActor in EmulatorCoordinator.shared.onDidLaunch = nil }
+                EmulatorCoordinator.shared.onDidLaunch = nil
             }
         }
 
-        bm?.buildAndRun(
+        wc.buildManager.buildAndRun(
             sourceFile: sourceURL,
             target: target,
             debugOptions: debugOptions
         )
+    }
+
+    // MARK: - One-Shot Build Completion
+
+    /// Runs `continuation` on the main actor after the next build completes.
+    ///
+    /// Installs a single wrapper around `buildManager.onBuildComplete` that restores
+    /// the prior handler once fired. If a continuation is already pending, it is
+    /// replaced rather than chained, so triggering Build & Debug and Build & Save
+    /// to Disk in quick succession runs only the most recent intent instead of both.
+    @MainActor
+    func runAfterNextBuild(_ wc: MainWindowController, _ continuation: @escaping (BuildResult) -> Void) {
+        if pendingBuildContinuation == nil {
+            let bm = wc.buildManager
+            let prior = bm?.onBuildComplete
+            bm?.onBuildComplete = { [weak self] result in
+                bm?.onBuildComplete = prior
+                prior?(result)
+                Task { @MainActor in
+                    guard let self else { return }
+                    let pending = self.pendingBuildContinuation
+                    self.pendingBuildContinuation = nil
+                    pending?(result)
+                }
+            }
+        }
+        pendingBuildContinuation = continuation
     }
 
     /// Triggers a build without running the output.
@@ -176,22 +199,15 @@ extension AppDelegate {
             }
             promptDiskExport(prgURL: prgURL, baseName: baseName, wc: wc)
         } else if doc.fileType.usesAssemblyHighlighting {
-            // The build runs asynchronously. Hook the completion callback (restoring
-            // any prior handler, same pattern as buildAndDebug) and export from there.
-            let bm = wc.buildManager
-            let priorCompletion = bm?.onBuildComplete
-            bm?.onBuildComplete = { [weak self] result in
-                bm?.onBuildComplete = priorCompletion
-                priorCompletion?(result)
-                Task { @MainActor in
-                    guard let self, let wc = self.mainWindowController else { return }
-                    guard result.success else {
-                        wc.bottomPanelController.appendBuildOutput(
-                            "Build failed. Disk export cancelled.", type: .error)
-                        return
-                    }
-                    self.promptDiskExport(prgURL: prgURL, baseName: baseName, wc: wc)
+            // The build runs asynchronously; export from the completion callback.
+            runAfterNextBuild(wc) { [weak self] result in
+                guard let self, let wc = self.mainWindowController else { return }
+                guard result.success else {
+                    wc.bottomPanelController.appendBuildOutput(
+                        "Build failed. Disk export cancelled.", type: .error)
+                    return
                 }
+                self.promptDiskExport(prgURL: prgURL, baseName: baseName, wc: wc)
             }
             wc.performBuildOnly(sender)
         } else {

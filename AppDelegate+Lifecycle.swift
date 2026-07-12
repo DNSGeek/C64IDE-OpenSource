@@ -139,27 +139,8 @@ extension AppDelegate {
             return .terminateCancel
         }
 
-        if let wc = mainWindowController {
-            for editor in wc.allEditors {
-                if editor.document.isModified {
-                    let alert = NSAlert()
-                    alert.messageText = "Do you want to save changes to \"\(editor.document.displayTitle)\"?"
-                    alert.informativeText = "Your changes will be lost if you don't save them."
-                    alert.alertStyle = .warning
-                    alert.addButton(withTitle: "Save")
-                    alert.addButton(withTitle: "Don't Save")
-                    alert.addButton(withTitle: "Cancel")
-
-                    switch alert.runModal() {
-                    case .alertFirstButtonReturn:
-                        editor.saveDocument()
-                    case .alertSecondButtonReturn:
-                        break
-                    default:
-                        return .terminateCancel
-                    }
-                }
-            }
+        if !promptToSaveDirtyEditors() {
+            return .terminateCancel
         }
 
         if let diskVC = diskBrowserController?.window?.contentViewController as? D64BrowserViewController {
@@ -174,6 +155,34 @@ extension AppDelegate {
     }
 
     // MARK: - Window / Session Helpers
+
+    /// Prompts to save each modified editor document.
+    /// Returns false if the user cancels, true otherwise.
+    /// Used on quit and before closing a project (closeAllTabs discards silently).
+    @MainActor
+    @discardableResult
+    func promptToSaveDirtyEditors() -> Bool {
+        guard let wc = mainWindowController else { return true }
+        for editor in wc.allEditors where editor.document.isModified {
+            let alert = NSAlert()
+            alert.messageText = "Do you want to save changes to \"\(editor.document.displayTitle)\"?"
+            alert.informativeText = "Your changes will be lost if you don't save them."
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "Save")
+            alert.addButton(withTitle: "Don't Save")
+            alert.addButton(withTitle: "Cancel")
+
+            switch alert.runModal() {
+            case .alertFirstButtonReturn:
+                editor.saveDocument()
+            case .alertSecondButtonReturn:
+                break
+            default:
+                return false
+            }
+        }
+        return true
+    }
 
     /// Creates and displays the main application window.
     func openNewWindow() {

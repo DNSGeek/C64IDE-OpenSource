@@ -9,22 +9,26 @@ import SwiftUI
 
 // MARK: - Tool Windows
 
+@MainActor
 extension AppDelegate {
+
+    /// Lazily creates a tool window controller on first use, then shows and focuses it.
+    private func show<T: NSWindowController>(_ controller: inout T?, make: () -> T) {
+        if controller == nil { controller = make() }
+        controller?.window?.makeKeyAndOrderFront(nil)
+    }
 
     /// Opens or focuses the Sprite Editor window.
     @objc func openSpriteEditor(_ sender: Any?) {
-        if spriteEditorController == nil { spriteEditorController = SpriteEditorWindowController() }
-        spriteEditorController?.window?.makeKeyAndOrderFront(nil)
+        show(&spriteEditorController) { SpriteEditorWindowController() }
     }
 
     /// Opens or focuses the Character Set Editor window.
     @objc func openCharEditor(_ sender: Any?) {
-        if charEditorController == nil { charEditorController = CharEditorWindowController() }
-        charEditorController?.window?.makeKeyAndOrderFront(nil)
+        show(&charEditorController) { CharEditorWindowController() }
     }
 
     /// Opens or focuses the Source Debugger window.
-    @MainActor
     @objc func openDebugger(_ sender: Any?) {
         if debuggerController == nil {
             debuggerController = DebuggerWindowController()
@@ -57,14 +61,12 @@ extension AppDelegate {
 
     /// Opens or focuses the 6502 Disassembler window.
     @objc func openDisassembler(_ sender: Any?) {
-        if disassemblerController == nil { disassemblerController = DisassemblerWindowController() }
-        disassemblerController?.window?.makeKeyAndOrderFront(nil)
+        show(&disassemblerController) { DisassemblerWindowController() }
     }
 
     /// Opens the disassembler and loads a specific file (used by the D64 browser).
     func openDisassemblerWith(url: URL) {
-        if disassemblerController == nil { disassemblerController = DisassemblerWindowController() }
-        disassemblerController?.window?.makeKeyAndOrderFront(nil)
+        openDisassembler(nil)
         if let vc = disassemblerController?.window?.contentViewController as? DisassemblerViewController {
             vc.loadFile(url)
         }
@@ -72,67 +74,58 @@ extension AppDelegate {
 
     /// Opens or focuses the D64 Disk Image Browser window.
     @objc func openD64Browser(_ sender: Any?) {
-        if diskBrowserController == nil { diskBrowserController = D64BrowserWindowController() }
-        diskBrowserController?.window?.makeKeyAndOrderFront(nil)
+        show(&diskBrowserController) { D64BrowserWindowController() }
     }
 
     /// Opens or focuses the TAP Tape Image Browser window.
     @objc func openTAPBrowser(_ sender: Any?) {
-        if tapBrowserController == nil { tapBrowserController = TAPBrowserWindowController() }
-        tapBrowserController?.window?.makeKeyAndOrderFront(nil)
+        show(&tapBrowserController) { TAPBrowserWindowController() }
     }
 
     /// Opens or focuses the SID Sound Chip Editor window.
     @objc func openSIDEditor(_ sender: Any?) {
-        if sidEditorController == nil { sidEditorController = SIDEditorWindowController() }
-        sidEditorController?.window?.makeKeyAndOrderFront(nil)
+        show(&sidEditorController) { SIDEditorWindowController() }
     }
 
     /// Opens or focuses the Graphics Editor window.
     @objc func openGfxEditor(_ sender: Any?) {
-        if gfxEditorController == nil { gfxEditorController = GfxEditorWindowController() }
-        gfxEditorController?.window?.makeKeyAndOrderFront(nil)
+        show(&gfxEditorController) { GfxEditorWindowController() }
     }
 
     /// Opens or focuses the Number Base Converter window.
     @objc func openNumberConverter(_ sender: Any?) {
-        if numberConverterController == nil { numberConverterController = NumberConverterWindowController() }
-        numberConverterController?.window?.makeKeyAndOrderFront(nil)
+        show(&numberConverterController) { NumberConverterWindowController() }
     }
 
     /// Opens or focuses the PETSCII Character Map window.
     @objc func openPETSCIIMap(_ sender: Any?) {
-        if petsciiMapController == nil { petsciiMapController = PETSCIIMapWindowController() }
-        petsciiMapController?.window?.makeKeyAndOrderFront(nil)
+        show(&petsciiMapController) { PETSCIIMapWindowController() }
     }
 
     /// Opens or focuses the Image Format Converter window.
     @objc func openImageConverter(_ sender: Any?) {
-        if imageConverterController == nil { imageConverterController = ImageConverterWindowController() }
-        imageConverterController?.window?.makeKeyAndOrderFront(nil)
+        show(&imageConverterController) { ImageConverterWindowController() }
     }
 
     /// Opens or focuses the ROM Character Set Viewer window.
     @objc func openCharROMViewer(_ sender: Any?) {
-        if charROMViewerController == nil { charROMViewerController = CharROMViewerWindowController() }
-        charROMViewerController?.window?.makeKeyAndOrderFront(nil)
+        show(&charROMViewerController) { CharROMViewerWindowController() }
     }
 
     /// Opens or focuses the Tile Map Editor window.
     @objc func openMapEditor(_ sender: Any?) {
-        if mapEditorController == nil { mapEditorController = MapEditorWindowController() }
-        mapEditorController?.window?.makeKeyAndOrderFront(nil)
+        show(&mapEditorController) { MapEditorWindowController() }
     }
 
     /// Opens or focuses the Memory Map Viewer window.
     @objc func openMemoryMap(_ sender: Any?) {
-        if memoryMapController == nil { memoryMapController = MemoryMapWindowController() }
-        memoryMapController?.window?.makeKeyAndOrderFront(nil)
+        show(&memoryMapController) { MemoryMapWindowController() }
     }
 }
 
 // MARK: - File & Editor Actions
 
+@MainActor
 extension AppDelegate {
 
     /// Creates a new untitled BASIC file in a new tab or window.
@@ -151,7 +144,23 @@ extension AppDelegate {
         let dialect      = BasicDialectManager.shared.activeDialect
         let loadAddr     = dialect?.loadAddress ?? 0x0801
         let needsStub    = dialect?.requiresSYSStub ?? true
-        let sysAddr      = dialect?.activationSYS ?? (loadAddr + 0x0C)
+
+        // Stub bytes ahead of the SYS target: next-line link (2) + line number (2)
+        // + SYS token (1) + ASCII digits of the target address + terminating 0 (1)
+        // + end-of-program link (2) = 8 + digit count. The digit count depends on
+        // the address itself (a 5-digit SYS needs a 13-byte stub, i.e. any load
+        // address of $270C or above), so iterate to a fixed point.
+        let sysAddr: Int
+        if let explicit = dialect?.activationSYS {
+            sysAddr = Int(explicit)
+        } else {
+            let base = Int(loadAddr) + 8
+            var addr = base + 4
+            while addr != base + String(addr).count {
+                addr = base + String(addr).count
+            }
+            sysAddr = addr
+        }
 
         let loadAddrHex  = String(format: "$%04X", loadAddr)
         let sysAddrStr   = String(sysAddr)
@@ -222,6 +231,7 @@ extension AppDelegate {
 
 // MARK: - BASIC Dialect & Plugins
 
+@MainActor
 extension AppDelegate {
 
     /// Switches the active BASIC dialect and updates syntax highlighting.
@@ -336,13 +346,23 @@ extension AppDelegate {
 extension AppDelegate: NSMenuItemValidation {
     /// Validates menu items dynamically. Extend this method to add more validation rules.
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-        if menuItem.action == #selector(showProjectSettings(_:)) {
+        switch menuItem.action {
+        case #selector(showProjectSettings(_:)),
+             #selector(saveProject(_:)),
+             #selector(closeProject(_:)):
             return ProjectManager.shared.isProjectOpen
+        case #selector(renumberLines(_:)),
+             #selector(compileBASIC(_:)):
+            // Only meaningful for a BASIC document in the active tab.
+            return mainWindowController?.editorViewController.document
+                .fileType.usesBasicHighlighting == true
+        default:
+            return true
         }
-        return true
     }
 }
 
+@MainActor
 extension AppDelegate {
 
     /// Toggles the right-side reference panel.
@@ -388,6 +408,7 @@ extension AppDelegate {
 
 // MARK: - About Panel
 
+@MainActor
 extension AppDelegate {
 
     /// Displays the custom About panel with version info, website, and contact links.

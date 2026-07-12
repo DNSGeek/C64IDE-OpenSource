@@ -186,6 +186,9 @@ extension AppDelegate {
                 return
             }
         }
+        // handleProjectDidClose calls closeAllTabs(), which discards editor
+        // contents without prompting, so ask about unsaved documents first.
+        guard promptToSaveDirtyEditors() else { return }
         pm.closeProject()
         restoreSession()
     }

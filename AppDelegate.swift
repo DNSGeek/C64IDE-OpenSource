@@ -48,6 +48,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// URLs pending opening (used during app launch before the main window exists).
     var pendingURLsToOpen: [URL] = []
+    /// One-shot continuation fired after the next build completes. Set via
+    /// runAfterNextBuild(_:_:); used by Build & Debug and Build & Save to Disk.
+    var pendingBuildContinuation: ((BuildResult) -> Void)?
     /// Optional reference to the active About panel.
     var aboutPanel: NSPanel?
 }

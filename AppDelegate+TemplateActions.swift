@@ -15,6 +15,12 @@ extension AppDelegate {
     @MainActor @objc func newProjectFromTemplate(_ sender: Any?) {
         guard let parentWindow = mainWindowController?.window else { return }
 
+        // A cancelled run never fires onTemplateChosen, leaving the previous
+        // picker retained. Releasing it here bounds the leak to one controller.
+        // If TemplatePickerWindowController grows a cancel/close callback, clear
+        // the static there instead.
+        AppDelegate._templatePicker = nil
+
         let picker = TemplatePickerWindowController()
         AppDelegate._templatePicker = picker
 
