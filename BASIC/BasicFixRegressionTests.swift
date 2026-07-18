@@ -195,4 +195,34 @@ final class BasicFixRegressionTests: XCTestCase {
         let listing = BasicTokenizer.detokenize(prg)
         XCTAssertEqual(listing, "10 B=2")
     }
+
+    // ═══════════════════════════════════════════════════════
+    // MARK: DATA literal mode (ROM $A57C data flag)
+    // ═══════════════════════════════════════════════════════
+
+    func test_data_minus_stays_literal() {
+        let bytes = [UInt8](BasicTokenizer.tokenize("20 DATA 24,6,-1"))
+        XCTAssertFalse(bytes.contains(0xAB), "minus in DATA must be $2D, not token $AB")
+        XCTAssertTrue(bytes.contains(0x2D))
+    }
+
+    func test_data_keywords_not_crunched() {
+        let bytes = [UInt8](BasicTokenizer.tokenize("10 DATA TO,AND,PRINT"))
+        XCTAssertEqual(bytes.filter { $0 >= 0x80 }, [0x83], "only DATA itself is tokenized")
+    }
+
+    func test_colon_ends_data_mode() {
+        let bytes = [UInt8](BasicTokenizer.tokenize("10 DATA 1,2:PRINT X"))
+        XCTAssertTrue(bytes.contains(0x99), "PRINT after the colon must still crunch")
+    }
+
+    func test_quoted_colon_does_not_end_data_mode() {
+        let bytes = [UInt8](BasicTokenizer.tokenize("10 DATA \"A:B\",-1"))
+        XCTAssertFalse(bytes.contains(0xAB))
+    }
+
+    func test_data_roundtrip() {
+        let prg = BasicTokenizer.tokenize("20 DATA 24,6,-1")
+        XCTAssertEqual(BasicTokenizer.detokenize(prg), "20 DATA 24,6,-1")
+    }
 }

@@ -255,6 +255,7 @@ public class BasicTokenizer {
         var pos = upper.startIndex
         var inQuotes = false
         var inREM = false
+        var inDATA = false
 
         // Snapshot the unified table once per line so a mid-tokenize dialect
         // change (pathological but possible) can't corrupt the output.
@@ -301,6 +302,24 @@ public class BasicTokenizer {
                 pos = upper.index(after: pos)
                 continue
             }
+            
+            // -- Inside DATA -- literal until ':' or end of line ------
+            // The ROM cruncher sets a data-mode flag after tokenizing
+            // DATA and copies bytes literally until a colon or EOL.
+            // Without this, '-' in DATA crunched to $AB and READ threw
+            // ?SYNTAX ERROR. Quote handling above means a colon inside
+            // a quoted DATA item does not end data mode.
+            if inDATA {
+                if ch == ":" { inDATA = false }
+                if let escaped = tryEscapeSequence(upper, at: pos) {
+                    result.append(escaped.byte)
+                    pos = escaped.end
+                    continue
+                }
+                result.append(asciiToPetscii(ch))
+                pos = upper.index(after: pos)
+                continue
+            }
 
             // ── Spaces are literal ────────────────────────────────────
             if ch == " " {
@@ -340,6 +359,7 @@ public class BasicTokenizer {
                 case .v2(let token):
                     result.append(token)
                     if token == 0x8F { inREM = true }   // REM — swallow rest of line
+                    if token == 0x83 { inDATA = true }  // DATA -- literal until ':'
 
                 case .extensionSingle(let token):
                     result.append(token)
@@ -653,6 +673,7 @@ public class BasicTokenizer {
             var lineContent = ""
             var inQuotes = false
             var inREM = false
+            var inDATA = false
 
             while offset < bytes.count && bytes[offset] != 0x00 {
                 let byte = bytes[offset]
@@ -690,12 +711,27 @@ public class BasicTokenizer {
                     offset += 1
                     continue
                 }
+                
+                // -- DATA literal mode: bytes are text until ':' ------
+                if inDATA {
+                    if byte == 0x3A {
+                        inDATA = false
+                        lineContent.append(":")
+                    } else if byte >= 0x20 && byte <= 0x7E && byte != 0x7B {
+                        lineContent.append(Character(UnicodeScalar(byte)))
+                    } else {
+                        lineContent.append(String(format: "{$%02X}", byte))
+                    }
+                    offset += 1
+                    continue
+                }
 
                 // ── Standard BASIC V2 token ($80–$CB) ─────────────────
                 if byte >= 0x80 && byte <= 0xCB {
                     if let keyword = reverseTokenTable[byte] {
                         lineContent.append(keyword)
                         if byte == 0x8F { inREM = true }   // REM: rest is literal
+                        if byte == 0x83 { inDATA = true }  // DATA: literal until ':'
                     } else {
                         lineContent.append(String(format: "{$%02X}", byte))
                     }
