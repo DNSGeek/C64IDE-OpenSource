@@ -78,7 +78,7 @@ extension AppDelegate {
     }
 
     /// Opens the map editor when triggered by a charset notification.
-    @objc func handleCharsetSendToMapEditor(_ notification: Notification) {
+    @MainActor @objc func handleCharsetSendToMapEditor(_ notification: Notification) {
         openMapEditor(nil)
     }
 }

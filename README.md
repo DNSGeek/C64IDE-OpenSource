@@ -87,17 +87,40 @@ Send a freshly built program to any of:
 This is an Xcode project written in Swift with a small amount of Objective-C++
 (for the embedded VirtualC64 bridge).
 
-1. Clone the repository:
+### Steps
+
+1. Clone this repository:
    ```sh
    git clone https://github.com/DNSGeek/C64IDE-OpenSource.git
    cd C64IDE-OpenSource
    ```
-2. Open the project in Xcode.
-3. Build and run the app target.
 
-Install the `cc65` toolchain (for example via Homebrew: `brew install cc65`) so
-the build pipeline can find `ca65` and `ld65`, then point the IDE at them in its
-build preferences if they are not on the default search path.
+2. Install `ca65` and `ld65` (for example via Homebrew: `brew install cc65`)
+   so the build pipeline can find them, then point the IDE at them in its
+   build preferences if they are not on the default search path.
+
+3. Build the VirtualC64 static libraries. The embedded C64 emulator is powered
+   by [VirtualC64](https://github.com/dirkwhoffmann/virtualc64) by Dirk
+   Hoffmann. Its C++ source must be cloned **as a sibling** of this repository
+   (the Xcode project references headers via `$(SRCROOT)/../virtualc64`), and
+   its static libraries built with CMake:
+   ```sh
+   # Clone VirtualC64 next to C64IDE-OpenSource
+   git clone https://github.com/dirkwhoffmann/virtualc64.git ../virtualc64
+
+   # Build the static libraries
+   mkdir ../virtualc64/build
+   cd ../virtualc64/build
+   cmake ../VCCore -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_DEPLOYMENT_TARGET=13.3
+   make -j$(sysctl -n hw.logicalcpu)
+
+   # Copy them into the project
+   cd -
+   mkdir -p VirtualC64/lib
+   find ../virtualc64/build -name "*.a" -exec cp {} VirtualC64/lib/ \;
+   ```
+
+4. Open `C64IDE.xcodeproj` and build the app target (⌘B).
 
 ---
 
