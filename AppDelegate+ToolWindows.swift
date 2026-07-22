@@ -205,8 +205,20 @@ extension AppDelegate {
         wc.addNewTab(with: C64Document(fileType: .assembly, content: lines.joined(separator: "\n")))
     }
 
-    /// Closes the active editor tab.
+    /// Closes the active editor tab -- but only if the main editor window is
+    /// actually the key window. This is nil-targeted from the menu (see
+    /// AppDelegate+Menu.swift), so when some other window is frontmost (About
+    /// panel, a tool window, Preferences, etc.) and doesn't itself implement
+    /// closeTab(_:), the responder chain search falls all the way up to
+    /// NSApp.delegate -- this method -- which would otherwise close a tab in
+    /// a window the user isn't even looking at. Falling back to performClose
+    /// on the key window makes Cmd-W do the expected thing everywhere.
     @objc func closeTab(_ sender: Any?) {
+        guard let keyWindow = NSApp.keyWindow else { return }
+        guard mainWindowController?.window === keyWindow else {
+            keyWindow.performClose(sender)
+            return
+        }
         mainWindowController?.closeActiveTab()
     }
 
@@ -419,7 +431,7 @@ extension AppDelegate {
         }
 
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 340, height: 260),
+            contentRect: NSRect(x: 0, y: 0, width: 380, height: 260),
             styleMask: NSWindow.StyleMask([.titled, .closable]),
             backing: .buffered,
             defer: false
@@ -432,7 +444,7 @@ extension AppDelegate {
         container.autoresizingMask = [.width, .height]
         panel.contentView?.addSubview(container)
 
-        let iconView = NSImageView(frame: NSRect(x: 130, y: 180, width: 80, height: 80))
+        let iconView = NSImageView(frame: NSRect(x: 150, y: 180, width: 80, height: 80))
         iconView.image = NSApp.applicationIconImage
         iconView.imageScaling = .scaleProportionallyUpOrDown
         container.addSubview(iconView)
@@ -443,24 +455,24 @@ extension AppDelegate {
         let nameLabel = NSTextField(labelWithString: "C64 IDE")
         nameLabel.font = NSFont.boldSystemFont(ofSize: 16)
         nameLabel.alignment = .center
-        nameLabel.frame = NSRect(x: 20, y: 148, width: 300, height: 22)
+        nameLabel.frame = NSRect(x: 40, y: 148, width: 300, height: 22)
         container.addSubview(nameLabel)
 
         let versionLabel = NSTextField(labelWithString: "Version \(version) (\(build))")
         versionLabel.font = NSFont.systemFont(ofSize: 12)
         versionLabel.textColor = .secondaryLabelColor
         versionLabel.alignment = .center
-        versionLabel.frame = NSRect(x: 20, y: 124, width: 300, height: 18)
+        versionLabel.frame = NSRect(x: 40, y: 124, width: 300, height: 18)
         container.addSubview(versionLabel)
 
         let copyrightLabel = NSTextField(labelWithString: "© \(Calendar.current.component(.year, from: Date())) Gopher Broke Software")
         copyrightLabel.font = NSFont.systemFont(ofSize: 11)
         copyrightLabel.textColor = .secondaryLabelColor
         copyrightLabel.alignment = .center
-        copyrightLabel.frame = NSRect(x: 20, y: 102, width: 300, height: 16)
+        copyrightLabel.frame = NSRect(x: 40, y: 102, width: 300, height: 16)
         container.addSubview(copyrightLabel)
 
-        let websiteButton = NSButton(frame: NSRect(x: 70, y: 64, width: 200, height: 24))
+        let websiteButton = NSButton(frame: NSRect(x: 90, y: 64, width: 200, height: 24))
         websiteButton.title = "gopherbrokesoftware.com"
         websiteButton.bezelStyle = .inline
         websiteButton.isBordered = false
@@ -470,12 +482,12 @@ extension AppDelegate {
         websiteButton.action = #selector(openWebsite(_:))
         container.addSubview(websiteButton)
 
-        let contactButton = NSButton(frame: NSRect(x: 70, y: 36, width: 200, height: 24))
-        contactButton.title = "Contact Developer"
+        let contactButton = NSButton(frame: NSRect(x: 40, y: 36, width: 300, height: 24))
+        contactButton.title = "Contact Developer (dnsgeek@duck.com)"
         contactButton.bezelStyle = .inline
         contactButton.isBordered = false
         contactButton.contentTintColor = NSColor.linkColor
-        contactButton.font = NSFont.systemFont(ofSize: 13)
+        contactButton.font = NSFont.systemFont(ofSize: 12)
         contactButton.target = self
         contactButton.action = #selector(contactDeveloper(_:))
         container.addSubview(contactButton)
@@ -494,7 +506,7 @@ extension AppDelegate {
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "Unknown"
         let subject = "C64 IDE Feedback - v.\(version)"
         let encoded = subject.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? subject
-        if let url = URL(string: "mailto:tknox@mac.com?subject=\(encoded)") {
+        if let url = URL(string: "mailto:dnsgeek@duck.com?subject=\(encoded)") {
             NSWorkspace.shared.open(url)
         }
     }

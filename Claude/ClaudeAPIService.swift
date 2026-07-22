@@ -52,7 +52,10 @@ final class ClaudeAPIService {
 
     private let keychainService = "com.c64ide.claude"
     private let keychainAccount = "anthropic-api-key"
-    private let apiEndpoint     = URL(string: "https://api.anthropic.com/v1/messages")!
+
+    /// Default API host. Used when no override is configured, and as the
+    /// fallback if a stored override turns out to be malformed.
+    static let defaultBaseURLString = "https://api.anthropic.com"
 
     private init() {}
 
@@ -86,6 +89,7 @@ final class ClaudeAPIService {
         static let model           = "ClaudeModel"
         static let thinkingEnabled = "ClaudeThinkingEnabled"
         static let maxTokens       = "ClaudeMaxTokens"
+        static let baseURL         = "ClaudeAPIBaseURL"
     }
 
     /// Selected model ID. Falls back to the default (or the newest available
@@ -132,6 +136,59 @@ final class ClaudeAPIService {
                               Self.absoluteMaxTokensRange.upperBound)
             UserDefaults.standard.set(clamped, forKey: DefaultsKey.maxTokens)
         }
+    }
+
+    /// API host, as entered by the user. Defaults to Anthropic's endpoint;
+    /// can be overridden to point at a locally-hosted server that speaks
+    /// the same Messages API shape (e.g. a local proxy or self-hosted model
+    /// server). Storing an empty string, or the default itself, clears the
+    /// override rather than persisting a redundant value.
+    var baseURLString: String {
+        get {
+            let stored = UserDefaults.standard.string(forKey: DefaultsKey.baseURL)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let stored, !stored.isEmpty else { return Self.defaultBaseURLString }
+            return stored
+        }
+        set {
+            let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty || trimmed == Self.defaultBaseURLString {
+                UserDefaults.standard.removeObject(forKey: DefaultsKey.baseURL)
+            } else {
+                UserDefaults.standard.set(trimmed, forKey: DefaultsKey.baseURL)
+            }
+        }
+    }
+
+    /// Validates a candidate base URL string: must parse as a URL with an
+    /// http/https scheme and a host. Used by the Preferences UI before save.
+    static func isValidBaseURLString(_ string: String) -> Bool {
+        let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return true } // empty means "use the default"
+        guard let url = URL(string: trimmed),
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              url.host != nil else {
+            return false
+        }
+        return true
+    }
+
+    /// Parsed base URL, falling back to the default if the stored string is
+    /// somehow malformed (shouldn't happen given isValidBaseURLString, but
+    /// this keeps sendMessage from force-unwrapping a bad value).
+    var baseURL: URL {
+        URL(string: baseURLString) ?? URL(string: Self.defaultBaseURLString)!
+    }
+
+    /// POST endpoint for chat completions, derived from the base URL.
+    var messagesEndpoint: URL {
+        baseURL.appendingPathComponent("v1/messages")
+    }
+
+    /// GET endpoint for the model catalog, derived from the base URL.
+    var modelsEndpointBase: URL {
+        baseURL.appendingPathComponent("v1/models")
     }
 
     // MARK: - Keychain
@@ -354,7 +411,7 @@ final class ClaudeAPIService {
 
         let bodyData = try JSONSerialization.data(withJSONObject: body)
 
-        var request = URLRequest(url: apiEndpoint)
+        var request = URLRequest(url: messagesEndpoint)
         request.httpMethod = "POST"
         request.httpBody   = bodyData
         request.setValue("application/json",      forHTTPHeaderField: "Content-Type")

@@ -159,7 +159,8 @@ final class ClaudeModelCatalog {
 
         // Paginate, with a safety cap. Nobody needs 500 models in a picker.
         for _ in 0..<5 {
-            var components = URLComponents(string: "https://api.anthropic.com/v1/models")!
+            var components = URLComponents(url: ClaudeAPIService.shared.modelsEndpointBase,
+                                            resolvingAgainstBaseURL: false)!
             var items = [URLQueryItem(name: "limit", value: "100")]
             if let afterID {
                 items.append(URLQueryItem(name: "after_id", value: afterID))

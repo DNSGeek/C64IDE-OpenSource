@@ -4,6 +4,7 @@ import SwiftUI
 
 final class ClaudePreferencesViewModel: ObservableObject {
     @Published var apiKey: String = ""
+    @Published var baseURLText: String
     @Published var selectedModelID: String
     @Published var thinkingEnabled: Bool
     @Published var maxTokensText: String
@@ -15,6 +16,7 @@ final class ClaudePreferencesViewModel: ObservableObject {
 
     init() {
         apiKey          = ClaudeAPIService.shared.loadAPIKey() ?? ""
+        baseURLText     = ClaudeAPIService.shared.baseURLString
         selectedModelID = ClaudeAPIService.shared.model
         thinkingEnabled = ClaudeAPIService.shared.thinkingEnabled
         maxTokensText   = String(ClaudeAPIService.shared.maxTokens)
@@ -74,6 +76,12 @@ final class ClaudePreferencesViewModel: ObservableObject {
             return false
         }
 
+        let trimmedURL = baseURLText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard ClaudeAPIService.isValidBaseURLString(trimmedURL) else {
+            errorMessage = "API URL must be a valid http:// or https:// address."
+            return false
+        }
+
         let range = maxTokensRange
         guard let tokens = Int(maxTokensText.trimmingCharacters(in: .whitespaces)),
               range.contains(tokens) else {
@@ -88,9 +96,10 @@ final class ClaudePreferencesViewModel: ObservableObject {
             return false
         }
 
-        ClaudeAPIService.shared.model           = selectedModelID
-        ClaudeAPIService.shared.thinkingEnabled = thinkingEnabled
-        ClaudeAPIService.shared.maxTokens       = tokens
+        ClaudeAPIService.shared.baseURLString    = trimmedURL
+        ClaudeAPIService.shared.model            = selectedModelID
+        ClaudeAPIService.shared.thinkingEnabled  = thinkingEnabled
+        ClaudeAPIService.shared.maxTokens        = tokens
 
         errorMessage = nil
         return true
@@ -148,6 +157,28 @@ struct ClaudePreferencesView: View {
             SecureField("sk-ant-...", text: $viewModel.apiKey)
                 .textFieldStyle(.roundedBorder)
                 .font(.system(.body, design: .monospaced))
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    TextField(ClaudeAPIService.defaultBaseURLString, text: $viewModel.baseURLText)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(.body, design: .monospaced))
+                        .autocorrectionDisabled()
+
+                    if viewModel.baseURLText.trimmingCharacters(in: .whitespacesAndNewlines)
+                        != ClaudeAPIService.defaultBaseURLString {
+                        Button("Reset") {
+                            viewModel.baseURLText = ClaudeAPIService.defaultBaseURLString
+                        }
+                        .controlSize(.small)
+                        .help("Restore the default Anthropic API URL")
+                    }
+                }
+                Text("API URL. Change this to point at a locally-hosted server that speaks the same API.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             Divider()
 
