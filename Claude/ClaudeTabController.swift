@@ -97,7 +97,7 @@ final class ClaudeTabController: NSViewController {
         settingsButton.bezelStyle = .rounded
         settingsButton.isBordered = false
         settingsButton.font = NSFont.systemFont(ofSize: 14)
-        settingsButton.toolTip = "Claude API Settings"
+        settingsButton.toolTip = "AI API Settings"
         settingsButton.translatesAutoresizingMaskIntoConstraints = false
 
         // Status label
@@ -108,7 +108,7 @@ final class ClaudeTabController: NSViewController {
 
         // Input field
         inputField = NSTextField()
-        inputField.placeholderString = "Ask Claude about your C64 code…"
+        inputField.placeholderString = "Ask AI about your C64 code…"
         inputField.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
         inputField.bezelStyle = .roundedBezel
         inputField.translatesAutoresizingMaskIntoConstraints = false
@@ -266,7 +266,7 @@ final class ClaudeTabController: NSViewController {
         </style>
         </head>
         <body>
-        <div id="messages">\(messages.isEmpty ? "<p class='empty-hint'>Ask Claude anything about your C64 code.</p>" : messages)</div>
+        <div id="messages">\(messages.isEmpty ? "<p class='empty-hint'>Ask AI anything about your C64 code.</p>" : messages)</div>
         <script>
           function scrollToBottom() {
             window.scrollTo(0, document.body.scrollHeight);
@@ -359,7 +359,7 @@ final class ClaudeTabController: NSViewController {
         guard !text.isEmpty, !isWaiting else { return }
 
         guard ClaudeAPIService.shared.hasAPIKey else {
-            appendError("No API key configured. Click ⚙ to add your Anthropic API key.")
+            appendError("No API key configured for \(ClaudeAPIService.shared.apiProvider.displayName). Click ⚙ to add one.")
             return
         }
 
@@ -455,7 +455,7 @@ final class ClaudeTabController: NSViewController {
             })
         )
         let prefsWindow = NSWindow(contentViewController: hostingController)
-        prefsWindow.title = "Claude AI Settings"
+        prefsWindow.title = "AI Settings"
         prefsWindow.styleMask = [.titled, .closable]
         prefsWindow.center()
         window.beginSheet(prefsWindow, completionHandler: nil)
