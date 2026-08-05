@@ -68,6 +68,16 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSTextStorageD
     var onDocumentModified: (() -> Void)?
     /// Called after a background reload from disk to refresh UI state.
     var onExternalReload: (() -> Void)?
+    /// Fired on the main queue with fresh scan results.
+    var onVariablesUpdated: (([BasicVariableInfo]) -> Void)?
+    
+    /// Debounce state. Generation counter beats DispatchWorkItem
+    /// cancellation checks: a stale scan that already started can't be
+    /// cancelled, but its results can be ignored on arrival.
+    private var variableScanGeneration = 0
+    
+    private static let variableScanQueue = DispatchQueue(
+        label: "com.gopherbroke.c64ide.variablescan", qos: .utility)
 
     // MARK: - Document Binding
 
@@ -302,6 +312,7 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSTextStorageD
         highlighter?.highlightAll()
         tooltipProvider?.setFileType(document.fileType)
         isSuppressingDelegate = false
+        scheduleVariableScan()
     }
 
     // MARK: - NSTextStorageDelegate
@@ -324,6 +335,7 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSTextStorageD
         document.isModified = true
         isSuppressingDelegate = false
         onDocumentModified?()
+        scheduleVariableScan()
     }
 
     // MARK: - NSTextViewDelegate
@@ -862,6 +874,96 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSTextStorageD
             } else {
                 completion(false)
             }
+        }
+    }
+}
+
+// ============================================================
+// MARK: - EditorViewController additions
+// ============================================================
+
+extension EditorViewController {
+
+    func scheduleVariableScan() {
+        guard document.fileType.usesBasicHighlighting else {
+            onVariablesUpdated?([])   // clear panel for ASM/text files
+            return
+        }
+        guard let textView else { return }
+
+        variableScanGeneration += 1
+        let generation = variableScanGeneration
+        let source = textView.string   // immutable snapshot, main thread
+
+        // 400ms debounce: long enough to skip per-keystroke churn, short
+        // enough that the panel feels live when you pause typing.
+        Self.variableScanQueue.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+            // A newer edit superseded this scan before it started.
+            guard let self, self.isCurrentGeneration(generation) else { return }
+
+            // BasicParser never throws - it accumulates errors and returns
+            // whatever parsed, so mid-keystroke garbage lines just drop out
+            // and the rest of the program still populates the panel.
+            var parser = BasicParser()
+            let lines = parser.parse(source)
+            let types = BasicTypeAnalyser().analyse(lines)
+
+            var scanner = BasicVariableScanner()
+            scanner.honorsTwoCharNames = self.activeDialectUsesTwoCharNames()
+            let vars = scanner.scan(lines, types: types)
+
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.isCurrentGeneration(generation) else { return }
+                self.onVariablesUpdated?(vars)
+            }
+        }
+    }
+
+    // Reading the generation off-main is technically a race; in practice
+    // Int reads are fine here, but if you want it clean, hop through main:
+    private func isCurrentGeneration(_ g: Int) -> Bool {
+        var current = 0
+        if Thread.isMainThread {
+            current = variableScanGeneration
+        } else {
+            DispatchQueue.main.sync { current = variableScanGeneration }
+        }
+        return current == g
+    }
+
+    /// Vision BASIC honors 8 chars; V2 and most dialects honor 2.
+    /// Wire this to your dialect plugin metadata - a "significantNameLength"
+    /// key in the .c64basic JSON would slot right in.
+    private func activeDialectUsesTwoCharNames() -> Bool {
+        return true  // TODO: consult BasicDialectManager
+    }
+
+    /// Double-click target for the panel: jump to a BASIC line number.
+    /// Scans document lines for a leading match; last definition wins to
+    /// mirror the parser's duplicate-line-number semantics.
+    func jump(toBasicLine basicLine: Int) {
+        let text = textView.string as NSString
+        var location = 0
+        var target: NSRange?
+
+        text.enumerateSubstrings(
+            in: NSRange(location: 0, length: text.length),
+            options: [.byLines, .substringNotRequired]
+        ) { _, lineRange, _, _ in
+            let line = text.substring(with: lineRange)
+                .trimmingCharacters(in: .whitespaces)
+            let digits = line.prefix { $0.isNumber }
+            if let n = Int(digits), n == basicLine {
+                target = lineRange   // keep scanning: last one wins
+            }
+            location = lineRange.upperBound
+        }
+        _ = location
+
+        if let target {
+            textView.setSelectedRange(NSRange(location: target.location, length: 0))
+            textView.scrollRangeToVisible(target)
+            view.window?.makeFirstResponder(textView)
         }
     }
 }

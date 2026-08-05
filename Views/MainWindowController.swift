@@ -120,6 +120,10 @@ class MainWindowController: NSWindowController, NSToolbarDelegate {
         // ── Create shared controllers ─────────────────────────
         referencePanelController = ReferencePanelController()
         bottomPanelController = BottomPanelController()
+        
+        referencePanelController.onJumpToBasicLine = { [weak self] line in
+            self?.editorViewController?.jump(toBasicLine: line)
+        }
 
         // Wire error click-to-navigate
         bottomPanelController.onErrorClicked = { [weak self] lineNum in
@@ -294,6 +298,9 @@ class MainWindowController: NSWindowController, NSToolbarDelegate {
         }
         editor.onDocumentModified = { [weak self] in
             self?.updateWindowTitle()
+        }
+        editor.onVariablesUpdated = { [weak self] vars in
+            self?.referencePanelController.updateVariables(vars)
         }
         // Refresh the tab label and title bar after a silent external-change reload
         editor.onExternalReload = { [weak self] in
@@ -1300,6 +1307,7 @@ extension MainWindowController: NSTabViewDelegate {
         updateWindowTitle()
         refreshGitStatus()
         refreshDiskHint()
+        editorViewController?.scheduleVariableScan()
     }
 }
 
