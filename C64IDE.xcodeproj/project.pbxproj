@@ -113,7 +113,7 @@
 		1347C3872FAEFBDC00FC1CBB /* C64Timing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = C64Timing.swift; sourceTree = "<group>"; };
 		1347C3882FAEFBDC00FC1CBB /* FileWatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileWatcher.swift; sourceTree = "<group>"; };
 		1347C3C52FAEFC5A00FC1CBB /* UpdateChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateChecker.swift; sourceTree = "<group>"; };
-		1347C3C72FAEFC8500FC1CBB /* C64ROMSymbols.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = C64ROMSymbols.swift; path = C64IDE/Disassembler/C64ROMSymbols.swift; sourceTree = SOURCE_ROOT; };
+		1347C3C72FAEFC8500FC1CBB /* C64ROMSymbols.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = C64ROMSymbols.swift; sourceTree = "<group>"; };
 		13651BE02F7211DB001749B5 /* BasicTokenizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BasicTokenizer.swift; sourceTree = "<group>"; };
 		13651BE32F7215E2001749B5 /* SpriteEditorWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpriteEditorWindowController.swift; sourceTree = "<group>"; };
 		13651BE52F7217DC001749B5 /* CharEditorWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharEditorWindowController.swift; sourceTree = "<group>"; };
@@ -130,10 +130,10 @@
 		1379DD252FC3AE1A00A8AF78 /* C64IDE-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "C64IDE-Bridging-Header.h"; sourceTree = "<group>"; };
 		137E71242F710253008BFE9A /* ReferencePanelController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReferencePanelController.swift; sourceTree = "<group>"; };
 		137E71272F710266008BFE9A /* BottomPanelController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BottomPanelController.swift; sourceTree = "<group>"; };
-		138714FF2FF18A6B0048F245 /* AsmToDataDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AsmToDataDialog.swift; path = "/Users/tdknox/Source/git/C64IDE-OpenSource/Assembler/AsmToDataDialog.swift"; sourceTree = "<absolute>"; };
-		138715002FF18A6B0048F245 /* AsmToDataGenerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AsmToDataGenerator.swift; path = "/Users/tdknox/Source/git/C64IDE-OpenSource/Assembler/AsmToDataGenerator.swift"; sourceTree = "<absolute>"; };
-		138715032FF18B0D0048F245 /* NSTextField+Shake.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "NSTextField+Shake.swift"; path = "/Users/tdknox/Source/git/C64IDE-OpenSource/Views/NSTextField+Shake.swift"; sourceTree = "<absolute>"; };
-		138715D62FC38C6C009BEA31 /* Templates */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Templates; path = C64IDE/Resources/Templates; sourceTree = "<group>"; };
+		138714FF2FF18A6B0048F245 /* AsmToDataDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AsmToDataDialog.swift; sourceTree = "<group>"; };
+		138715002FF18A6B0048F245 /* AsmToDataGenerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AsmToDataGenerator.swift; sourceTree = "<group>"; };
+		138715032FF18B0D0048F245 /* NSTextField+Shake.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "NSTextField+Shake.swift"; sourceTree = "<group>"; };
+		138715D62FC38C6C009BEA31 /* Templates */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Templates; path = Resources/Templates; sourceTree = SOURCE_ROOT; };
 		13BA4FB72FAEF8C3003331E5 /* AppDelegate+BuildActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppDelegate+BuildActions.swift"; sourceTree = "<group>"; };
 		13BA4FB82FAEF8C3003331E5 /* AppDelegate+Lifecycle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppDelegate+Lifecycle.swift"; sourceTree = "<group>"; };
 		13BA4FB92FAEF8C3003331E5 /* AppDelegate+Menu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppDelegate+Menu.swift"; sourceTree = "<group>"; };
@@ -150,7 +150,6 @@
 		13BA4FD02FAEF957003331E5 /* BasicTypeAnalyser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BasicTypeAnalyser.swift; sourceTree = "<group>"; };
 		13BA4FD22FAEF957003331E5 /* BuildPipelineSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BuildPipelineSupport.swift; sourceTree = "<group>"; };
 		13BA4FD32FAEF957003331E5 /* PluginEditorWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PluginEditorWindowController.swift; sourceTree = "<group>"; };
-		13C3E3B12F70E8C700111DDE /* BasicStubGenerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BasicStubGenerator.swift; sourceTree = "<group>"; };
 		13C3E3B22F70E8C700111DDE /* BuildConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BuildConfiguration.swift; sourceTree = "<group>"; };
 		13C3E3B32F70E8C700111DDE /* BuildErrorParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BuildErrorParser.swift; sourceTree = "<group>"; };
 		13C3E3B42F70E8C700111DDE /* BuildManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BuildManager.swift; sourceTree = "<group>"; };
@@ -176,7 +175,7 @@
 		13876BAF2FC3C93B008C4470 /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			additionalCompilerFlagsByRelativePath = {
-				VC64Bridge.mm = "-fno-modules -I/Users/tdknox/Source/git/virtualc64/VCCore -I/Users/tdknox/Source/git/virtualc64/VCCore/Components -I/Users/tdknox/Source/git/virtualc64/VCCore/Components/CIA -I/Users/tdknox/Source/git/virtualc64/VCCore/Components/CPU -I/Users/tdknox/Source/git/virtualc64/VCCore/Components/CPU/Peddle -I/Users/tdknox/Source/git/virtualc64/VCCore/Components/Memory -I/Users/tdknox/Source/git/virtualc64/VCCore/Components/SID -I/Users/tdknox/Source/git/virtualc64/VCCore/Components/SID/resid -I/Users/tdknox/Source/git/virtualc64/VCCore/Components/VICII -I/Users/tdknox/Source/git/virtualc64/VCCore/Infrastructure -I/Users/tdknox/Source/git/virtualc64/VCCore/Media -I/Users/tdknox/Source/git/virtualc64/VCCore/Media/Cartridges -I/Users/tdknox/Source/git/virtualc64/VCCore/Media/Cartridges/CustomCartridges -I/Users/tdknox/Source/git/virtualc64/VCCore/Misc/RegressionTester -I/Users/tdknox/Source/git/virtualc64/VCCore/Misc/RemoteServers -I/Users/tdknox/Source/git/virtualc64/VCCore/Misc/RetroShell -I/Users/tdknox/Source/git/virtualc64/VCCore/Peripherals/Datasette -I/Users/tdknox/Source/git/virtualc64/VCCore/Peripherals/Drive -I/Users/tdknox/Source/git/virtualc64/VCCore/Peripherals/Joystick -I/Users/tdknox/Source/git/virtualc64/VCCore/Peripherals/Keyboard -I/Users/tdknox/Source/git/virtualc64/VCCore/Peripherals/Monitor -I/Users/tdknox/Source/git/virtualc64/VCCore/Peripherals/Mouse -I/Users/tdknox/Source/git/virtualc64/VCCore/Peripherals/Network -I/Users/tdknox/Source/git/virtualc64/VCCore/Peripherals/Paddle -I/Users/tdknox/Source/git/virtualc64/VCCore/Ports -I/Users/tdknox/Source/git/virtualc64/VCCore/rvlib -I/Users/tdknox/Source/git/virtualc64/VCCore/rvlib/Devices -I/Users/tdknox/Source/git/virtualc64/VCCore/rvlib/FileSystems/CBM -I/Users/tdknox/Source/git/virtualc64/VCCore/rvlib/Images -I/Users/tdknox/Source/git/virtualc64/VCCore/rvlib/Images/ADF -I/Users/tdknox/Source/git/virtualc64/VCCore/rvlib/Images/D64 -I/Users/tdknox/Source/git/virtualc64/VCCore/rvlib/Images/DMS -I/Users/tdknox/Source/git/virtualc64/VCCore/rvlib/Images/Encoders -I/Users/tdknox/Source/git/virtualc64/VCCore/rvlib/Images/EXE -I/Users/tdknox/Source/git/virtualc64/VCCore/rvlib/Images/IMG -I/Users/tdknox/Source/git/virtualc64/VCCore/rvlib/Images/ST -I/Users/tdknox/Source/git/virtualc64/VCCore/ThirdParty -I/Users/tdknox/Source/git/virtualc64/VCCore/utlib/include -I/Users/tdknox/Source/git/virtualc64/VCCore/utlib/include/utl -I/Users/tdknox/Source/git/virtualc64/VCCore/utlib/include/utl/abilities -I/Users/tdknox/Source/git/virtualc64/VCCore/utlib/thirdparty";
+				VC64Bridge.mm = "-fno-modules -I$(SRCROOT)/../virtualc64/VCCore -I$(SRCROOT)/../virtualc64/VCCore/Components -I$(SRCROOT)/../virtualc64/VCCore/Components/CIA -I$(SRCROOT)/../virtualc64/VCCore/Components/CPU -I$(SRCROOT)/../virtualc64/VCCore/Components/CPU/Peddle -I$(SRCROOT)/../virtualc64/VCCore/Components/Memory -I$(SRCROOT)/../virtualc64/VCCore/Components/SID -I$(SRCROOT)/../virtualc64/VCCore/Components/SID/resid -I$(SRCROOT)/../virtualc64/VCCore/Components/VICII -I$(SRCROOT)/../virtualc64/VCCore/Infrastructure -I$(SRCROOT)/../virtualc64/VCCore/Media -I$(SRCROOT)/../virtualc64/VCCore/Media/Cartridges -I$(SRCROOT)/../virtualc64/VCCore/Media/Cartridges/CustomCartridges -I$(SRCROOT)/../virtualc64/VCCore/Misc/RegressionTester -I$(SRCROOT)/../virtualc64/VCCore/Misc/RemoteServers -I$(SRCROOT)/../virtualc64/VCCore/Misc/RetroShell -I$(SRCROOT)/../virtualc64/VCCore/Peripherals/Datasette -I$(SRCROOT)/../virtualc64/VCCore/Peripherals/Drive -I$(SRCROOT)/../virtualc64/VCCore/Peripherals/Joystick -I$(SRCROOT)/../virtualc64/VCCore/Peripherals/Keyboard -I$(SRCROOT)/../virtualc64/VCCore/Peripherals/Monitor -I$(SRCROOT)/../virtualc64/VCCore/Peripherals/Mouse -I$(SRCROOT)/../virtualc64/VCCore/Peripherals/Network -I$(SRCROOT)/../virtualc64/VCCore/Peripherals/Paddle -I$(SRCROOT)/../virtualc64/VCCore/Ports -I$(SRCROOT)/../virtualc64/VCCore/rvlib -I$(SRCROOT)/../virtualc64/VCCore/rvlib/Devices -I$(SRCROOT)/../virtualc64/VCCore/rvlib/FileSystems/CBM -I$(SRCROOT)/../virtualc64/VCCore/rvlib/Images -I$(SRCROOT)/../virtualc64/VCCore/rvlib/Images/ADF -I$(SRCROOT)/../virtualc64/VCCore/rvlib/Images/D64 -I$(SRCROOT)/../virtualc64/VCCore/rvlib/Images/DMS -I$(SRCROOT)/../virtualc64/VCCore/rvlib/Images/Encoders -I$(SRCROOT)/../virtualc64/VCCore/rvlib/Images/EXE -I$(SRCROOT)/../virtualc64/VCCore/rvlib/Images/IMG -I$(SRCROOT)/../virtualc64/VCCore/rvlib/Images/ST -I$(SRCROOT)/../virtualc64/VCCore/ThirdParty -I$(SRCROOT)/../virtualc64/VCCore/utlib/include -I$(SRCROOT)/../virtualc64/VCCore/utlib/include/utl -I$(SRCROOT)/../virtualc64/VCCore/utlib/include/utl/abilities -I$(SRCROOT)/../virtualc64/VCCore/utlib/thirdparty";
 			};
 			membershipExceptions = (
 				VCCore.xcconfig,
@@ -328,8 +327,7 @@
 				1347C3732FAEFB6F00FC1CBB /* CfgFileEditor.swift */,
 				1347C3742FAEFB6F00FC1CBB /* CfgFileParser.swift */,
 				1347C3752FAEFB6F00FC1CBB /* MapFileParser.swift */,
-				13C3E3B12F70E8C700111DDE /* BasicStubGenerator.swift */,
-				13C3E3B22F70E8C700111DDE /* BuildConfiguration.swift */,
+					13C3E3B22F70E8C700111DDE /* BuildConfiguration.swift */,
 				13C3E3B32F70E8C700111DDE /* BuildErrorParser.swift */,
 				13C3E3B42F70E8C700111DDE /* BuildManager.swift */,
 				13C3E3B52F70E8C700111DDE /* BuildPreferencesView.swift */,
@@ -382,7 +380,7 @@
 				AC000006 /* Resources */,
 				1379DD252FC3AE1A00A8AF78 /* C64IDE-Bridging-Header.h */,
 			);
-			path = C64IDE;
+			name = C64IDE;
 			sourceTree = "<group>";
 		};
 		AC000003 /* Views */ = {
@@ -585,7 +583,6 @@
 				AA000010 /* TooltipProvider.swift in Sources */,
 				13C3E3B82F70E8C700111DDE /* BuildConfiguration.swift in Sources */,
 				13C3E3B92F70E8C700111DDE /* LinkerConfigs.swift in Sources */,
-				13C3E3BA2F70E8C700111DDE /* BasicStubGenerator.swift in Sources */,
 				138715012FF18A6B0048F245 /* AsmToDataGenerator.swift in Sources */,
 				138715022FF18A6B0048F245 /* AsmToDataDialog.swift in Sources */,
 				133C39B12F738C1800C06C19 /* SIDAudioEngine.swift in Sources */,
@@ -629,14 +626,14 @@
 				ENABLE_RESOURCE_ACCESS_CONTACTS = NO;
 				ENABLE_RESOURCE_ACCESS_LOCATION = NO;
 				ENABLE_RESOURCE_ACCESS_PHOTO_LIBRARY = NO;
-				INFOPLIST_FILE = C64IDE/Info.plist;
+				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "C64 IDE";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/C64IDE/VirtualC64/lib";
+				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/VirtualC64/lib";
 				MACOSX_DEPLOYMENT_TARGET = 13.3;
 				OTHER_LDFLAGS = (
 					"-lVCCore",
@@ -681,14 +678,14 @@
 				ENABLE_RESOURCE_ACCESS_CONTACTS = NO;
 				ENABLE_RESOURCE_ACCESS_LOCATION = NO;
 				ENABLE_RESOURCE_ACCESS_PHOTO_LIBRARY = NO;
-				INFOPLIST_FILE = C64IDE/Info.plist;
+				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "C64 IDE";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/C64IDE/VirtualC64/lib";
+				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/VirtualC64/lib";
 				MACOSX_DEPLOYMENT_TARGET = 13.3;
 				OTHER_LDFLAGS = (
 					"-lVCCore",
@@ -747,7 +744,7 @@
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = macosx;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
-				"SWIFT_OBJC_BRIDGING_HEADER[arch=*]" = "C64IDE/C64IDE-Bridging-Header.h";
+				"SWIFT_OBJC_BRIDGING_HEADER[arch=*]" = "C64IDE-Bridging-Header.h";
 			};
 			name = Debug;
 		};
@@ -787,7 +784,7 @@
 				SDKROOT = macosx;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_COMPILATION_MODE = wholemodule;
-				"SWIFT_OBJC_BRIDGING_HEADER[arch=*]" = "C64IDE/C64IDE-Bridging-Header.h";
+				"SWIFT_OBJC_BRIDGING_HEADER[arch=*]" = "C64IDE-Bridging-Header.h";
 			};
 			name = Release;
 		};
