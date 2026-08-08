@@ -49,22 +49,34 @@ class DebuggerViewController: NSViewController {
 
     /// The active debuggable target. Set by `EmulatorCoordinator` after launch.
     /// `nil` when no debug session is active.
-    var debugTarget: (any DebuggableTarget)? {
+    ///
+    /// Weak: EmulatorCoordinator owns the target's lifetime. A strong
+    /// reference here pinned the last session (bridge, VCCore thread, window
+    /// controller) after the emulator stopped, because nothing cleared this
+    /// property on stop.
+    weak var debugTarget: (any DebuggableTarget)? {
         didSet {
-            // Detach callbacks from the previously-bound target so a detached
-            // or replaced session can't drive this view anymore. (The closures
-            // capture self weakly so this isn't a leak fix — it's correctness:
-            // a backgrounded old emulator shouldn't push register updates into
-            // a view now bound to a different session.)
+            // Detach OUR callbacks from the previously-bound target so a
+            // detached or replaced session can't drive this view anymore.
+            // Only debugger-owned hooks are cleared here. onDidStop belongs
+            // to EmulatorCoordinator (it clears `active` there) and must
+            // survive a detach; onLog is chained, so restore the closure we
+            // wrapped rather than nilling it.
             if let old = oldValue, old !== debugTarget {
                 old.onBreakpoint = nil
                 old.onJam        = nil
                 old.onPause      = nil
-                old.onDidStop    = nil
+                old.onLog        = chainedForwardLog
+                chainedForwardLog = nil
             }
             bindToTarget()
         }
     }
+
+    /// The target's onLog closure as it was at bind time (the coordinator's
+    /// build-panel routing), so detaching can put it back instead of leaving
+    /// our console-mirroring wrapper installed.
+    private var chainedForwardLog: ((String, MessageType) -> Void)?
 
     private var consoleTextView: NSTextView!
     private var consoleScrollView: NSScrollView!
@@ -123,6 +135,26 @@ class DebuggerViewController: NSViewController {
         NotificationCenter.default.addObserver(
             self, selector: #selector(themeDidChange(_:)),
             name: .appThemeDidChange, object: nil)
+        // Posted by EmulatorCoordinator whenever the active target starts or
+        // stops. This is how we detach when a session ends, now that we no
+        // longer overwrite the target's onDidStop.
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(coordinatorTargetDidChange(_:)),
+            name: .debuggerTargetDidChange, object: nil)
+    }
+
+    /// Detach when our session is no longer the coordinator's active target.
+    /// Going through the setter runs the didSet teardown; the weak property
+    /// alone would zero silently without it.
+    @objc private func coordinatorTargetDidChange(_ note: Notification) {
+        let live = EmulatorCoordinator.shared.debuggable
+        if let bound = debugTarget {
+            if bound !== live { debugTarget = nil }
+        } else if live == nil {
+            // The weak reference can zero before this notification arrives
+            // (didSet does not fire on weak zeroing) - sync the UI manually.
+            updateConnectionStatus(false)
+        }
     }
 
     @objc private func themeDidChange(_ note: Notification) {
@@ -385,16 +417,20 @@ class DebuggerViewController: NSViewController {
             return
         }
 
-        t.onBreakpoint = { [weak self] pc in
-            guard let self = self else { return }
+        // [weak t] everywhere below: these closures are STORED ON the target,
+        // so a strong capture of `t` is a self-retain cycle - the target would
+        // keep itself alive through its own callback even after everyone else
+        // released it.
+        t.onBreakpoint = { [weak self, weak t] pc in
+            guard let self, let t else { return }
             self.appendConsole(String(format: "⚑ BREAK at $%04X", pc), color: .yellow)
             let regs = t.registers
             self.updateRegisters(regs)
             self.annotateStepCycles(at: pc, target: t)
         }
 
-        t.onJam = { [weak self] pc in
-            guard let self = self else { return }
+        t.onJam = { [weak self, weak t] pc in
+            guard let self, let t else { return }
             self.appendConsole(
                 String(format: "✗ CPU JAMMED at $%04X (illegal opcode)", pc),
                 color: .red)
@@ -408,13 +444,21 @@ class DebuggerViewController: NSViewController {
             self?.updateRegisters(regs)
         }
 
-        t.onLog = { [weak self] msg, _ in
+        // Chain onLog, don't replace it: EmulatorCoordinator routes target
+        // logs to the build panel; we additionally mirror them here. The
+        // original closure is stashed so a detach can restore it.
+        chainedForwardLog = t.onLog
+        let forward = chainedForwardLog
+        t.onLog = { [weak self] msg, type in
+            forward?(msg, type)
             self?.appendConsole(msg, color: nil)
         }
 
-        t.onDidStop = { [weak self] in
-            self?.updateConnectionStatus(false)
-        }
+        // Deliberately NOT touching t.onDidStop: the coordinator installed
+        // its cleanup there (clears `active`, posts .debuggerTargetDidChange).
+        // Overwriting it kept `active` pointing at dead sessions forever.
+        // We learn about stops via that notification instead - see
+        // coordinatorTargetDidChange(_:).
 
         updateConnectionStatus(true)
         appendConsole("Debugger attached to \(t.runTarget.displayName).", color: promptCyan)

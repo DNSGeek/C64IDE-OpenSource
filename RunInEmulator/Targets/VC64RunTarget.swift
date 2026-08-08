@@ -74,6 +74,14 @@ final class VC64RunTarget: NSObject, @MainActor DebuggableTarget {
         bridge.delegate = self
     }
 
+    deinit {
+        // VC64Bridge.h: "Halt the emulator thread. Call before releasing
+        // this object." Without this, releasing the bridge leaves the VCCore
+        // thread alive (or worse, tears the object down under it). stop()
+        // only pauses the core; the thread itself dies here.
+        bridge.halt()
+    }
+
     // MARK: - RunTargetProtocol
 
     @MainActor func run(options: RunOptions) throws {
@@ -131,6 +139,9 @@ final class VC64RunTarget: NSObject, @MainActor DebuggableTarget {
         wc.syncVideoStandard(VC64VideoStandard(bridge: bridge.videoStandard()))
         wc.showWindow(nil)
         wc.window?.makeKeyAndOrderFront(nil)
+        // Restart the vsync render loop (a no-op on the very first run, where
+        // the display link is already running; required after stop() paused it).
+        wc.resumeRendering()
 
         // Set up debug options before loading the PRG.
         if let dbg = options.debugOptions {
@@ -236,8 +247,12 @@ final class VC64RunTarget: NSObject, @MainActor DebuggableTarget {
     @MainActor func stop() {
         bridge.pause()
         // Pause audio output too. Keep the engine configured for fast restart
-        // on the next run() — full shutdown only happens at deinit.
+        // on the next run() - full shutdown only happens at deinit.
         audioEngine.stop()
+        // Stop the vsync render loop while the window is hidden. Without this
+        // the CVDisplayLink keeps firing at ~60Hz against an invisible window,
+        // waking the bridge and encoding a full Metal frame every vsync.
+        windowController?.pauseRendering()
         windowController?.window?.orderOut(nil)
         isRunning = false
         onDidStop?()
@@ -375,7 +390,11 @@ extension VC64RunTarget: VC64BridgeDelegate {
 /// bridge every vsync and uploads the current frame to a Metal texture.
 final class VC64EmulatorWindowController: NSWindowController, NSWindowDelegate {
 
-    private let target: VC64RunTarget
+    /// Weak: the run target owns this window controller. A strong reference
+    /// here closed a retain cycle (target -> windowController -> target) that
+    /// kept every launched target, its bridge, and its display link alive
+    /// forever - one leaked 60Hz render loop per launch.
+    private weak var target: VC64RunTarget?
     private var mtkView: MTKView!
     private var renderer: VC64Renderer!
     private var displayLink: CVDisplayLink?
@@ -416,7 +435,7 @@ final class VC64EmulatorWindowController: NSWindowController, NSWindowDelegate {
     /// target to stop so the EmulatorCoordinator's `active` reference
     /// clears and the IDE knows the emulator is no longer alive.
     func windowWillClose(_ notification: Notification) {
-        target.stop()
+        target?.stop()
     }
 
     // MARK: - Setup
@@ -466,7 +485,7 @@ final class VC64EmulatorWindowController: NSWindowController, NSWindowDelegate {
         // input. A plain MTKView doesn't accept first responder, so keystrokes
         // bounce off the responder chain and macOS plays the system beep.
         let view = VC64MTKView(frame: contentView.bounds, device: device)
-        view.bridge = target.bridge
+        view.bridge = target?.bridge
         mtkView = view
 
         // VCCore writes u32 pixels in RGBA byte order. Using `.bgra8Unorm` here
@@ -487,7 +506,10 @@ final class VC64EmulatorWindowController: NSWindowController, NSWindowDelegate {
             metalLayer.framebufferOnly = true
         }
 
-        let videoStandard = target.videoStandard
+        // PAL fallback only matters if the target vanished mid-setup, which
+        // can't happen in practice (setup runs from the target's own init
+        // path). syncVideoStandard() corrects the crop on every run anyway.
+        let videoStandard = target?.videoStandard ?? .pal
         renderer = VC64Renderer(device: device, view: mtkView,
                                  videoStandard: videoStandard)
         renderer.vc64Target = target
@@ -521,11 +543,28 @@ final class VC64EmulatorWindowController: NSWindowController, NSWindowDelegate {
         // All we do is tell the bridge a vsync happened and ask the view to draw.
         CVDisplayLinkSetOutputHandler(link) { [weak self] _, _, _, _, _ in
             guard let self = self else { return kCVReturnSuccess }
-            self.target.wakeUp()
+            self.target?.wakeUp()
             DispatchQueue.main.async { self.mtkView.draw() }
             return kCVReturnSuccess
         }
         CVDisplayLinkStart(link)
+    }
+
+    /// Suspend vsync callbacks while the emulator window is hidden between
+    /// runs. Called by `VC64RunTarget.stop()`. Keeping the link alive but
+    /// stopped makes resume cheap on the next run.
+    func pauseRendering() {
+        if let link = displayLink {
+            CVDisplayLinkStop(link)
+        }
+    }
+
+    /// Restart vsync callbacks when the window is shown again.
+    /// Safe to call when the link is already running.
+    func resumeRendering() {
+        if let link = displayLink, !CVDisplayLinkIsRunning(link) {
+            CVDisplayLinkStart(link)
+        }
     }
 
     private func stopDisplayLink() {
@@ -628,7 +667,9 @@ final class VC64Renderer: NSObject, MTKViewDelegate {
     /// Set by `VC64EmulatorWindowController.setupMTKView` immediately after
     /// constructing this renderer. Must be set before the first draw; otherwise
     /// `draw(in:)` early-returns and the window stays black.
-    var vc64Target: VC64RunTarget?
+    /// Weak: the target (indirectly) owns this renderer; a strong reference
+    /// here was part of the retain cycle that leaked run targets.
+    weak var vc64Target: VC64RunTarget?
 
     /// UV sub-rect of VCCore's 520x312 texture corresponding to the visible
     /// C64 picture. Set at init from the video standard and refreshed by
