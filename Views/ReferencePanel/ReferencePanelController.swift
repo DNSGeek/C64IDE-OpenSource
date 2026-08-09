@@ -10,6 +10,7 @@ enum ReferenceTab: Int, CaseIterable {
     case colors = 3
     case petscii = 4
     case monitor = 5
+    case variables = 6
 
     var title: String {
         switch self {
@@ -19,6 +20,7 @@ enum ReferenceTab: Int, CaseIterable {
         case .colors:    return "Colors"
         case .petscii:   return "PETSCII"
         case .monitor:   return "Monitor"
+        case .variables: return "Variables"
         }
     }
 }
@@ -30,17 +32,33 @@ class ReferencePanelController: NSViewController {
 
     private var tabView: NSTabView!
     private var searchField: NSSearchField!
+
+    // Scrollable tab strip (replaces NSTabView's native tabs, which clip
+    // silently when there are more tabs than fit in the panel width)
+    private var tabStrip: NSSegmentedControl!
+    private var tabStripScrollView: NSScrollView!
+    private var leftArrowButton: NSButton!
+    private var rightArrowButton: NSButton!
+    private var segmentWidths: [CGFloat] = []
     private var commandListController: CommandListViewController!
     private var memoryMapController: MemoryReferenceViewController!
     private var kernalListController: KernalListViewController!
     private var colorPaletteController: ColorPaletteViewController!
     private var petsciiController: PETSCIIViewController!
     private var monitorController: MonitorReferenceViewController!
+    private var variableListController: VariableListViewController!
 
     private var panelBg: NSColor { AppTheme.current.panelBackground }
+    
+    var onJumpToBasicLine: ((Int) -> Void)?
 
     override func loadView() {
         self.view = NSView(frame: NSRect(x: 0, y: 0, width: 380, height: 600))
+    }
+    
+    func updateVariables(_ vars: [BasicVariableInfo]) {
+        _ = variableListController.view   // force view load; loadViewIfNeeded() is macOS 14+
+        variableListController.update(vars)
     }
 
     override func viewDidLoad() {
@@ -65,11 +83,57 @@ class ReferencePanelController: NSViewController {
         searchField.action = #selector(searchChanged(_:))
         view.addSubview(searchField)
 
-        // Tab view
-        tabView = NSTabView(frame: NSRect(x: 4, y: 4, width: bounds.width - 8, height: bounds.height - 40))
+        // Tab strip: segmented control in a horizontal scroll view, with
+        // overflow arrows that appear only when the tabs don't all fit.
+        let stripFont = NSFont.monospacedSystemFont(ofSize: 10, weight: .medium)
+        tabStrip = NSSegmentedControl(
+            labels: ReferenceTab.allCases.map { $0.title },
+            trackingMode: .selectOne,
+            target: self,
+            action: #selector(tabStripChanged(_:))
+        )
+        tabStrip.font = stripFont
+        tabStrip.selectedSegment = 0
+
+        // Fixed per-segment widths so we can compute scroll offsets reliably
+        segmentWidths = []
+        for (i, tab) in ReferenceTab.allCases.enumerated() {
+            let textWidth = ceil((tab.title as NSString).size(withAttributes: [.font: stripFont]).width)
+            let w = textWidth + 18
+            tabStrip.setWidth(w, forSegment: i)
+            segmentWidths.append(w)
+        }
+        tabStrip.sizeToFit()
+        tabStrip.setFrameOrigin(.zero)
+
+        tabStripScrollView = NSScrollView(frame: .zero)
+        tabStripScrollView.hasHorizontalScroller = false
+        tabStripScrollView.hasVerticalScroller = false
+        tabStripScrollView.horizontalScrollElasticity = .none
+        tabStripScrollView.verticalScrollElasticity = .none
+        tabStripScrollView.drawsBackground = false
+        tabStripScrollView.borderType = .noBorder
+        tabStripScrollView.documentView = tabStrip
+        view.addSubview(tabStripScrollView)
+
+        leftArrowButton = makeArrowButton(symbolName: "chevron.left", fallbackTitle: "<", action: #selector(scrollTabsLeft(_:)))
+        rightArrowButton = makeArrowButton(symbolName: "chevron.right", fallbackTitle: ">", action: #selector(scrollTabsRight(_:)))
+        view.addSubview(leftArrowButton)
+        view.addSubview(rightArrowButton)
+
+        // Update arrow enabled state as the strip scrolls (arrows, trackpad, or programmatic)
+        tabStripScrollView.contentView.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(tabStripDidScroll(_:)),
+            name: NSView.boundsDidChangeNotification,
+            object: tabStripScrollView.contentView
+        )
+
+        // Tab view (tabless; the strip above drives selection)
+        tabView = NSTabView(frame: NSRect(x: 4, y: 4, width: bounds.width - 8, height: bounds.height - 66))
         tabView.autoresizingMask = [.width, .height]
-        tabView.tabViewType = .topTabsBezelBorder
-        tabView.font = NSFont.monospacedSystemFont(ofSize: 10, weight: .medium)
+        tabView.tabViewType = .noTabsBezelBorder
 
         commandListController = CommandListViewController()
         memoryMapController = MemoryReferenceViewController()
@@ -77,6 +141,11 @@ class ReferencePanelController: NSViewController {
         colorPaletteController = ColorPaletteViewController()
         petsciiController = PETSCIIViewController()
         monitorController = MonitorReferenceViewController()
+        variableListController = VariableListViewController()
+        
+        variableListController.onJumpToLine = { [weak self] line in
+            self?.onJumpToBasicLine?(line)
+        }
 
         for tab in ReferenceTab.allCases {
             let item = NSTabViewItem(identifier: tab.title)
@@ -88,11 +157,146 @@ class ReferencePanelController: NSViewController {
             case .colors:    item.viewController = colorPaletteController
             case .petscii:   item.viewController = petsciiController
             case .monitor:   item.viewController = monitorController
+            case .variables: item.viewController = variableListController
             }
             tabView.addTabViewItem(item)
         }
 
         view.addSubview(tabView)
+
+        layoutTabStrip()
+    }
+
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        layoutTabStrip()
+    }
+
+    // MARK: - Tab Strip
+
+    private func makeArrowButton(symbolName: String, fallbackTitle: String, action: Selector) -> NSButton {
+        let button = NSButton(frame: .zero)
+        button.setButtonType(.momentaryPushIn)
+        button.isBordered = false
+        if let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: fallbackTitle) {
+            button.image = image
+        } else {
+            button.title = fallbackTitle
+            button.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .bold)
+        }
+        button.target = self
+        button.action = action
+        return button
+    }
+
+    /// Positions the tab strip and shows/hides the overflow arrows.
+    /// The overflow decision is based on the full available width, so it
+    /// cannot oscillate when arrows appear and shrink the scroll area.
+    private func layoutTabStrip() {
+        guard tabStrip != nil else { return }
+
+        let bounds = view.bounds
+        let stripHeight: CGFloat = 24
+        let stripY = bounds.height - 58
+        let margin: CGFloat = 4
+        let arrowWidth: CGFloat = 18
+        let fullWidth = bounds.width - margin * 2
+        let docWidth = tabStrip.frame.width
+
+        let overflows = docWidth > fullWidth
+        leftArrowButton.isHidden = !overflows
+        rightArrowButton.isHidden = !overflows
+
+        leftArrowButton.frame = NSRect(x: margin, y: stripY, width: arrowWidth, height: stripHeight)
+        rightArrowButton.frame = NSRect(x: bounds.width - margin - arrowWidth, y: stripY, width: arrowWidth, height: stripHeight)
+
+        if overflows {
+            tabStripScrollView.frame = NSRect(
+                x: margin + arrowWidth + 2,
+                y: stripY,
+                width: fullWidth - (arrowWidth + 2) * 2,
+                height: stripHeight
+            )
+        } else {
+            tabStripScrollView.frame = NSRect(x: margin, y: stripY, width: fullWidth, height: stripHeight)
+        }
+
+        // Clamp scroll position if the panel just got wider
+        let clipView = tabStripScrollView.contentView
+        let maxOffset = max(0, docWidth - clipView.bounds.width)
+        if clipView.bounds.origin.x > maxOffset {
+            clipView.setBoundsOrigin(NSPoint(x: maxOffset, y: clipView.bounds.origin.y))
+            tabStripScrollView.reflectScrolledClipView(clipView)
+        }
+
+        updateArrowEnabledState()
+    }
+
+    private func updateArrowEnabledState() {
+        let clipView = tabStripScrollView.contentView
+        let offset = clipView.bounds.origin.x
+        let maxOffset = max(0, tabStrip.frame.width - clipView.bounds.width)
+        leftArrowButton.isEnabled = offset > 1
+        rightArrowButton.isEnabled = offset < maxOffset - 1
+    }
+
+    @objc private func tabStripDidScroll(_ note: Notification) {
+        updateArrowEnabledState()
+    }
+
+    @objc private func scrollTabsLeft(_ sender: NSButton) {
+        scrollTabStrip(by: -tabStripScrollView.contentView.bounds.width * 0.75)
+    }
+
+    @objc private func scrollTabsRight(_ sender: NSButton) {
+        scrollTabStrip(by: tabStripScrollView.contentView.bounds.width * 0.75)
+    }
+
+    private func scrollTabStrip(by delta: CGFloat) {
+        let clipView = tabStripScrollView.contentView
+        let maxOffset = max(0, tabStrip.frame.width - clipView.bounds.width)
+        var origin = clipView.bounds.origin
+        origin.x = max(0, min(origin.x + delta, maxOffset))
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.15
+            clipView.animator().setBoundsOrigin(origin)
+        }
+        tabStripScrollView.reflectScrolledClipView(clipView)
+    }
+
+    /// Scrolls the strip so the given segment is fully visible.
+    private func scrollSegmentToVisible(_ index: Int) {
+        guard index >= 0, index < segmentWidths.count else { return }
+        let clipView = tabStripScrollView.contentView
+        let start = segmentWidths.prefix(index).reduce(0, +)
+        let end = start + segmentWidths[index]
+        var origin = clipView.bounds.origin
+        let maxOffset = max(0, tabStrip.frame.width - clipView.bounds.width)
+
+        if start < origin.x {
+            origin.x = max(0, start - 8)
+        } else if end > origin.x + clipView.bounds.width {
+            origin.x = min(end + 8 - clipView.bounds.width, maxOffset)
+        } else {
+            return
+        }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.15
+            clipView.animator().setBoundsOrigin(origin)
+        }
+        tabStripScrollView.reflectScrolledClipView(clipView)
+    }
+
+    /// Single path for all tab selection so the strip and the tab view
+    /// never get out of sync, and programmatic jumps scroll into view.
+    private func selectTabIndex(_ index: Int) {
+        tabView.selectTabViewItem(at: index)
+        tabStrip.selectedSegment = index
+        scrollSegmentToVisible(index)
+    }
+
+    @objc private func tabStripChanged(_ sender: NSSegmentedControl) {
+        selectTabIndex(sender.selectedSegment)
     }
 
     /// Filters the currently visible tab's content based on the search query.
@@ -106,6 +310,7 @@ class ReferencePanelController: NSViewController {
         case 0: (selectedView as? CommandListViewController)?.filter(by: query)
         case 1: (selectedView as? MemoryReferenceViewController)?.filter(by: query)
         case 2: (selectedView as? KernalListViewController)?.filter(by: query)
+        case 6: (selectedView as? VariableListViewController)?.filter(by: query)
         default: break
         }
     }
@@ -119,23 +324,23 @@ class ReferencePanelController: NSViewController {
         commandListController.setMode(forFileType: fileType)
 
         if fileType.usesBasicHighlighting, C64BasicSyntax.lookup(upper) != nil {
-            tabView.selectTabViewItem(at: 0)
+            selectTabIndex(0)
             commandListController.scrollTo(keyword: upper)
         } else if fileType.usesAssemblyHighlighting, C64AssemblySyntax.lookup(upper) != nil {
-            tabView.selectTabViewItem(at: 0)
+            selectTabIndex(0)
             commandListController.scrollTo(keyword: upper)
         }
     }
 
     /// Switches to the Memory tab and scrolls to the specified address.
     func showMemoryMapEntry(for address: Int) {
-        tabView.selectTabViewItem(at: 1)
+        selectTabIndex(1)
         memoryMapController.scrollTo(address: address)
     }
 
     /// Programmatically selects a specific reference tab.
     func selectTab(_ tab: ReferenceTab) {
-        tabView.selectTabViewItem(at: tab.rawValue)
+        selectTabIndex(tab.rawValue)
     }
 
     @objc private func themeDidChange(_ note: Notification) {
@@ -146,6 +351,7 @@ class ReferencePanelController: NSViewController {
             self.kernalListController.applyTheme()
             self.colorPaletteController.applyTheme()
             self.monitorController.applyTheme()
+            self.variableListController.applyTheme()
         }
     }
 }
