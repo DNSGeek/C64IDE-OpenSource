@@ -49,12 +49,19 @@ public struct BasicParser {
                 numStr.append(trimmed[charIdx])
                 charIdx = trimmed.index(after: charIdx)
             }
-            guard let lineNum = Int(numStr), !numStr.isEmpty else { continue }
+            guard !numStr.isEmpty else { continue }   // unnumbered text line
+            guard let lineNum = Int(numStr), lineNum <= 63999 else {
+                // A numbered line whose number can't be represented used to
+                // vanish without a trace. 63999 is the hardware maximum.
+                recordError("Line number \(numStr) exceeds the maximum of 63999; line ignored")
+                continue
+            }
             currentLineNumber = lineNum
 
             // Tokenize the statement content (after the line number)
             let content = String(trimmed[charIdx...]).trimmingCharacters(in: .whitespaces)
             tokens = tokenize(content)
+            primaryBudget = 250
             pos = 0
             pendingStmts = []
 
@@ -404,7 +411,9 @@ public struct BasicParser {
             prompt = s; advance()
             if peek == .semicolon { advance() }
         }
-        let varName = parseVarName(context: "INPUT")
+        guard let first = parseVarListEntry(context: "INPUT") else {
+            return skipToColon()
+        }
         // INPUT A,B,C: each additional variable becomes its own promptless
         // inputStmt, so the user is re-prompted "? " per value. That is the
         // interpreter's ?? behavior when values are entered one at a time;
@@ -412,22 +421,20 @@ public struct BasicParser {
         // response line feeds exactly one variable). Documented deviation.
         while peek == .comma {
             advance()
-            let v = parseVarName(context: "INPUT")
+            // continue, not break: INPUT A,7,B should still read B after
+            // diagnosing the 7 (parseVarListEntry consumed it), matching
+            // READ's recovery.
+            guard let v = parseVarListEntry(context: "INPUT") else { continue }
             pendingStmts.append(.inputStmt(nil, v))
         }
-        return .inputStmt(prompt, varName)
+        return .inputStmt(prompt, first)
     }
 
     private mutating func parseInputHash() -> Stmt {
         advance() // INPUT#
         let logNum = parseExpr()
         consumeComma()
-        var names: [String] = []
-        while !atEOF && peek != .colon {
-            if peek == .comma { advance(); continue }
-            names.append(parseVarName(context: "INPUT#"))
-        }
-        return .inputHashStmt(logNum, names)
+        return .inputHashStmt(logNum, parseVarTargetList(context: "INPUT#"))
     }
 
     private mutating func parseGet() -> Stmt {
@@ -435,24 +442,47 @@ public struct BasicParser {
         // GET# is not a ROM token: real hardware crunches it as the GET
         // token followed by a literal '#', and our lexer does the same.
         // The .keyword("GET#") dispatch case can only fire if a dialect
-        // table defines GET# as its own keyword; this path handles V2.
+        // table defines GET# as its own keyword; both spellings share
+        // parseGetHashTail so they cannot drift.
         if peek == .hash {
             advance() // #
-            let logNum = parseExpr()
-            consumeComma()
-            let v = parseVarName(context: "GET#")
-            return .getHashStmt(logNum, v)
+            return parseGetHashTail()
         }
-        let v = parseVarName(context: "GET")
-        return .getStmt(v)
+        return .getStmt(parseVarTargetList(context: "GET"))
     }
 
     private mutating func parseGetHash() -> Stmt {
         advance() // GET#
+        return parseGetHashTail()
+    }
+
+    /// Everything after the GET#/GET-'#' token(s).
+    private mutating func parseGetHashTail() -> Stmt {
         let logNum = parseExpr()
         consumeComma()
-        let v = parseVarName(context: "GET#")
-        return .getHashStmt(logNum, v)
+        return .getHashStmt(logNum, parseVarTargetList(context: "GET#"))
+    }
+
+    /// A comma-separated target list running to the end of the statement.
+    /// GET and GET# take one keypress/byte per target — `GET#1,A$,B$,C$`
+    /// reads three characters, which is why a single-target parse dropped
+    /// the rest of the line as garbage.
+    private mutating func parseVarTargetList(context: String) -> [VarTarget] {
+        var targets: [VarTarget] = []
+        while !atEOF && peek != .colon {
+            guard let target = parseVarListEntry(context: context) else { continue }
+            targets.append(target)
+            // Targets are comma-separated; anything else after a target
+            // ends the list and falls to the statement parser, where a
+            // missing comma (GET A$ B$) surfaces as an error instead of
+            // being silently absorbed as an extra target.
+            guard peek == .comma else { break }
+            advance()
+        }
+        // Bare GET / trailing INPUT#1, used to compile silently to nothing;
+        // the interpreter calls both a SYNTAX ERROR.
+        if targets.isEmpty { recordError("Expected variable name in \(context)") }
+        return targets
     }
 
     private mutating func parseSys() -> Stmt {
@@ -479,7 +509,7 @@ public struct BasicParser {
             case .stringLiteral(let s): advance(); values.append(.string(s))
             case .op("-"):
                 advance()
-                if case .integer(let n) = peek { advance(); values.append(.negative(n)) }
+                if case .integer(let n) = peek { advance(); values.append(.integer(-n)) }
                 else if case .float(let f) = peek { advance(); values.append(.float(-f)) }
                 else { recordError("Expected number after - in DATA") }
             default:
@@ -491,12 +521,7 @@ public struct BasicParser {
 
     private mutating func parseRead() -> Stmt {
         advance() // READ
-        var names: [String] = []
-        while !atEOF && peek != .colon {
-            if peek == .comma { advance(); continue }
-            names.append(parseVarName(context: "READ"))
-        }
-        return .readStmt(names)
+        return .readStmt(parseVarTargetList(context: "READ"))
     }
 
     private mutating func parseDim() -> Stmt {
@@ -666,7 +691,21 @@ public struct BasicParser {
         return parsePrimary()
     }
 
+    /// Per-line cap on expression primaries. Recursive descent has no other
+    /// depth bound, so a hostile line - 20000 nested parens, or a
+    /// 30000-term "+" chain whose tree every later walk (analyser, codegen)
+    /// recurses through - overflows the stack and kills the process, IDE
+    /// background scans included. Real C64 lines are under 80 characters,
+    /// so no legitimate program comes near the cap.
+    private var primaryBudget = 250
+
     private mutating func parsePrimary() -> Expr {
+        primaryBudget -= 1
+        guard primaryBudget > 0 else {
+            if primaryBudget == 0 { recordError("Expression too complex") }
+            advance()   // always consume so callers can't loop forever
+            return .intLit(0)
+        }
         switch peek {
         case .integer(let n):
             advance(); return .intLit(n)
@@ -821,6 +860,27 @@ public struct BasicParser {
         default:
             recordError("Expected variable name in \(context)")
             return "_err"
+        }
+    }
+
+    /// Parses one entry of a comma-separated variable target list (READ,
+    /// INPUT#), which may be a scalar or an array element. Unlike
+    /// `parseVarName` this ALWAYS consumes at least one token, so a caller
+    /// looping until `:` can never spin — returning nil without consuming
+    /// is what used to hang the parser on `INPUT#1,S(I)`.
+    private mutating func parseVarListEntry(context: String) -> VarTarget? {
+        switch peek {
+        case .identifier, .identifierStr, .identifierInt:
+            let name = parseVarName(context: context)
+            guard peek == .lparen else { return .scalar(name) }
+            advance() // (
+            let subs = parseExprList(until: .rparen)
+            consumeRParen()
+            return .element(name, subs)
+        default:
+            recordError("Expected variable name in \(context)")
+            advance()
+            return nil
         }
     }
 

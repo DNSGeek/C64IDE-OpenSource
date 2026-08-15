@@ -155,11 +155,22 @@ public class BasicRenumber {
     // MARK: - Apply Renumber
 
     /// Applies a line number mapping to the source, updating all references.
+    /// Walks the ORIGINAL source lines: blank lines and unnumbered text are
+    /// preserved verbatim - rebuilding from the parsed lines alone silently
+    /// deleted them from the user's document.
     private static func applyRenumber(source: String, lines: [BasicLine], mapping: [Int: Int]) -> RenumberResult {
         var changeCount = 0
         var newLines: [String] = []
+        var k = 0   // next parsed (numbered) line, in source order
 
-        for line in lines {
+        for rawLine in source.components(separatedBy: "\n") {
+            guard k < lines.count, rawLine == lines[k].rawText else {
+                newLines.append(rawLine)
+                continue
+            }
+            let line = lines[k]
+            k += 1
+
             let newNum = mapping[line.lineNumber] ?? line.lineNumber
 
             // Update line references in the content

@@ -299,8 +299,13 @@ class MainWindowController: NSWindowController, NSToolbarDelegate {
         editor.onDocumentModified = { [weak self] in
             self?.updateWindowTitle()
         }
-        editor.onVariablesUpdated = { [weak self] vars in
-            self?.referencePanelController.updateVariables(vars)
+        editor.onVariablesUpdated = { [weak self, weak editor] vars in
+            guard let self, let editor else { return }
+            // A scan that finishes after the user has moved on (or one kicked
+            // off by a background tab reloading from disk) must not repaint the
+            // panel with another file's variables.
+            guard editor === self.editorViewController else { return }
+            self.referencePanelController.updateVariables(vars)
         }
         // Refresh the tab label and title bar after a silent external-change reload
         editor.onExternalReload = { [weak self] in

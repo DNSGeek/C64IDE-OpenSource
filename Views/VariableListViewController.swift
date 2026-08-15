@@ -207,6 +207,7 @@ class VariableListViewController: NSViewController, NSTableViewDataSource, NSTab
         case .type:
             cell?.textField?.stringValue = v.typeDescription
             cell?.textField?.textColor = AppTheme.current.refCategory
+            cell?.toolTip = "Compiles to \(v.storageDescription) storage"
         case .line:
             cell?.textField?.stringValue = String(v.firstLine)
             cell?.textField?.textColor = AppTheme.current.panelText

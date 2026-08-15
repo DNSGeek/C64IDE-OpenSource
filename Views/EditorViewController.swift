@@ -839,6 +839,7 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSTextStorageD
         isSuppressingDelegate = false
         gutter?.needsDisplay = true
         onExternalReload?()
+        scheduleVariableScan()   // the file's variables changed under us
     }
 
     // MARK: - Public API

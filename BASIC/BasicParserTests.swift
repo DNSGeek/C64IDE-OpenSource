@@ -349,15 +349,15 @@ final class BasicParserTests: XCTestCase {
     // MARK: GET / INPUT
 
     func test_get_string_var() {
-        XCTAssertEqual(one("10 GET K$"), .getStmt("K$"))
+        XCTAssertEqual(one("10 GET K$"), .getStmt([.scalar("K$")]))
     }
 
     func test_input_no_prompt() {
-        XCTAssertEqual(one("10 INPUT A$"), .inputStmt(nil, "A$"))
+        XCTAssertEqual(one("10 INPUT A$"), .inputStmt(nil, .scalar("A$")))
     }
 
     func test_input_with_prompt() {
-        XCTAssertEqual(one("10 INPUT \"NAME\";A$"), .inputStmt("NAME", "A$"))
+        XCTAssertEqual(one("10 INPUT \"NAME\";A$"), .inputStmt("NAME", .scalar("A$")))
     }
 
     // MARK: DATA / READ / RESTORE
@@ -384,11 +384,11 @@ final class BasicParserTests: XCTestCase {
     }
 
     func test_read_single() {
-        XCTAssertEqual(one("10 READ B"), .readStmt(["B"]))
+        XCTAssertEqual(one("10 READ B"), .readStmt([.scalar("B")]))
     }
 
     func test_read_multiple() {
-        XCTAssertEqual(one("10 READ A,B,C"), .readStmt(["A", "B", "C"]))
+        XCTAssertEqual(one("10 READ A,B,C"), .readStmt([.scalar("A"), .scalar("B"), .scalar("C")]))
     }
 
     // MARK: DIM
@@ -598,7 +598,7 @@ final class BasicParserTests: XCTestCase {
         let s = stmts("19 FOR N=0 TO 62: READ B: POKE 12288+N,B: NEXT")
         XCTAssertEqual(s.count, 4)
         XCTAssertEqual(s[0], .forStmt("N", .intLit(0), .intLit(62), nil))
-        XCTAssertEqual(s[1], .readStmt(["B"]))
+        XCTAssertEqual(s[1], .readStmt([.scalar("B")]))
         XCTAssertEqual(s[2], .pokeStmt(
             .binaryOp("+", .intLit(12288), .floatVar("N")),
             .floatVar("B")))
@@ -609,7 +609,7 @@ final class BasicParserTests: XCTestCase {
         // "GET K$: IF K$=\"\" THEN GOTO 87"
         let s = stmts("87 GET K$: IF K$=\"\" THEN GOTO 87")
         XCTAssertEqual(s.count, 2)
-        XCTAssertEqual(s[0], .getStmt("K$"))
+        XCTAssertEqual(s[0], .getStmt([.scalar("K$")]))
         XCTAssertEqual(s[1], .ifGoto(
             .compareOp("=", .strVar("K$"), .strLit("")), 87))
     }

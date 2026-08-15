@@ -93,7 +93,6 @@ struct BasicCodeGen {
     /// True while generating a PRINT# item list; numbers get a trailing
     /// space ($20) on files but a cursor-right ($1D) on screen, exactly as
     /// the ROM does at $AB3B.
-    private var printingToFile = false
     /// FOR variables whose limit/step could not be resolved to constants
     /// in at least one loop, and therefore still need runtime storage.
     private var forLimitNeeded: Set<String> = []
@@ -110,7 +109,6 @@ struct BasicCodeGen {
     private var dataBytes: [UInt8] = []
     private var dataFloats: [Double] = []
     private var dataIsAllByte: Bool = true
-    private var stringVarNames: Set<String> = []
     private var arrayDims: [(name: String, dims: [Int])] = []
     private var dataHasString: Bool = false
     private var dataItems: [DataItem] = []
@@ -135,11 +133,9 @@ struct BasicCodeGen {
         dataIsAllByte = true
         dataHasString = false
         dataItems = []
-        stringVarNames = []
         arrayDims = []
         userFunctions = [:]
         warnings = []
-        printingToFile = false
         forLimitNeeded = []
         forStepNeeded = []
         needsMul16 = false
@@ -198,35 +194,10 @@ struct BasicCodeGen {
                     if n >= 0 && n <= 255 { dataItems.append(.byte(UInt8(n))) }
                     else if n >= -32768 && n <= 32767 { dataItems.append(.word(n)) }
                     else { dataItems.append(.float(Double(n))) }
-                    
-                    if n >= 0 && n <= 255 && dataIsAllByte {
-                        dataBytes.append(UInt8(n))
-                    } else {
-                        if dataIsAllByte {
-                            dataFloats = dataBytes.map { Double($0) }
-                            dataBytes = []
-                            dataIsAllByte = false
-                        }
-                        dataFloats.append(Double(n))
-                    }
-                case .negative(let n):
-                    let neg = -n
-                    if neg >= -32768 && neg <= 32767 { dataItems.append(.word(neg)) }
-                    else { dataItems.append(.float(Double(neg))) }
-                    if dataIsAllByte {
-                        dataFloats = dataBytes.map { Double($0) }
-                        dataBytes = []
-                        dataIsAllByte = false
-                    }
-                    dataFloats.append(Double(neg))
+                    appendNumericData(Double(n), fitsByte: n >= 0 && n <= 255)
                 case .float(let f):
                     dataItems.append(.float(f))
-                    if dataIsAllByte {
-                        dataFloats = dataBytes.map { Double($0) }
-                        dataBytes = []
-                        dataIsAllByte = false
-                    }
-                    dataFloats.append(f)
+                    appendNumericData(f, fitsByte: false)
                 case .string(let s):
                     dataItems.append(.string(s))
                     dataHasString = true
@@ -240,10 +211,7 @@ struct BasicCodeGen {
                     return 11
                 }
                 arrayDims.append((name: entry.name, dims: sizes))
-                if entry.name.hasSuffix("$") { stringVarNames.insert(entry.name) }
             }
-        case .letStr(let name, _):
-            stringVarNames.insert(name)
         case .defFn(let name, let param, let body):
             // Register during the first pass so FNA(x) works even when the
             // DEF FN line comes later in the program (the common layout:
@@ -251,14 +219,27 @@ struct BasicCodeGen {
             // in genStmt, so forward references silently emitted
             // "; unimplemented function".
             userFunctions[name] = (param: param, body: body)
-        case .getStmt(let name):
-            if name.hasSuffix("$") { stringVarNames.insert(name) }
-        case .inputStmt(_, let name):
-            if name.hasSuffix("$") { stringVarNames.insert(name) }
         case .ifThen(_, let t, let e):
             t.forEach { collectStmt($0) }
             e?.forEach { collectStmt($0) }
         default: break
+        }
+    }
+
+    /// Numeric DATA lands in one of two parallel tables: the fast all-byte
+    /// table, or - once any value needs more than a byte - the float
+    /// table. The demotion copies the bytes collected so far across
+    /// exactly once (this block used to be pasted per DataValue arm).
+    private mutating func appendNumericData(_ d: Double, fitsByte: Bool) {
+        if fitsByte && dataIsAllByte {
+            dataBytes.append(UInt8(d))
+        } else {
+            if dataIsAllByte {
+                dataFloats = dataBytes.map { Double($0) }
+                dataBytes = []
+                dataIsAllByte = false
+            }
+            dataFloats.append(d)
         }
     }
 
@@ -270,7 +251,6 @@ struct BasicCodeGen {
     private mutating func registerImplicitArray(_ name: String, dimCount: Int) {
         guard !arrayDims.contains(where: { $0.name == name }) else { return }
         arrayDims.append((name: name, dims: Array(repeating: 11, count: max(1, dimCount))))
-        if name.hasSuffix("$") { stringVarNames.insert(name) }
     }
 
     private mutating func collectArrayRefs(_ stmt: Stmt) {
@@ -313,8 +293,18 @@ struct BasicCodeGen {
             if let f = f { collectArrayRefsExpr(f) }
         case .saveStmt(let n, let d):
             collectArrayRefsExpr(n); collectArrayRefsExpr(d)
-        case .inputHashStmt(let n, _), .getHashStmt(let n, _):
+        case .inputHashStmt(let n, let targets):
             collectArrayRefsExpr(n)
+            targets.forEach { collectArrayRefsTarget($0) }
+        case .getHashStmt(let n, let targets):
+            collectArrayRefsExpr(n)
+            targets.forEach { collectArrayRefsTarget($0) }
+        case .getStmt(let targets):
+            targets.forEach { collectArrayRefsTarget($0) }
+        case .inputStmt(_, let target):
+            collectArrayRefsTarget(target)
+        case .readStmt(let targets):
+            targets.forEach { collectArrayRefsTarget($0) }
         case .dimStmt(let entries):
             entries.forEach { $0.dims.forEach { collectArrayRefsExpr($0) } }
         case .defFn(_, _, let body):
@@ -322,6 +312,15 @@ struct BasicCodeGen {
         default:
             break
         }
+    }
+
+    /// An array element used as a READ/INPUT# target is a reference like any
+    /// other: without this, `READ A(I)` on an un-DIMed array left arr_A
+    /// undefined at assemble time.
+    private mutating func collectArrayRefsTarget(_ target: VarTarget) {
+        guard case .element(let name, let indices) = target else { return }
+        registerImplicitArray(name, dimCount: indices.count)
+        indices.forEach { collectArrayRefsExpr($0) }
     }
 
     private mutating func collectArrayRefsExpr(_ expr: Expr) {
@@ -386,6 +385,12 @@ struct BasicCodeGen {
         case .letStr(let name, let rhs):
             genStrAssign(name: name, rhs: rhs)
         case .letInt(let name, let rhs):
+            // % variables hold -32768..32767; the interpreter raises
+            // ILLEGAL QUANTITY beyond that, we silently wrap - at least
+            // diagnose the constant case.
+            if let v = constIntValue(rhs), !(-32768...32767).contains(v) {
+                warn("\(name) = \(v): value outside the integer range -32768..32767 wraps on hardware")
+            }
             genExprToWord(rhs)
             emit("    sta var_\(asm(name))")
             emit("    stx var_\(asm(name))+1")
@@ -398,28 +403,9 @@ struct BasicCodeGen {
             emit("    sta _sys_lo")
             emit("    stx _sys_hi")
             emit("    jsr _rt_sys")
-        case .getStmt(let name):
-            emit("    jsr \(KERNAL.GETIN)")
-            if name.hasSuffix("$") {
-                emit("    sta var_\(asm(name))")
-                emit("    lda #0")
-                emit("    sta var_\(asm(name))+1")
-            } else {
-                // Numeric GET: the interpreter converts a digit key to its
-                // value (GET A with "5" gives 5), gives 0 with no key
-                // pending, and stops with ?SYNTAX ERROR on any other
-                // character. The old code stored the raw PETSCII code.
-                emit("    jsr _rt_char_to_digit")
-                let varType = table[name]
-                if varType.width == .byte {
-                    emit("    sta var_\(asm(name))")
-                } else {
-                    emit("    tay")
-                    emit("    lda #0")
-                    emit("    jsr \(ROM.INTFAC)")
-                    genStoreFloat(name)
-                }
-            }
+        case .getStmt(let targets):
+            // One keypress per target: GET A$,B$ consumes two.
+            for target in targets { genGetTarget(target) }
         case .waitStmt(let addr, let mask, let xor):
             let lp = newLabel("wait")
             genExprToWord(addr)
@@ -436,8 +422,11 @@ struct BasicCodeGen {
             }
             emit("\(lp):")
             emit("    jsr _rt_peek_byte")
-            emit("    and _and_tmp")
+            // Hardware WAIT is (PEEK EOR xor) AND mask — EOR first. The
+            // old AND-first order made any xor bit outside the mask
+            // permanently nonzero, so the wait returned immediately.
             emit("    eor _xor_tmp")
+            emit("    and _and_tmp")
             emit("    beq \(lp)")
         case .printStmt(let items):
             genPrint(items)
@@ -445,17 +434,15 @@ struct BasicCodeGen {
             genExprToByte(logNum)
             emit("    tax")
             emit("    jsr \(KERNAL.CHKOUT)")
-            printingToFile = true
             genPrint(items)
-            printingToFile = false
             emit("    jsr \(KERNAL.CLRCHN)")
-        case .inputStmt(let prompt, let varName):
-            genInput(prompt: prompt, varName: varName)
-        case .inputHashStmt(let logNum, let names):
+        case .inputStmt(let prompt, let target):
+            genInput(prompt: prompt, target: target)
+        case .inputHashStmt(let logNum, let targets):
             genExprToByte(logNum)
             emit("    tax")
             emit("    jsr \(KERNAL.CHKIN)")
-            for name in names { genInputOneVar(name) }
+            for target in targets { genInputTarget(target) }
             emit("    jsr \(KERNAL.CLRCHN)")
         case .forStmt(let v, let from, let to, let step):
             genFor(varName: v, from: from, to: to, step: step)
@@ -492,11 +479,7 @@ struct BasicCodeGen {
             // Real KERNAL LOAD. The old code set up SETNAM with scrambled
             // registers (SETNAM wants A=length, X=ptr lo, Y=ptr hi) and
             // then only OPENed logical file 1 - nothing was ever loaded.
-            genStrPtr(name)
-            emit("    jsr _rt_strlen")      // A = length
-            emit("    ldx $FB")             // X = name ptr lo
-            emit("    ldy $FC")             // Y = name ptr hi
-            emit("    jsr \(KERNAL.SETNAM)")
+            emitSetNam(name)
             // Secondary address from the third LOAD parameter. Default is
             // 1 (load at the file's own address), NOT BASIC's 0: SA=0
             // relocates the file to $0801, which is where the running
@@ -517,40 +500,21 @@ struct BasicCodeGen {
             emit("    bcc \(loadOk)")       // carry set = KERNAL error
             emit("    jmp _program_end")
             emit("\(loadOk):")
-        case .getHashStmt(let logNum, let name):
+        case .getHashStmt(let logNum, let targets):
             genExprToByte(logNum)
             emit("    tax")
             emit("    jsr \(KERNAL.CHKIN)")
-            emit("    jsr \(KERNAL.GETIN)")
-            emit("    pha")                 // CLRCHN clobbers A and X
+            // Channel stays open across every target — one byte each — and
+            // CLRCHN comes after the last store, so nothing needs saving
+            // around it (the stores are pure memory/FAC work).
+            for target in targets { genGetTarget(target) }
             emit("    jsr \(KERNAL.CLRCHN)")
-            emit("    pla")
-            if name.hasSuffix("$") {
-                emit("    sta var_\(asm(name))")
-                emit("    lda #0")
-                emit("    sta var_\(asm(name))+1")
-            } else {
-                emit("    jsr _rt_char_to_digit")
-                let varType = table[name]
-                if varType.width == .byte {
-                    emit("    sta var_\(asm(name))")
-                } else {
-                    emit("    tay")
-                    emit("    lda #0")
-                    emit("    jsr \(ROM.INTFAC)")
-                    genStoreFloat(name)
-                }
-            }
         case .saveStmt(let name, let dev):
             // Real KERNAL SAVE. BASIC's SAVE writes the program; the
             // compiled equivalent is the whole image from $0801 through
             // _image_end (code, runtime, data, and current variable
             // state), which re-loads as a runnable PRG.
-            genStrPtr(name)
-            emit("    jsr _rt_strlen")      // A = length
-            emit("    ldx $FB")             // X = name ptr lo
-            emit("    ldy $FC")             // Y = name ptr hi
-            emit("    jsr \(KERNAL.SETNAM)")
+            emitSetNam(name)
             genExprToByte(dev)
             emit("    tax")
             emit("    lda #1")
@@ -664,6 +628,10 @@ struct BasicCodeGen {
             if let k = cStep, !(1...255).contains(k) { cStep = nil }
             if let l = cLimit, !(0...255).contains(l) { cLimit = nil }
         case .word:
+            // The specialized word path compares unsigned; signed word
+            // loops (e.g. FOR I=-300 TO 300) take the generic path, which
+            // biases the limit compare.
+            if varType.isSigned { cStep = nil }
             if let k = cStep, k == 0 || k < -32768 || k > 65535 { cStep = nil }
             if let l = cLimit, !(0...65535).contains(l) { cLimit = nil }
         default:
@@ -685,6 +653,9 @@ struct BasicCodeGen {
             emit("    sta var_\(asm(varName))")
             if cLimit == nil {
                 genExprToByte(to)
+                // Signed loops store the limit sign-biased so NEXT's
+                // unsigned carry tree computes the signed ordering.
+                if varType.isSigned { emit("    eor #$80") }
                 emit("    sta _for_limit_\(asm(varName))")
                 forLimitNeeded.insert(varName)
             }
@@ -700,7 +671,14 @@ struct BasicCodeGen {
             if cLimit == nil {
                 genExprToWord(to)
                 emit("    sta _for_limit_\(asm(varName))")
-                emit("    stx _for_limit_\(asm(varName))+1")
+                if varType.isSigned {
+                    // Bias the high byte only; see the byte case above.
+                    emit("    txa")
+                    emit("    eor #$80")
+                    emit("    sta _for_limit_\(asm(varName))+1")
+                } else {
+                    emit("    stx _for_limit_\(asm(varName))+1")
+                }
                 forLimitNeeded.insert(varName)
             }
             if cStep == nil {
@@ -802,24 +780,32 @@ struct BasicCodeGen {
             emit("\(bSkip):")
             emit("    jmp \(e.bodyLabel)")
         } else {
+            // Signed loop: the limit was stored sign-biased at FOR time,
+            // so biasing the counter before each cmp gives the signed
+            // ordering with the same carry tree. bvs catches the counter
+            // wrapping past +127/-128, which the carry can't see in
+            // two's complement.
             emit("    lda _for_step_\(n)")
             emit("    bmi \(e.bodyLabel)_neg")
             emit("    lda var_\(n)")
             emit("    clc")
             emit("    adc _for_step_\(n)")
             emit("    sta var_\(n)")
+            emit("    bvs \(e.doneLabel)")
+            emit("    eor #$80")
             emit("    cmp _for_limit_\(n)")
             let posSkip = newLabel("nbps")
             emit("    beq \(posSkip)")
             emit("    bcs \(e.doneLabel)")
             emit("\(posSkip):")
             emit("    jmp \(e.bodyLabel)")
-            emit("    jmp \(e.doneLabel)")
             emit("\(e.bodyLabel)_neg:")
             emit("    lda var_\(n)")
             emit("    clc")
             emit("    adc _for_step_\(n)")
             emit("    sta var_\(n)")
+            emit("    bvs \(e.doneLabel)")
+            emit("    eor #$80")
             emit("    cmp _for_limit_\(n)")
             let negSkip = newLabel("nbns")
             emit("    bcc \(negSkip)")
@@ -901,14 +887,18 @@ struct BasicCodeGen {
         }
 
         let negPath = newLabel("nwneg")
+        let signed = table[e.name].isSigned
 
         // Runtime sign test on the step's high byte: STEP can be any
         // expression, so the direction isn't knowable at compile time.
         emit("    lda _for_step_\(n)+1")
         emit("    bmi \(negPath)")
 
-        // -- Positive step: 16-bit add, exit on wrap past $FFFF,
-        //    continue while var <= limit --
+        // -- Positive step: 16-bit add, exit on wrap, continue while
+        //    var <= limit. Unsigned wrap is the carry past $FFFF; signed
+        //    wrap is overflow past +32767 (V flag), and the carry from
+        //    e.g. -1 -> 0 is normal. Signed compares run with both high
+        //    bytes sign-biased (limit stored biased at FOR time). --
         emit("    lda var_\(n)")
         emit("    clc")
         emit("    adc _for_step_\(n)")
@@ -916,7 +906,12 @@ struct BasicCodeGen {
         emit("    lda var_\(n)+1")
         emit("    adc _for_step_\(n)+1")
         emit("    sta var_\(n)+1")
-        emit("    bcs \(e.doneLabel)")      // wrapped past 65535: done
+        if signed {
+            emit("    bvs \(e.doneLabel)")  // wrapped past +32767: done
+            emit("    eor #$80")
+        } else {
+            emit("    bcs \(e.doneLabel)")  // wrapped past 65535: done
+        }
         emit("    cmp _for_limit_\(n)+1")   // A still holds var hi
         let hiLess = newLabel("nwhl")
         emit("    bcc \(hiLess)")           // var hi < limit hi: continue
@@ -928,9 +923,11 @@ struct BasicCodeGen {
         emit("\(hiLess):")
         emit("    jmp \(e.bodyLabel)")
 
-        // -- Negative step (two's complement add): carry CLEAR means the
-        //    subtraction borrowed past 0, so the loop is done. Otherwise
-        //    continue while var >= limit. --
+        // -- Negative step (two's complement add): unsigned loops end on
+        //    the borrow below 0 (carry clear); signed loops end on
+        //    overflow past -32768 (V flag) since e.g. 0 -> -1 clears the
+        //    carry on a perfectly legal iteration. Otherwise continue
+        //    while var >= limit. --
         emit("\(negPath):")
         emit("    lda var_\(n)")
         emit("    clc")
@@ -939,7 +936,12 @@ struct BasicCodeGen {
         emit("    lda var_\(n)+1")
         emit("    adc _for_step_\(n)+1")
         emit("    sta var_\(n)+1")
-        emit("    bcc \(e.doneLabel)")      // underflowed below 0: done
+        if signed {
+            emit("    bvs \(e.doneLabel)")  // wrapped past -32768: done
+            emit("    eor #$80")
+        } else {
+            emit("    bcc \(e.doneLabel)")  // underflowed below 0: done
+        }
         emit("    cmp _for_limit_\(n)+1")   // A still holds var hi
         let negLoop = newLabel("nwnl")
         emit("    bcc \(e.doneLabel)")      // var hi < limit hi: done
@@ -983,11 +985,13 @@ struct BasicCodeGen {
         emit("    jsr \(ROM.FCOMP)")
         let negSkip = newLabel("fnfns")
         emit("    bne \(negSkip)")
-        emit("    jmp \(e.bodyLabel)")
+        emit("    jmp \(e.bodyLabel)")       // var == limit: continue
         emit("\(negSkip):")
         let negSkip2 = newLabel("fnfns2")
-        emit("    bpl \(negSkip2)")
-        emit("    jmp \(e.bodyLabel)")
+        // FCOMP: A=$FF when FAC(var) < mem(limit). Counting down, that is
+        // the loop-exit condition; var > limit (A=1) continues.
+        emit("    bmi \(negSkip2)")
+        emit("    jmp \(e.bodyLabel)")       // var > limit: continue
         emit("\(negSkip2):")
     }
 
@@ -1089,9 +1093,35 @@ struct BasicCodeGen {
         emit("    beq \(label)")
     }
 
+    /// True when the analysed types allow the expression to hold a negative
+    /// value (two's complement in storage). Comparisons must then use
+    /// sign-biased sequences: with both operands EOR #$80 (high byte only
+    /// for words), the ordinary unsigned carry tree computes the signed
+    /// ordering. Mirrors the analyser's canBeNegative rule so the compare
+    /// interpretation matches how the value was stored.
+    private func exprIsSigned(_ expr: Expr) -> Bool {
+        switch expr {
+        case .intLit(let n):       return n < 0
+        case .floatLit(let f):     return f < 0
+        case .floatVar(let name), .intVar(let name):
+            return table[name].isSigned
+        case .arrayRead(let name, _):
+            return table[name].isSigned
+        case .unaryMinus:          return true
+        case .binaryOp("-", _, _): return true
+        case .binaryOp(_, let l, let r):
+            return exprIsSigned(l) || exprIsSigned(r)
+        case .funcCall(let name, _):
+            return name.hasPrefix("FN")   // user function bodies are opaque here
+        default:
+            return false
+        }
+    }
+
     private mutating func genByteComparison(op: String, left: Expr, right: Expr, falseLabel: String) {
+        let signed = exprIsSigned(left) || exprIsSigned(right)
         genExprToByte(left)
-        if let k = constByteValue(right) {
+        if let k = constByteValue(right), !signed {
             emit("    cmp #\(k)")
             switch op {
             case "=":  emit("    bne \(falseLabel)")
@@ -1112,8 +1142,12 @@ struct BasicCodeGen {
             default: break
             }
         } else {
+            // Sign-biasing both operands turns the unsigned carry tree
+            // below into a signed compare; equality is unaffected.
+            if signed { emit("    eor #$80") }
             emit("    sta _cmp_tmp")
             genExprToByte(right)
+            if signed { emit("    eor #$80") }
             emit("    cmp _cmp_tmp")
             switch op {
             case "=":  emit("    bne \(falseLabel)")
@@ -1132,10 +1166,26 @@ struct BasicCodeGen {
     }
 
     private mutating func genWordComparison(op: String, left: Expr, right: Expr, falseLabel: String) {
+        let signed = exprIsSigned(left) || exprIsSigned(right)
         genExprToWord(right)
         emit("    sta _cmp_lo")
-        emit("    stx _cmp_hi")
+        if signed {
+            // Bias the high bytes only: the low-byte compare of a biased
+            // word compare stays raw.
+            emit("    txa")
+            emit("    eor #$80")
+            emit("    sta _cmp_hi")
+        } else {
+            emit("    stx _cmp_hi")
+        }
         genExprToWord(left)
+        if signed {
+            emit("    pha")
+            emit("    txa")
+            emit("    eor #$80")
+            emit("    tax")
+            emit("    pla")
+        }
         emit("    cpx _cmp_hi")
         switch op {
         case "=":
@@ -1217,16 +1267,13 @@ struct BasicCodeGen {
     }
 
     private mutating func genStringComparison(op: String, left: Expr, right: Expr, falseLabel: String) {
-        if containsStringConcat(left) && containsStringConcat(right) {
-            // Both sides would build into the single _str_cat_buf; the
-            // right side would overwrite the left before the compare.
-            warn("string comparison with concatenation on BOTH sides is not supported; result unreliable")
-        }
+        // The left side may live in a shared buffer (_chr_buf,
+        // _str_slice_buf, _str_cat_buf) that evaluating the right side
+        // overwrites - and genStrSlice rewrites _str_src itself. Copy the
+        // left string into the compare-private buffer before touching the
+        // right side; the helper leaves _str_src pointing at the copy.
         genStrPtr(left)
-        emit("    lda $FB")
-        emit("    sta _str_src_lo")
-        emit("    lda $FC")
-        emit("    sta _str_src_hi")
+        emit("    jsr _rt_strcmp_lhs")
         genStrPtr(right)
         emit("    jsr _rt_strcmp")
         switch op {
@@ -1234,7 +1281,13 @@ struct BasicCodeGen {
         case "<>": emit("    beq \(falseLabel)")
         case "<":  emit("    bpl \(falseLabel)"); emit("    beq \(falseLabel)")
         case ">":  emit("    bmi \(falseLabel)"); emit("    beq \(falseLabel)")
-        case "<=": emit("    bpl \(falseLabel)")
+        case "<=":
+            // Equal strings return 0, which is "plus" — a bare bpl
+            // treated A$<=A$ as false.
+            let ok = newLabel("sle")
+            emit("    beq \(ok)")
+            emit("    bpl \(falseLabel)")
+            emit("\(ok):")
         case ">=": emit("    bmi \(falseLabel)")
         default: break
         }
@@ -1291,6 +1344,9 @@ struct BasicCodeGen {
             emit("    jsr _rt_spc")
         case .funcCall(let fn, let args) where ["LEFT$","RIGHT$","MID$"].contains(fn) && !args.isEmpty:
             genStrSlice(fn, args: args)
+            // _rt_str_slice returns A=0/Y=count, not the buffer address.
+            emit("    lda #<_str_slice_buf")
+            emit("    ldy #>_str_slice_buf")
             emit("    jsr _print_str")
         case .funcCall("STR$", let args) where !args.isEmpty:
             genExprToFloat(args[0])
@@ -1304,15 +1360,15 @@ struct BasicCodeGen {
             emit("    jsr _print_str")
             // The interpreter appends a character after every number
             // (ROM $AB3B): cursor-right ($1D) on the screen, space ($20)
-            // when output is redirected to a file. This is where the
-            // familiar " 1  2  3" spacing of PRINT 1;2;3 comes from.
-            emit("    lda #$\(printingToFile ? "20" : "1D")")
-            emit("    jsr \(KERNAL.CHROUT)")
+            // when output is redirected. The choice must be made at RUN
+            // time from the active output device — CMD redirects plain
+            // PRINT without any compile-time marker.
+            emit("    jsr _rt_num_sep")
         }
     }
 
     // MARK: - INPUT
-    private mutating func genInput(prompt: String?, varName: String) {
+    private mutating func genInput(prompt: String?, target: VarTarget) {
         if let p = prompt {
             let lbl = newLabel("ipr")
             emit("    lda #<\(lbl)")
@@ -1325,7 +1381,98 @@ struct BasicCodeGen {
         emit("    jsr \(KERNAL.CHROUT)")
         emit("    lda #$20")
         emit("    jsr \(KERNAL.CHROUT)")
-        genInputOneVar(varName)
+        genInputTarget(target)
+    }
+
+    /// GET / GET# into one target: one character from GETIN, with the
+    /// channel (for GET#) already selected by the caller.
+    private mutating func genGetTarget(_ target: VarTarget) {
+        if case .element(let name, let indices) = target {
+            genGetElement(name: name, indices: indices)
+            return
+        }
+        let name = target.name
+        emit("    jsr \(KERNAL.GETIN)")
+        if name.hasSuffix("$") {
+            emit("    sta var_\(asm(name))")
+            emit("    lda #0")
+            emit("    sta var_\(asm(name))+1")
+        } else {
+            // Numeric GET: the interpreter converts a digit key to its
+            // value (GET A with "5" gives 5), gives 0 with no key
+            // pending, and stops with ?SYNTAX ERROR on any other
+            // character. The old code stored the raw PETSCII code.
+            emit("    jsr _rt_char_to_digit")
+            let varType = table[name]
+            switch varType.width {
+            case .byte:
+                emit("    sta var_\(asm(name))")
+            case .word:
+                // The digit is 0-9; zero-extend into the 2-byte slot.
+                // Falling into the float branch here MOVMF'd 5 bytes over
+                // 2-byte storage, corrupting the neighbors.
+                emit("    sta var_\(asm(name))")
+                emit("    lda #0")
+                emit("    sta var_\(asm(name))+1")
+            default:
+                emit("    tay")
+                emit("    lda #0")
+                emit("    jsr \(ROM.INTFAC)")
+                genStoreFloat(name)
+            }
+        }
+    }
+
+    /// GET into an array element. The character arrives in A, which cannot
+    /// survive pulling the element pointer back, so it parks in _arith_tmp.
+    private mutating func genGetElement(name: String, indices: [Expr]) {
+        let dest = genPushElementPtr(name: name, indices: indices)
+
+        emit("    jsr \(KERNAL.GETIN)")
+        if name.hasSuffix("$") {
+            // A one-character string: the character then a NUL, exactly
+            // what the scalar path writes into var_X / var_X+1.
+            genElementStoreByteInA(dest: dest)
+            return
+        }
+
+        emit("    jsr _rt_char_to_digit")
+        if name.hasSuffix("%") {
+            genElementStoreByteInA(dest: dest)
+        } else {
+            emit("    tay")                 // Y = lo
+            emit("    lda #0")              // A = hi
+            emit("    jsr \(ROM.INTFAC)")   // GIVAYF: A/Y -> FAC1
+            if dest == nil { genPopElementPtr() }
+            genElementStoreFloat(dest: dest)
+        }
+    }
+
+    /// INPUT# into one target. Array elements take the same address-on-the-
+    /// stack route as READ; see `genPushElementPtr`.
+    private mutating func genInputTarget(_ target: VarTarget) {
+        guard case .element(let name, let indices) = target else {
+            genInputOneVar(target.name)
+            return
+        }
+
+        if name.hasSuffix("$") {
+            // _rt_input_str writes through the pointer it is given.
+            genElementDestToAY(name: name, indices: indices)
+            emit("    jsr _rt_input_str")
+            return
+        }
+
+        let dest = genPushElementPtr(name: name, indices: indices)
+        if name.hasSuffix("%") {
+            emit("    jsr _rt_input_num_int")
+            if dest == nil { genPopElementPtr() }
+            genElementStoreInt(dest: dest, lo: "_input_lo", hi: "_input_hi")
+        } else {
+            emit("    jsr _rt_input_num")
+            if dest == nil { genPopElementPtr() }
+            genElementStoreFloat(dest: dest)
+        }
     }
 
     private mutating func genInputOneVar(_ varName: String) {
@@ -1354,117 +1501,322 @@ struct BasicCodeGen {
     }
 
     // MARK: - READ / DATA
-    private mutating func genRead(_ names: [String]) {
-        if dataHasString {
-            for name in names {
-                if name.hasSuffix("$") {
-                    emit("    lda #<var_\(asm(name))")
-                    emit("    ldy #>var_\(asm(name))")
-                    emit("    jsr _rt_data_read_str")
-                } else {
-                    // Mixed string/numeric DATA: the tagged-stream reader
-                    // dispatches on the item tag, converts byte/word/float
-                    // items into FAC1, and advances _data_ptr by the item's
-                    // encoded size (a string item under a numeric READ is a
-                    // type mismatch and stops the program, mirroring what
-                    // _rt_data_read_str does in the opposite direction).
-                    // Storing from FAC1 by analysed width below is identical
-                    // to the pure-float table path.
-                    emit("    jsr _rt_data_read_num")
-                    let varType = table[name]
-                    switch varType.width {
-                    case .byte:
-                        emit("    jsr \(ROM.AYINT)")
-                        emit("    lda $65")
-                        emit("    sta var_\(asm(name))")
-                    case .word:
-                        emit("    jsr \(ROM.AYINT)")
-                        emit("    lda $65")
-                        emit("    sta var_\(asm(name))")
-                        emit("    lda $64")
-                        emit("    sta var_\(asm(name))+1")
-                    default:
-                        genStoreFloat(name)
-                    }
-                }
+
+    private mutating func genRead(_ targets: [VarTarget]) {
+        for target in targets {
+            if case .element(let name, let indices) = target {
+                genReadElement(name: name, indices: indices)
+            } else {
+                genReadScalar(target.name)
+            }
+        }
+    }
+
+    /// Fetches the next DATA byte into A, advancing _data_ptr. Tables up to
+    /// 256 bytes keep the fast Y-indexed path (indices 0..255 all reachable;
+    /// the low-byte-only inc can't wrap mid-table). Larger tables go through
+    /// _rt_data_get_byte, which does full 16-bit indexing and carry —
+    /// ldy/inc only ever saw the low byte and wrapped silently after 256.
+    private mutating func genDataFetchByte() {
+        if dataBytes.count > 256 {
+            needsWideByteData = true
+            emit("    jsr _rt_data_get_byte")
+        } else {
+            emit("    ldy _data_ptr")
+            emit("    lda _data_table,y")
+            emit("    inc _data_ptr")
+        }
+    }
+
+    /// Loads the DATA item at _data_ptr into FAC1 (5-byte MFLPT table).
+    /// Does NOT advance the pointer — call `genDataAdvanceFloat` after the
+    /// value has been stored.
+    private mutating func genDataFetchFloat() {
+        let lbl = newLabel("rd")
+        emit("    lda _data_ptr+1")
+        emit("    clc")
+        emit("    adc #>_data_table")
+        emit("    tay")
+        emit("    lda _data_ptr")
+        emit("    clc")
+        emit("    adc #<_data_table")
+        emit("    bcc @\(lbl)")
+        emit("    iny")
+        emit("@\(lbl):")
+        emit("    jsr \(ROM.MOVFM)")
+    }
+
+    private mutating func genDataAdvanceFloat() {
+        emit("    lda _data_ptr")
+        emit("    clc")
+        emit("    adc #5")
+        emit("    sta _data_ptr")
+        emit("    lda _data_ptr+1")
+        emit("    adc #0")
+        emit("    sta _data_ptr+1")
+    }
+
+    /// Stores FAC1 into a scalar by its analysed width. AYINT is signed and
+    /// range-checked; the old FACINT path threw ILLEGAL QUANTITY on
+    /// negative DATA values.
+    private mutating func genStoreFAC1ByWidth(_ name: String) {
+        switch table[name].width {
+        case .byte:
+            emit("    jsr \(ROM.AYINT)")
+            emit("    lda $65")
+            emit("    sta var_\(asm(name))")
+        case .word:
+            emit("    jsr \(ROM.AYINT)")
+            emit("    lda $65")
+            emit("    sta var_\(asm(name))")
+            emit("    lda $64")
+            emit("    sta var_\(asm(name))+1")
+        default:
+            genStoreFloat(name)
+        }
+    }
+
+    /// Fetches the next numeric DATA item and leaves its FOUT text in
+    /// _str_slice_buf: the READ-string-target-with-numeric-DATA path. The
+    /// stream pointer advances exactly as a numeric READ would, keeping
+    /// later READs in sync (skipping the item desynchronized every READ
+    /// after it). The interpreter reads the item's original source text,
+    /// which the compiled table no longer has; FOUT's rendering differs
+    /// only in the leading space/minus column.
+    private mutating func genFetchNumericDataTextToSliceBuf(context: String) {
+        warn("\(context): string target with numeric-only DATA; the compiled program reads the value's printed text (leading space differs from the interpreter)")
+        if dataIsAllByte {
+            genDataFetchByte()
+            emit("    tay")                 // Y = lo
+            emit("    lda #0")              // A = hi
+            emit("    jsr \(ROM.INTFAC)")   // GIVAYF: A/Y -> FAC1
+        } else {
+            genDataFetchFloat()
+            genDataAdvanceFloat()
+        }
+        emit("    jsr _rt_str_from_fac")
+    }
+
+    private mutating func genReadScalar(_ name: String) {
+        if name.hasSuffix("$") {
+            if dataHasString {
+                emit("    lda #<var_\(asm(name))")
+                emit("    ldy #>var_\(asm(name))")
+                emit("    jsr _rt_data_read_str")
+            } else {
+                // Previously this fell into the numeric path and MOVMF'd a
+                // float image into the string variable.
+                genFetchNumericDataTextToSliceBuf(context: "READ \(name)")
+                let lbl = newLabel("rds")
+                emit("    ldy #0")
+                emit("\(lbl):")
+                emit("    lda _str_slice_buf,y")
+                emit("    sta var_\(asm(name)),y")
+                emit("    beq \(lbl)_done")
+                emit("    iny")
+                emit("    bne \(lbl)")
+                emit("\(lbl)_done:")
             }
             return
         }
-        for name in names {
-            let varType = table[name]
-            if dataIsAllByte {
-                // Byte-table fetch into A, advancing _data_ptr by 1.
-                // Tables up to 256 bytes keep the fast Y-indexed path
-                // (indices 0..255 all reachable; the low-byte-only inc
-                // can't wrap mid-table). Larger tables previously wrapped
-                // silently after 256 reads because ldy/inc only ever saw
-                // the low byte; they now go through _rt_data_get_byte,
-                // which does full 16-bit indexing and carry.
-                if dataBytes.count > 256 {
-                    needsWideByteData = true
-                    emit("    jsr _rt_data_get_byte")
-                } else {
-                    emit("    ldy _data_ptr")
-                    emit("    lda _data_table,y")
-                    emit("    inc _data_ptr")
-                }
-                switch varType.width {
-                case .byte:
-                    emit("    sta var_\(asm(name))")
-                case .word:
-                    emit("    sta var_\(asm(name))")
-                    emit("    lda #0")
-                    emit("    sta var_\(asm(name))+1")
-                default:
-                    // Float-typed target reading from a byte table
-                    // (propagation widened the variable, e.g. READ X
-                    // followed by X=X+0.5). Previously this fell into
-                    // the float-table branch below, which misread raw
-                    // bytes as 5-byte MFLPT floats and advanced by 5.
-                    // Convert the fetched byte via GIVAYF instead.
-                    emit("    tay")                 // Y = lo
-                    emit("    lda #0")              // A = hi
-                    emit("    jsr \(ROM.INTFAC)")   // GIVAYF: A/Y -> FAC1
-                    genStoreFloat(name)
-                }
-            } else {
-                let lbl = newLabel("rd")
-                emit("    lda _data_ptr+1")
-                emit("    clc")
-                emit("    adc #>_data_table")
-                emit("    tay")
-                emit("    lda _data_ptr")
-                emit("    clc")
-                emit("    adc #<_data_table")
-                emit("    bcc @\(lbl)")
-                emit("    iny")
-                emit("@\(lbl):")
-                emit("    jsr \(ROM.MOVFM)")
-                switch varType.width {
-                case .byte:
-                    // AYINT is signed and range-checked; the old FACINT
-                    // path threw ILLEGAL QUANTITY on negative DATA values.
-                    emit("    jsr \(ROM.AYINT)")
-                    emit("    lda $65")
-                    emit("    sta var_\(asm(name))")
-                case .word:
-                    emit("    jsr \(ROM.AYINT)")
-                    emit("    lda $65")
-                    emit("    sta var_\(asm(name))")
-                    emit("    lda $64")
-                    emit("    sta var_\(asm(name))+1")
-                default:
-                    genStoreFloat(name)
-                }
-                emit("    lda _data_ptr")
-                emit("    clc")
-                emit("    adc #5")
-                emit("    sta _data_ptr")
-                emit("    lda _data_ptr+1")
-                emit("    adc #0")
-                emit("    sta _data_ptr+1")
-            }
+
+        if dataHasString {
+            // Mixed string/numeric DATA: the tagged-stream reader
+            // dispatches on the item tag, converts byte/word/float items
+            // into FAC1, and advances _data_ptr by the item's encoded size
+            // (a string item under a numeric READ is a type mismatch and
+            // stops the program, mirroring what _rt_data_read_str does in
+            // the opposite direction).
+            emit("    jsr _rt_data_read_num")
+            genStoreFAC1ByWidth(name)
+            return
         }
+
+        let varType = table[name]
+        if dataIsAllByte {
+            genDataFetchByte()
+            switch varType.width {
+            case .byte:
+                emit("    sta var_\(asm(name))")
+            case .word:
+                emit("    sta var_\(asm(name))")
+                emit("    lda #0")
+                emit("    sta var_\(asm(name))+1")
+            default:
+                // Float-typed target reading from a byte table
+                // (propagation widened the variable, e.g. READ X
+                // followed by X=X+0.5). Previously this fell into
+                // the float-table branch below, which misread raw
+                // bytes as 5-byte MFLPT floats and advanced by 5.
+                // Convert the fetched byte via GIVAYF instead.
+                emit("    tay")                 // Y = lo
+                emit("    lda #0")              // A = hi
+                emit("    jsr \(ROM.INTFAC)")   // GIVAYF: A/Y -> FAC1
+                genStoreFloat(name)
+            }
+        } else {
+            genDataFetchFloat()
+            genStoreFAC1ByWidth(name)
+            genDataAdvanceFloat()
+        }
+    }
+
+    /// READ into one array element. The element address has to survive the
+    /// fetch, so it goes on the stack exactly as `genArrayWrite` does around
+    /// RHS evaluation. Element width comes from the array's suffix — 2 bytes
+    /// for `%`, 5 for float — NOT from the analysed scalar width, which
+    /// describes a different piece of storage entirely.
+    private mutating func genReadElement(name: String, indices: [Expr]) {
+        // Strings: _rt_data_read_str writes through a destination pointer,
+        // so the address is handed straight over and nothing needs saving.
+        if name.hasSuffix("$") {
+            if dataHasString {
+                genElementDestToAY(name: name, indices: indices)
+                emit("    jsr _rt_data_read_str")
+            } else {
+                // Previously this skipped WITHOUT consuming a DATA item,
+                // desynchronizing every READ after it.
+                genFetchNumericDataTextToSliceBuf(context: "READ \(name)()")
+                genElementDestToAY(name: name, indices: indices)
+                emit("    sta $FD")
+                emit("    sty $FE")
+                let lbl = newLabel("rde")
+                emit("    ldy #0")
+                emit("\(lbl):")
+                emit("    lda _str_slice_buf,y")
+                emit("    sta ($FD),y")
+                emit("    beq \(lbl)_done")
+                emit("    iny")
+                emit("    bne \(lbl)")
+                emit("\(lbl)_done:")
+            }
+            return
+        }
+
+        let isInt = name.hasSuffix("%")
+        let dest  = genPushElementPtr(name: name, indices: indices)
+
+        if dataHasString {
+            emit("    jsr _rt_data_read_num")       // -> FAC1
+            if isInt { emit("    jsr \(ROM.AYINT)") }
+        } else if dataIsAllByte {
+            genDataFetchByte()                      // -> A
+            emit("    sta _arith_tmp")              // A cannot survive the pull
+            if !isInt {
+                emit("    ldy _arith_tmp")          // Y = lo
+                emit("    lda #0")                  // A = hi
+                emit("    jsr \(ROM.INTFAC)")       // GIVAYF: A/Y -> FAC1
+            }
+        } else {
+            genDataFetchFloat()                     // -> FAC1
+            if isInt { emit("    jsr \(ROM.AYINT)") }
+        }
+
+        if dest == nil { genPopElementPtr() }
+
+        if isInt {
+            // AYINT leaves the integer in $64 (hi) / $65 (lo); the byte
+            // table needs no conversion and zero-extends. The condition
+            // must mirror the fetch dispatch above exactly: with string
+            // DATA present the fetch went through _rt_data_read_num even
+            // when every numeric item fits a byte, so _arith_tmp is stale.
+            if !dataHasString && dataIsAllByte {
+                genElementStoreInt(dest: dest, lo: "_arith_tmp", hi: nil)
+            } else {
+                genElementStoreInt(dest: dest, lo: "$65", hi: "$64")
+            }
+        } else {
+            genElementStoreFloat(dest: dest)
+        }
+
+        if !dataHasString && !dataIsAllByte { genDataAdvanceFloat() }
+    }
+
+    // MARK: - Array Element Targets (READ / INPUT#)
+
+    /// Prepares an array element as a store destination. Constant subscripts
+    /// resolve to an absolute label and nothing is emitted; otherwise the
+    /// runtime element pointer is computed and PUSHED, and the caller must
+    /// call `genPopElementPtr()` once the value has been fetched. The stack
+    /// round-trip is what makes the fetch free to clobber _arr_ptr.
+    private mutating func genPushElementPtr(name: String, indices: [Expr]) -> String? {
+        if let off = constArrayByteOffset(name: name, indices: indices) {
+            return "arr_\(asm(name))+\(off)"
+        }
+        genArrayElementPtr(name: name, indices: indices)
+        emit("    lda _arr_ptr_lo")
+        emit("    pha")
+        emit("    lda _arr_ptr_hi")
+        emit("    pha")
+        return nil
+    }
+
+    /// Restores the pushed element pointer into _arr_ptr and $FD/$FE.
+    /// Only pla/sta, so FAC1 is left alone.
+    private mutating func genPopElementPtr() {
+        emit("    pla")
+        emit("    sta _arr_ptr_hi")
+        emit("    sta $FE")
+        emit("    pla")
+        emit("    sta _arr_ptr_lo")
+        emit("    sta $FD")
+    }
+
+    /// Loads an element's address into A/Y for the runtime string routines.
+    private mutating func genElementDestToAY(name: String, indices: [Expr]) {
+        if let off = constArrayByteOffset(name: name, indices: indices) {
+            emit("    lda #<(arr_\(asm(name))+\(off))")
+            emit("    ldy #>(arr_\(asm(name))+\(off))")
+        } else {
+            genArrayElementPtr(name: name, indices: indices)
+            emit("    lda _arr_ptr_lo")
+            emit("    ldy _arr_ptr_hi")
+        }
+    }
+
+    /// Stores a 16-bit value held in memory into a 2-byte array element.
+    /// `hi` nil zero-extends.
+    private mutating func genElementStoreInt(dest: String?, lo: String, hi: String?) {
+        if let dest {
+            emit("    lda \(lo)")
+            emit("    sta \(dest)")
+            if let hi { emit("    lda \(hi)") } else { emit("    lda #0") }
+            emit("    sta \(dest)+1")
+        } else {
+            emit("    ldy #0")
+            emit("    lda \(lo)")
+            emit("    sta ($FD),y")
+            emit("    iny")
+            if let hi { emit("    lda \(hi)") } else { emit("    lda #0") }
+            emit("    sta ($FD),y")
+        }
+    }
+
+    /// Stores the byte in A into a 2-byte array element, zero-extended.
+    /// A constant destination is written straight from A; a runtime one has
+    /// to park the value first, since pulling the pointer clobbers A.
+    private mutating func genElementStoreByteInA(dest: String?) {
+        if let dest {
+            emit("    sta \(dest)")
+            emit("    lda #0")
+            emit("    sta \(dest)+1")
+        } else {
+            emit("    sta _arith_tmp")
+            genPopElementPtr()
+            genElementStoreInt(dest: nil, lo: "_arith_tmp", hi: nil)
+        }
+    }
+
+    /// Stores FAC1 into a 5-byte float array element.
+    private mutating func genElementStoreFloat(dest: String?) {
+        if let dest {
+            emit("    ldx #<(\(dest))")
+            emit("    ldy #>(\(dest))")
+        } else {
+            emit("    ldx _arr_ptr_lo")
+            emit("    ldy _arr_ptr_hi")
+        }
+        emit("    jsr \(ROM.MOVMF)")
     }
 
     // MARK: - ON GOTO / GOSUB
@@ -1473,6 +1825,9 @@ struct BasicCodeGen {
         let done = newLabel("on_done")
         let op   = isGosub ? "jsr" : "jmp"
         genExprToByte(expr)
+        // Re-derive Z from A: genExprToByte sequences ending in ldx leave
+        // the flags describing the wrong register.
+        emit("    cmp #0")
         emit("    beq \(done)")
         emit("    cmp #\(targets.count + 1)")
         emit("    bcs \(done)")
@@ -1488,6 +1843,17 @@ struct BasicCodeGen {
     }
 
     // MARK: - OPEN / CLOSE
+    /// KERNAL SETNAM from a string expression. Register protocol:
+    /// A=length, X=ptr lo, Y=ptr hi - once hand-copied in three places,
+    /// and once scrambled in one of them (nothing ever loaded).
+    private mutating func emitSetNam(_ name: Expr) {
+        genStrPtr(name)
+        emit("    jsr _rt_strlen")      // A = length
+        emit("    ldx $FB")             // X = name ptr lo
+        emit("    ldy $FC")             // Y = name ptr hi
+        emit("    jsr \(KERNAL.SETNAM)")
+    }
+
     private mutating func genOpen(logNum: Expr, device: Expr, secondary: Expr, filename: Expr?) {
         genExprToByte(logNum);    emit("    sta _open_log")
         genExprToByte(device);   emit("    sta _open_dev")
@@ -1497,11 +1863,7 @@ struct BasicCodeGen {
         emit("    ldy _open_sec")
         emit("    jsr \(KERNAL.SETLFS)")
         if let fn = filename {
-            genStrPtr(fn)
-            emit("    jsr _rt_strlen")      // A = length (SETNAM wants A)
-            emit("    ldx $FB")             // X = name ptr lo
-            emit("    ldy $FC")             // Y = name ptr hi
-            emit("    jsr \(KERNAL.SETNAM)")
+            emitSetNam(fn)
         } else {
             emit("    lda #0")
             emit("    jsr \(KERNAL.SETNAM)")
@@ -1545,12 +1907,19 @@ struct BasicCodeGen {
 
         genArrayElementPtr(name: name, indices: indices)
         if name.hasSuffix("$") {
-            // genStrPtr never touches _arr_ptr, so no save needed here.
-            genStrPtr(rhs)
+            // The destination pointer must survive the RHS: genStrPtr for a
+            // string-array element (A$(I)=B$(J), or any concat containing
+            // one) recomputes _arr_ptr, which used to leave source and
+            // destination both pointing at the RHS element.
             emit("    lda _arr_ptr_lo")
-            emit("    sta $FD")
+            emit("    pha")
             emit("    lda _arr_ptr_hi")
+            emit("    pha")
+            genStrPtr(rhs)
+            emit("    pla")
             emit("    sta $FE")
+            emit("    pla")
+            emit("    sta $FD")
             let lbl = newLabel("aws")
             emit("    ldy #0")
             emit("\(lbl):")
@@ -1642,30 +2011,88 @@ struct BasicCodeGen {
         }
     }
 
+    /// Bytes per array element by name suffix: $=256 (fixed string slot),
+    /// %=2, float=5. The single source of truth - element address math
+    /// (runtime and constant-folded) and storage allocation must agree
+    /// byte-for-byte or same-array accesses silently address different
+    /// memory.
+    static func bytesPerElement(for name: String) -> Int {
+        if name.hasSuffix("$") { return 256 }
+        if name.hasSuffix("%") { return 2 }
+        return 5
+    }
+
+    /// True when evaluating the expression can re-enter genArrayElementPtr
+    /// (an array read anywhere in the tree, or a user FN whose inlined body
+    /// might contain one) and therefore clobber the shared _arr_idx.
+    private func exprReadsArray(_ e: Expr) -> Bool {
+        switch e {
+        case .arrayRead: return true
+        case .binaryOp(_, let l, let r), .compareOp(_, let l, let r):
+            return exprReadsArray(l) || exprReadsArray(r)
+        case .unaryMinus(let inner), .notOp(let inner):
+            return exprReadsArray(inner)
+        case .funcCall(let name, let args):
+            return name.hasPrefix("FN") || args.contains { exprReadsArray($0) }
+        default: return false
+        }
+    }
+
     private mutating func genArrayElementPtr(name: String, indices: [Expr]) {
         let dims = arrayDims.first(where: { $0.name == name })?.dims ?? [11]
-        let bytesPerElem: Int
-        if name.hasSuffix("$") { bytesPerElem = 256 }
-        else if name.hasSuffix("%") { bytesPerElem = 2 }
-        else { bytesPerElem = 5 }
+        let bytesPerElem = Self.bytesPerElement(for: name)
 
-        emit("    lda #0")
-        emit("    sta _arr_idx_lo")
-        emit("    sta _arr_idx_hi")
+        if indices.count != dims.count {
+            // BAD SUBSCRIPT on real hardware; clamping (extra subscripts
+            // scale by the default dimension) keeps the compiler alive
+            // instead of trapping on dims[i].
+            warn("\(name): \(indices.count) subscript(s) for a \(dims.count)-dimensional array")
+        }
 
         for (i, idx) in indices.enumerated() {
-            if i > 0 {
-                emitIdxMulConst(dims[i])
+            if i == 0 {
+                // Store, not zero-init-and-add: a nested array read inside
+                // the subscript (A(B(J))) re-enters this function and
+                // rewrites _arr_idx before the value comes back.
+                // Full 16-bit subscript: the old genExprToByte call
+                // truncated subscripts over 255, so A(300) indexed elem 44.
+                genExprToWord(idx)
+                emit("    sta _arr_idx_lo")
+                emit("    stx _arr_idx_hi")
+                continue
             }
-            // Full 16-bit add of the subscript: the old genExprToByte call
-            // truncated subscripts over 255, so A(300) indexed element 44.
-            genExprToWord(idx)
-            emit("    clc")
-            emit("    adc _arr_idx_lo")
-            emit("    sta _arr_idx_lo")
-            emit("    txa")
-            emit("    adc _arr_idx_hi")
-            emit("    sta _arr_idx_hi")
+            emitIdxMulConst(i < dims.count ? dims[i] : 11)
+            if exprReadsArray(idx) {
+                // The subscript's evaluation clobbers _arr_idx; keep the
+                // accumulated index on the stack across it. _arr_mul is
+                // free here - emitIdxMulConst is already done.
+                emit("    lda _arr_idx_lo")
+                emit("    pha")
+                emit("    lda _arr_idx_hi")
+                emit("    pha")
+                genExprToWord(idx)
+                emit("    sta _arr_mul_lo")
+                emit("    stx _arr_mul_hi")
+                emit("    pla")
+                emit("    sta _arr_idx_hi")
+                emit("    pla")
+                emit("    sta _arr_idx_lo")
+                emit("    lda _arr_mul_lo")
+                emit("    clc")
+                emit("    adc _arr_idx_lo")
+                emit("    sta _arr_idx_lo")
+                emit("    lda _arr_mul_hi")
+                emit("    adc _arr_idx_hi")
+                emit("    sta _arr_idx_hi")
+            } else {
+                genExprToWord(idx)
+                emit("    clc")
+                emit("    adc _arr_idx_lo")
+                emit("    sta _arr_idx_lo")
+                emit("    txa")
+                emit("    adc _arr_idx_hi")
+                emit("    sta _arr_idx_hi")
+            }
         }
 
         if bytesPerElem == 256 {
@@ -1687,7 +2114,45 @@ struct BasicCodeGen {
     }
 
     // MARK: - Expression Evaluation
+    /// True when the tree contains an operation whose exact result can be
+    /// fractional: '/', '^', or a float-producing function. BASIC does all
+    /// arithmetic in floats and rounds ONCE at the final conversion, so an
+    /// integer-math tree that floors such an intermediate diverges from the
+    /// interpreter (A%=7/2*2 gave 6, not 7). AND/OR and comparisons stop
+    /// the walk: hardware converts their operands to ints individually.
+    private func exprHasFractionalOp(_ e: Expr) -> Bool {
+        switch e {
+        case .binaryOp("AND", _, _), .binaryOp("OR", _, _):
+            return false
+        case .binaryOp(let op, let l, let r):
+            return op == "/" || op == "^"
+                || exprHasFractionalOp(l) || exprHasFractionalOp(r)
+        case .unaryMinus(let inner):
+            return exprHasFractionalOp(inner)
+        case .funcCall(let name, _):
+            return !["PEEK", "ASC", "LEN", "INT"].contains(name)
+        default:
+            return false
+        }
+    }
+
+    /// Integer contexts bail to float evaluation when an operand subtree
+    /// can be fractional - see exprHasFractionalOp. The operator's own
+    /// result converting at the statement boundary is the correct single
+    /// rounding, so only operand subtrees force the bail-out.
+    private func intPathWouldFloorIntermediates(_ expr: Expr) -> Bool {
+        if case .binaryOp(let op, let l, let r) = expr, op != "AND", op != "OR" {
+            return exprHasFractionalOp(l) || exprHasFractionalOp(r)
+        }
+        return false
+    }
+
     mutating func genExprToByte(_ expr: Expr) {
+        if intPathWouldFloorIntermediates(expr) {
+            genExprToFloat(expr)
+            emit("    jsr _rt_fac_to_byte")
+            return
+        }
         switch expr {
         case .intLit(let n):
             emit("    lda #\(n & 0xFF)")
@@ -1759,10 +2224,23 @@ struct BasicCodeGen {
     }
 
     mutating func genExprToWord(_ expr: Expr) {
+        if intPathWouldFloorIntermediates(expr) {
+            genExprToFloat(expr)
+            emit("    jsr \(ROM.AYINT)")
+            emit("    lda $65"); emit("    ldx $64")
+            return
+        }
         switch expr {
         case .intLit(let n):
             emit("    lda #<\(n)"); emit("    ldx #>\(n)")
         case .floatLit(let f):
+            // Int(f) traps on infinite/out-of-range doubles (1E999 lexes
+            // as an infinite floatLit); diagnose instead of crashing.
+            guard f.isFinite, f >= -32768, f <= 65535 else {
+                warn("float literal \(f) does not fit a 16-bit value; using 0")
+                emit("    lda #0"); emit("    ldx #0")
+                break
+            }
             let i = Int(f)
             emit("    lda #<\(i)"); emit("    ldx #>\(i)")
         case .floatVar(let name):
@@ -1775,9 +2253,9 @@ struct BasicCodeGen {
                 emit("    lda var_\(asm(name))"); emit("    ldx var_\(asm(name))+1")
             } else {
                 genExprToFloat(expr)
-                emit("    jsr \(ROM.FACINT)")
-                emit("    sta _word_hi_tmp")
-                emit("    tya"); emit("    ldx _word_hi_tmp")
+                // AYINT, not FACINT/GETADR: the value may be negative.
+                emit("    jsr \(ROM.AYINT)")
+                emit("    lda $65"); emit("    ldx $64")
             }
         case .intVar(let name):
             emit("    lda var_\(asm(name))"); emit("    ldx var_\(asm(name))+1")
@@ -2000,8 +2478,12 @@ struct BasicCodeGen {
             emit("    sta _peek_lo"); emit("    stx _peek_hi")
             emit("    jsr _rt_peek_byte"); emit("    ldx #0")
         default:
-            genExprToFloat(expr); emit("    jsr \(ROM.FACINT)")
-            emit("    sta _word_hi_tmp"); emit("    tya"); emit("    ldx _word_hi_tmp")
+            genExprToFloat(expr)
+            // AYINT, not FACINT/GETADR: GETADR throws ILLEGAL QUANTITY on
+            // any negative FAC, and word context routinely sees negatives
+            // (A% = -5, signed subexpressions).
+            emit("    jsr \(ROM.AYINT)")
+            emit("    lda $65"); emit("    ldx $64")
         }
     }
 
@@ -2028,12 +2510,10 @@ struct BasicCodeGen {
         case .intLit(let n) where n >= 0 && n <= 255:
             emit("    lda #0"); emit("    ldy #\(n)"); emit("    jsr \(ROM.INTFAC)")
         case .intLit(let n):
-            let lbl = newLabel("flt")
-            emitFloatConst(lbl, Double(n))
+            let lbl = emitFloatConstValue(Double(n))
             emit("    lda #<\(lbl)"); emit("    ldy #>\(lbl)"); emit("    jsr \(ROM.MOVFM)")
         case .floatLit(let f):
-            let lbl = newLabel("flt")
-            emitFloatConst(lbl, f)
+            let lbl = emitFloatConstValue(f)
             emit("    lda #<\(lbl)"); emit("    ldy #>\(lbl)"); emit("    jsr \(ROM.MOVFM)")
         case .strLit, .strVar:
             warn("string used in numeric context; FAC left unchanged")
@@ -2069,8 +2549,7 @@ struct BasicCodeGen {
         case .intVar(let name):
             emit("    lda var_\(asm(name))+1"); emit("    ldy var_\(asm(name))"); emit("    jsr \(ROM.INTFAC)")
         case .tiVar:
-            let lbl256 = newLabel("ti256")
-            emitFloatConst(lbl256, 256.0)
+            let lbl256 = emitFloatConstValue(256.0)
             let tmp = newLabel("titmp")
             emitFloatScratch(tmp)
             // Snapshot the 3-byte jiffy clock atomically FIRST. The float
@@ -2380,14 +2859,32 @@ struct BasicCodeGen {
             emit("    jsr _rt_strlen")
             if args.count > 1 {
                 emit("    sta _str_tmp"); genExprToByte(args[1]); emit("    sta _arith_tmp")
-                emit("    lda _str_tmp"); emit("    sec"); emit("    sbc _arith_tmp"); emit("    sta _str_slice_start")
+                emit("    lda _str_tmp"); emit("    sec"); emit("    sbc _arith_tmp")
+                // Count > length borrows and wrapped the start to ~253,
+                // reading garbage; BASIC returns the whole string.
+                let ok = newLabel("rgc")
+                emit("    bcs \(ok)")
+                emit("    lda #0")
+                emit("\(ok):")
+                emit("    sta _str_slice_start")
                 emit("    lda _arith_tmp"); emit("    sta _str_slice_len")
             } else {
                 emit("    lda #0"); emit("    sta _str_slice_start")
                 emit("    lda #255"); emit("    sta _str_slice_len")
             }
         case "MID$":
-            if args.count > 1 { genExprToByte(args[1]); emit("    sec"); emit("    sbc #1"); emit("    sta _str_slice_start") }
+            if args.count > 1 {
+                genExprToByte(args[1])
+                // MID$ position is 1-based; 0 underflowed to offset 255.
+                // The interpreter errors — clamping to 1 is the closest
+                // non-aborting behavior.
+                let ok = newLabel("mps")
+                emit("    cmp #1")
+                emit("    bcs \(ok)")
+                emit("    lda #1")
+                emit("\(ok):")
+                emit("    sec"); emit("    sbc #1"); emit("    sta _str_slice_start")
+            }
             if args.count > 2 { genExprToByte(args[2]); emit("    sta _str_slice_len") }
             else { emit("    lda #255"); emit("    sta _str_slice_len") }
         default: break
@@ -2490,7 +2987,7 @@ struct BasicCodeGen {
     private mutating func constArrayByteOffset(name: String, indices: [Expr]) -> Int? {
         guard let dims = arrayDims.first(where: { $0.name == name })?.dims,
               indices.count == dims.count else { return nil }
-        let bpe = name.hasSuffix("$") ? 256 : (name.hasSuffix("%") ? 2 : 5)
+        let bpe = Self.bytesPerElement(for: name)
         var total = 0
         for (i, idx) in indices.enumerated() {
             guard let v = constIntValue(idx), v >= 0 else { return nil }
@@ -2614,7 +3111,29 @@ struct BasicCodeGen {
         emit("    iny"); emit("    bne @sc")
         emit("@sc_eq:"); emit("    lda #0"); emit("    rts")
         emit("@sc_ne:")
-        emit("    lda _str_tmp"); emit("    sec"); emit("    sbc ($FB),y"); emit("    rts")
+        // Return an explicit $FF / $01 order flag. The old 8-bit char
+        // difference flipped sign when the differing PETSCII codes were
+        // more than 127 apart (e.g. shifted/graphics chars vs letters).
+        emit("    lda _str_tmp")
+        emit("    cmp ($FB),y")
+        emit("    bcs @sc_gt")
+        emit("    lda #$FF"); emit("    rts")
+        emit("@sc_gt:")
+        emit("    lda #1"); emit("    rts")
+        emit("")
+
+        emit("_rt_strcmp_lhs:")
+        // Copies the string at ($FB) into the compare-private LHS buffer
+        // and points _str_src at the copy, so evaluating the comparison's
+        // right side can freely reuse _chr_buf/_str_slice_buf/_str_cat_buf.
+        emit("    ldy #0"); emit("@scl:")
+        emit("    lda ($FB),y"); emit("    sta _strcmp_lhs_buf,y")
+        emit("    beq @scl_done")
+        emit("    iny"); emit("    bne @scl")
+        emit("@scl_done:")
+        emit("    lda #<_strcmp_lhs_buf"); emit("    sta _str_src_lo")
+        emit("    lda #>_strcmp_lhs_buf"); emit("    sta _str_src_hi")
+        emit("    rts")
         emit("")
 
         emit("_rt_cat_append:")
@@ -2643,6 +3162,14 @@ struct BasicCodeGen {
         emit("_rt_str_slice:")
         emit("    lda _str_src_lo"); emit("    sta $FB")
         emit("    lda _str_src_hi"); emit("    sta $FC")
+        // Clamp start to the actual length: MID$(A$,10,...) on a 2-char
+        // string used to point past the terminator and copy whatever
+        // followed in memory until a stray zero.
+        emit("    jsr _rt_strlen")
+        emit("    cmp _str_slice_start")
+        emit("    bcs @ss_stok")
+        emit("    sta _str_slice_start")
+        emit("@ss_stok:")
         emit("    lda $FB"); emit("    clc"); emit("    adc _str_slice_start"); emit("    sta $FB")
         emit("    lda $FC"); emit("    adc #0"); emit("    sta $FC")
         emit("    ldy #0"); emit("    ldx _str_slice_len")
@@ -2713,7 +3240,26 @@ struct BasicCodeGen {
         emit("@cd_done:")
         emit("    rts")
         emit("@cd_err:")
+        // Restore default channels before aborting: a GET# reaches this
+        // with the input channel still redirected to a file/serial device,
+        // and warm-starting in that state leaves READY reading from the
+        // disk instead of the keyboard. For plain GET the defaults are
+        // already active and CLRCHN is a harmless no-op.
+        emit("    jsr \(KERNAL.CLRCHN)")
         emit("    jmp _program_end")
+        emit("")
+
+        emit("_rt_num_sep:")
+        // Character printed after every number: cursor-right on the screen
+        // (device 3), space when output is redirected (PRINT# or CMD).
+        emit("    lda $9A")
+        emit("    cmp #3")
+        emit("    bne @ns_file")
+        emit("    lda #$1D")
+        emit("    jmp \(KERNAL.CHROUT)")
+        emit("@ns_file:")
+        emit("    lda #$20")
+        emit("    jmp \(KERNAL.CHROUT)")
         emit("")
 
         emit("_rt_tab:")
@@ -2731,7 +3277,11 @@ struct BasicCodeGen {
         emit("")
 
         emit("_rt_spc:")
-        emit("    beq @done"); emit("    tax"); emit("@sl: lda #$20")
+        // tax first: the entry flags belong to the CALLER's last
+        // instruction, which for word-result expressions describes the
+        // high byte in X, not A (SPC(I*2) with a product of 256 printed
+        // 256 spaces). tax re-derives Z from A.
+        emit("    tax"); emit("    beq @done"); emit("@sl: lda #$20")
         emit("jsr \(KERNAL.CHROUT)"); emit("dex"); emit("bne @sl")
         emit("@done:"); emit("    rts")
         emit("")
@@ -2946,6 +3496,7 @@ struct BasicCodeGen {
         emit("_input_buf:  .res 256")
         emit("_cat_len:    .res 1"); emit("_ti_buf:     .res 3")
         emit("_str_cat_buf: .res 256")
+        emit("_strcmp_lhs_buf: .res 256")
 
         if dataHasString {
             emit(""); emit("; ── DATA table (tagged stream, \(dataItems.count) items) ──")
@@ -2964,7 +3515,10 @@ struct BasicCodeGen {
                     let s = bytes.map { String(format: "$%02X", $0) }.joined(separator: ", ")
                     emit("    .byte $02, \(s)   ; DATA[\(i)] = \(f) (float)")
                 case .string(let s):
-                    var bytes = s.unicodeScalars.map { UInt8($0.value & 0x7F) }
+                    // Same PETSCII mapping as emitStringData: DATA strings
+                    // must be byte-identical to string literals or READ
+                    // A$ : IF A$="..." can never match.
+                    var bytes = s.map { BasicTokenizer.asciiToPetscii($0) }
                     if bytes.count > 255 { bytes = Array(bytes.prefix(255)) }
                     let hex = bytes.map { String(format: "$%02X", $0) }.joined(separator: ", ")
                     let printable = s.replacingOccurrences(of: "\"", with: "\\\"")
@@ -3001,25 +3555,48 @@ struct BasicCodeGen {
         stringDataSection.append("\(label): .byte \(hex)")
     }
 
+    /// Labels already present in floatConstSection. Dedup used to be a
+    /// linear scan of the whole section per emit, which made compilation
+    /// quadratic in program size (5+ seconds at 4000 lines).
+    private var emittedConstLabels: Set<String> = []
+
+    private mutating func claimConstLabel(_ label: String) -> Bool {
+        emittedConstLabels.insert(label).inserted
+    }
+
+    /// Read-only constants deduplicated by value: every occurrence of the
+    /// same literal used to emit its own 5-byte MFLPT copy. Scratch slots
+    /// that get WRITTEN (wcmp/ftmp/FN param saves) must NOT come through
+    /// here - each needs its own storage.
+    private var floatConstByValue: [Double: String] = [:]
+
+    private mutating func emitFloatConstValue(_ value: Double) -> String {
+        if let existing = floatConstByValue[value] { return existing }
+        let lbl = newLabel("flt")
+        emitFloatConst(lbl, value)
+        floatConstByValue[value] = lbl
+        return lbl
+    }
+
     private mutating func emitFloatConst(_ label: String, _ value: Double) {
-        if floatConstSection.contains(where: { $0.hasPrefix("\(label):") }) { return }
+        guard claimConstLabel(label) else { return }
         let bytes = encodeC64Float(value)
         let hex = bytes.map { String(format: "$%02X", $0) }.joined(separator: ", ")
         floatConstSection.append("\(label): .byte \(hex)  ; = \(value)")
     }
 
     private mutating func emitFloatScratch(_ label: String) {
-        if floatConstSection.contains(where: { $0.hasPrefix("\(label):") }) { return }
+        guard claimConstLabel(label) else { return }
         floatConstSection.append("\(label): .res 5")
     }
 
     private mutating func emitWordScratch(_ label: String) {
-        if floatConstSection.contains(where: { $0.hasPrefix("\(label):") }) { return }
+        guard claimConstLabel(label) else { return }
         floatConstSection.append("\(label): .res 2")
     }
 
     private mutating func emitByteScratch(_ label: String) {
-        if floatConstSection.contains(where: { $0.hasPrefix("\(label):") }) { return }
+        guard claimConstLabel(label) else { return }
         floatConstSection.append("\(label): .res 1")
     }
 
@@ -3127,10 +3704,7 @@ struct BasicCodeGen {
             emit(""); emit("; ── Array storage ──")
             for (name, dims) in arrayDims {
                 let total = dims.reduce(1, *)
-                let bpe: Int
-                if name.hasSuffix("$") { bpe = 256 }
-                else if name.hasSuffix("%") { bpe = 2 }
-                else { bpe = 5 }
+                let bpe = Self.bytesPerElement(for: name)
                 let dimStr = dims.map { String($0 - 1) }.joined(separator: ",")
                 emit("arr_\(asm(name)): .res \(total * bpe)   ; \(name)(\(dimStr))")
             }
@@ -3155,7 +3729,11 @@ struct BasicCodeGen {
 struct BasicCompilerV2 {
     static func compile(_ source: String) -> CompileResultV2 {
         var parser = BasicParser()
-        let lines = parser.parse(source)
+        // Hardware name identity: only the first two characters (plus
+        // suffix) are significant, so SCORE and SCALE must share storage
+        // in compiled code exactly as they do in the interpreter. The
+        // editor's own analysis path keeps full names for display.
+        let lines = BasicNameCanonicalizer.rewrite(parser.parse(source))
 
         guard !lines.isEmpty else {
             return CompileResultV2(success: false, assembly: nil,

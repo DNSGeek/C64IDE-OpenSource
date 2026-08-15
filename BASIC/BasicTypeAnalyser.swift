@@ -170,8 +170,6 @@ struct BasicTypeAnalyser {
                         } else {
                             hint = hint.widened(to: .float)
                         }
-                    case .negative(let n):
-                        hint = hint.widened(to: (-n >= -32768) ? .sword : .float)
                     case .float:
                         hint = hint.widened(to: .float)
                     case .string:
@@ -208,8 +206,13 @@ struct BasicTypeAnalyser {
 
         case .forStmt(let v, let from, let to, let step):
             var typ = literalTypeHint(from).widened(to: literalTypeHint(to))
-            if let s = step, canBeNegative(s) {
-                typ = typ.widened(to: .sbyte)
+            if let s = step {
+                // The STEP participates in the loop variable's type: a
+                // fractional step (STEP 0.5) must force the whole loop to
+                // float, or the step slot truncates it to 0 and the loop
+                // never advances.
+                typ = typ.widened(to: literalTypeHint(s))
+                if canBeNegative(s) { typ = typ.widened(to: .sbyte) }
             }
             t.widen(v, to: typ)
             seedExpr(from, into: &t)
@@ -223,42 +226,38 @@ struct BasicTypeAnalyser {
             idxs.forEach { seedExpr($0, into: &t) }
             seedExpr(rhs, into: &t)
 
-        case .getStmt(let name):
-            if name.hasSuffix("$") { t.set(name, .string) }
-            else { t.widen(name, to: .byte) }   // GETIN returns one byte
+        case .getStmt(let targets):
+            for target in targets { seedTarget(target, to: .byte, into: &t) }   // GETIN returns one byte
 
-        case .getHashStmt(let logNum, let name):
+        case .getHashStmt(let logNum, let targets):
             seedExpr(logNum, into: &t)
-            if name.hasSuffix("$") { t.set(name, .string) }
-            else { t.widen(name, to: .byte) }
+            for target in targets { seedTarget(target, to: .byte, into: &t) }
 
-        case .inputStmt(_, let name):
-            if name.hasSuffix("$") { t.set(name, .string) }
-            else { t.widen(name, to: .word) }
+        // INPUT accepts any number the interpreter does — a plain variable
+        // must be able to hold 3.14. Seeding .word routed the read through
+        // the integer input helper, silently dropping the fraction the
+        // user typed.
+        case .inputStmt(_, let target):
+            seedTarget(target, to: .float, into: &t)
 
-        case .inputHashStmt(let logNum, let names):
+        case .inputHashStmt(let logNum, let targets):
             seedExpr(logNum, into: &t)
-            for n in names {
-                if n.hasSuffix("$") { t.set(n, .string) }
-                else { t.widen(n, to: .word) }
+            for target in targets {
+                seedTarget(target, to: .float, into: &t)
             }
 
         case .defFn(_, _, let body):
             seedExpr(body, into: &t)
 
-        case .readStmt(let names):
-            names.forEach {
-                if $0.hasSuffix("$") { t.set($0, .string) }
-                else if $0.hasSuffix("%") { t.widen($0, to: .word) }
-                // Numeric READ targets: the DATA-to-READ mapping is only
-                // known at runtime, so seed with the widest numeric type
-                // present in any DATA statement (see
-                // widestNumericDataType). All-byte DATA — the common
-                // sprite/charset case — seeds .byte and keeps the fast
-                // indexed read path; a program whose DATA contains a word
-                // or float seeds wide enough that no READ can truncate.
-                else { t.widen($0, to: dataHint) }
-            }
+        case .readStmt(let targets):
+            // Numeric READ targets: the DATA-to-READ mapping is only known
+            // at runtime, so seed with the widest numeric type present in
+            // any DATA statement (see widestNumericDataType). All-byte
+            // DATA — the common sprite/charset case — seeds .byte and
+            // keeps the fast indexed read path; a program whose DATA
+            // contains a word or float seeds wide enough that no READ can
+            // truncate.
+            targets.forEach { seedTarget($0, to: dataHint, into: &t) }
 
         case .dimStmt(let entries):
             for entry in entries {
@@ -302,8 +301,33 @@ struct BasicTypeAnalyser {
             [l, d, s].forEach { seedExpr($0, into: &t) }
             if let n = n { seedExpr(n, into: &t) }
 
+        // LOAD/SAVE sub-expressions were never seeded, so a variable used
+        // only there (LOAD "DATA",D) got no storage and the assembly
+        // failed with an undefined var_ symbol.
+        case .loadStmt(let n, let d, let f):
+            seedExpr(n, into: &t)
+            seedExpr(d, into: &t)
+            if let f = f { seedExpr(f, into: &t) }
+        case .saveStmt(let n, let d):
+            seedExpr(n, into: &t)
+            seedExpr(d, into: &t)
+
         default: break
         }
+    }
+
+    /// Seeds an input-style destination: strings are settled by the suffix,
+    /// numerics widen to at least `numeric`, and any subscript expression is
+    /// seeded as an ordinary read.
+    private func seedTarget(_ target: VarTarget, to numeric: VarType,
+                            into t: inout SymbolTable) {
+        let name = target.name
+        target.subscripts.forEach { seedExpr($0, into: &t) }
+        if name.hasSuffix("$") { t.set(name, .string) }
+        // % variables are 16-bit regardless of the statement's own hint;
+        // a GET-only A% used to be seeded .byte against 2-byte semantics.
+        else if name.hasSuffix("%") { t.widen(name, to: .word) }
+        else { t.widen(name, to: numeric) }
     }
 
     private func seedExpr(_ expr: Expr, into t: inout SymbolTable) {

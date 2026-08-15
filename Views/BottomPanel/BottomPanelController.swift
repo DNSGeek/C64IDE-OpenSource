@@ -14,7 +14,7 @@ enum BottomPanelTab: Int, CaseIterable {
         case .build:    return "Build"
         case .messages: return "Messages"
         case .search:   return "Search"
-        case .claude:   return "Claude"
+        case .claude:   return "AI"
         }
     }
 }
@@ -243,7 +243,7 @@ class BottomPanelController: NSViewController, NSTextFieldDelegate {
 
     private func makeClaudeTab() -> NSTabViewItem {
         let item = NSTabViewItem(identifier: "Claude")
-        item.label = "Claude"
+        item.label = "AI"
 
         claudeTabController = ClaudeTabController()
         addChild(claudeTabController)

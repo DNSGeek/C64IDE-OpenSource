@@ -31,7 +31,22 @@ struct BasicVariableInfo: Equatable {
     let dims: String?           // "10,5" for DIM A(10,5); "10 (implicit)" if never DIMed
     let collidesWith: [String]  // Other names sharing the 2-char identity (BASIC V2)
 
-    var typeDescription: String { type.description }
+    /// The BASIC-level type, which the name suffix settles outright: `$` is a
+    /// string, `%` a 16-bit signed integer, anything else a float. This is
+    /// deliberately NOT `type.description` — that is the storage width the
+    /// analyser inferred for code generation, so a `%` variable only ever
+    /// assigned 5 reports "word" and a float only ever assigned 3 reports
+    /// "byte". Both are true of the emitted code and both are the wrong
+    /// answer to "what kind of variable is this?".
+    var typeDescription: String {
+        if name.hasSuffix("$") { return "string" }
+        if name.hasSuffix("%") { return "integer" }
+        return "float"
+    }
+
+    /// The inferred storage the compiler will actually use — shown as a
+    /// tooltip so the narrowing information isn't lost.
+    var storageDescription: String { type.description }
 }
 
 // MARK: - BasicVariableScanner
@@ -149,18 +164,18 @@ struct BasicVariableScanner {
             if let name { recordRead(.scalar, name, line, into: &acc) }
 
         // I/O writes.
-        case .inputStmt(_, let name):
-            recordWrite(.scalar, name, line, rhs: nil, into: &acc)
-        case .inputHashStmt(let lognum, let names):
+        case .inputStmt(_, let target):
+            recordTargetWrite(target, line: line, into: &acc)
+        case .inputHashStmt(let lognum, let targets):
             scanExpr(lognum, line: line, into: &acc)
-            names.forEach { recordWrite(.scalar, $0, line, rhs: nil, into: &acc) }
-        case .getStmt(let name):
-            recordWrite(.scalar, name, line, rhs: nil, into: &acc)
-        case .getHashStmt(let lognum, let name):
+            targets.forEach { recordTargetWrite($0, line: line, into: &acc) }
+        case .getStmt(let targets):
+            targets.forEach { recordTargetWrite($0, line: line, into: &acc) }
+        case .getHashStmt(let lognum, let targets):
             scanExpr(lognum, line: line, into: &acc)
-            recordWrite(.scalar, name, line, rhs: nil, into: &acc)
-        case .readStmt(let names):
-            names.forEach { recordWrite(.scalar, $0, line, rhs: nil, into: &acc) }
+            targets.forEach { recordTargetWrite($0, line: line, into: &acc) }
+        case .readStmt(let targets):
+            targets.forEach { recordTargetWrite($0, line: line, into: &acc) }
 
         // Pure expression consumers.
         case .printStmt(let items):
@@ -222,6 +237,19 @@ struct BasicVariableScanner {
         case .gotoStmt, .gosubStmt, .returnStmt, .endStmt, .stopStmt,
              .dataStmt, .restoreStmt, .clrStmt, .remStmt:
             break
+        }
+    }
+
+    /// A READ/INPUT# destination. `A(I)` writes the array, and its subscript
+    /// is an ordinary read of whatever it mentions.
+    private func recordTargetWrite(_ target: VarTarget, line: Int,
+                                   into acc: inout [Key: Acc]) {
+        switch target {
+        case .scalar(let name):
+            recordWrite(.scalar, name, line, rhs: nil, into: &acc)
+        case .element(let name, let subs):
+            recordWrite(.array, name, line, rhs: nil, into: &acc)
+            subs.forEach { scanExpr($0, line: line, into: &acc) }
         }
     }
 

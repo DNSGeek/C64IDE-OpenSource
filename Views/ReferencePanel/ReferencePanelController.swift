@@ -299,6 +299,27 @@ class ReferencePanelController: NSViewController {
         selectTabIndex(sender.selectedSegment)
     }
 
+    /// Tabs the cursor-tracking callbacks are allowed to switch between on
+    /// their own. Anything else (Variables, Colors, PETSCII, ROM, Monitor) is
+    /// a deliberate choice, so we leave the selection where the user put it.
+    private static let autoNavigableTabs: Set<Int> = [
+        ReferenceTab.commands.rawValue,
+        ReferenceTab.memoryMap.rawValue,
+    ]
+
+    private var selectedTabIndex: Int {
+        guard let item = tabView.selectedTabViewItem else { return 0 }
+        return tabView.indexOfTabViewItem(item)
+    }
+
+    /// Cursor-driven tab switch. Honors the user's tab choice: the content of
+    /// the target tab is still refreshed by the caller, so it's already correct
+    /// whenever they do switch back to it.
+    private func autoSelectTabIndex(_ index: Int) {
+        guard Self.autoNavigableTabs.contains(selectedTabIndex) else { return }
+        selectTabIndex(index)
+    }
+
     /// Filters the currently visible tab's content based on the search query.
     @objc private func searchChanged(_ sender: NSSearchField) {
         guard let selectedItem = tabView.selectedTabViewItem,
@@ -316,7 +337,8 @@ class ReferencePanelController: NSViewController {
     }
 
     /// Highlights a keyword in the Commands tab if it matches a BASIC or ASM reference.
-    /// Automatically switches to the Commands tab when a match is found.
+    /// Switches to the Commands tab only when the panel is already showing one
+    /// of the cursor-tracking tabs — see `autoSelectTabIndex`.
     func highlightEntry(for word: String, fileType: C64FileType) {
         let upper = word.uppercased()
 
@@ -324,17 +346,18 @@ class ReferencePanelController: NSViewController {
         commandListController.setMode(forFileType: fileType)
 
         if fileType.usesBasicHighlighting, C64BasicSyntax.lookup(upper) != nil {
-            selectTabIndex(0)
+            autoSelectTabIndex(0)
             commandListController.scrollTo(keyword: upper)
         } else if fileType.usesAssemblyHighlighting, C64AssemblySyntax.lookup(upper) != nil {
-            selectTabIndex(0)
+            autoSelectTabIndex(0)
             commandListController.scrollTo(keyword: upper)
         }
     }
 
-    /// Switches to the Memory tab and scrolls to the specified address.
+    /// Scrolls the Memory tab to the specified address, switching to that tab
+    /// only if the panel isn't parked on a deliberately chosen one.
     func showMemoryMapEntry(for address: Int) {
-        selectTabIndex(1)
+        autoSelectTabIndex(1)
         memoryMapController.scrollTo(address: address)
     }
 
