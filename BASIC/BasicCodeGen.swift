@@ -3049,7 +3049,10 @@ struct BasicCodeGen {
         // its vector from banked-out memory.)
         emit("    lda _peek_lo"); emit("    sta @pk+1")
         emit("    lda _peek_hi"); emit("    sta @pk+2")
-        emit("@pk:"); emit("    lda $0000")
+        // `a:` forces absolute addressing: without it ca65 folds $0000 into
+        // zero page (A5 00), the operand becomes one byte, and `sta @pk+2`
+        // smashes the following rts.
+        emit("@pk:"); emit("    lda a:$0000")
         emit("    rts")
         emit("")
 
@@ -3059,7 +3062,8 @@ struct BasicCodeGen {
         emit("    lda _poke_lo"); emit("    sta @pk+1")
         emit("    lda _poke_hi"); emit("    sta @pk+2")
         emit("    lda _poke_val")
-        emit("@pk:"); emit("    sta $0000")
+        // `a:` forces absolute addressing — see _rt_peek_byte above.
+        emit("@pk:"); emit("    sta a:$0000")
         emit("    rts")
         emit("")
 
@@ -3518,7 +3522,7 @@ struct BasicCodeGen {
                     // Same PETSCII mapping as emitStringData: DATA strings
                     // must be byte-identical to string literals or READ
                     // A$ : IF A$="..." can never match.
-                    var bytes = s.map { BasicTokenizer.asciiToPetscii($0) }
+                    var bytes = BasicTokenizer.petsciiBytes(s)
                     if bytes.count > 255 { bytes = Array(bytes.prefix(255)) }
                     let hex = bytes.map { String(format: "$%02X", $0) }.joined(separator: ", ")
                     let printable = s.replacingOccurrences(of: "\"", with: "\\\"")
@@ -3549,7 +3553,8 @@ struct BasicCodeGen {
         // Share the tokenizer's PETSCII mapping (Walleij table) instead of
         // masking with & 0x7F, which mangled every non-ASCII character:
         // a pound sign became '#', graphics chars became garbage.
-        var bytes = s.map { BasicTokenizer.asciiToPetscii($0) }
+        // petsciiBytes also decodes {$XX} escapes, so control codes survive.
+        var bytes = BasicTokenizer.petsciiBytes(s)
         bytes.append(0)
         let hex = bytes.map { String(format: "$%02X", $0) }.joined(separator: ", ")
         stringDataSection.append("\(label): .byte \(hex)")

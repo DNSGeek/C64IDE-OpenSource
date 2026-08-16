@@ -442,6 +442,25 @@ final class BasicCodeGenTests: XCTestCase {
         XCTAssertTrue(compile("10 POKE 0,0").contains("_rt_poke:"))
     }
 
+    // The self-modifying PEEK/POKE templates must stay 3 bytes wide. Without
+    // the `a:` prefix ca65 folds $0000 into zero page, `sta @pk+2` then lands
+    // on the following rts, and the first PEEK runs off into a BRK.
+    func test_peek_template_forces_absolute() {
+        XCTAssertTrue(compile("10 X=PEEK(53265)").contains("lda a:$0000"))
+    }
+
+    func test_poke_template_forces_absolute() {
+        XCTAssertTrue(compile("10 POKE 53280,0").contains("sta a:$0000"))
+    }
+
+    // {$XX} escapes must reach the PRG as raw bytes, not as the five
+    // characters `{`, `$`, `9`, `3`, `}`.
+    func test_string_literal_decodes_petscii_escape() {
+        let asm = compile("10 PRINT \"{$93}HI\"")
+        XCTAssertTrue(asm.contains("$93, $48, $49, $00"))
+        XCTAssertFalse(asm.contains("$7B, $24"))
+    }
+
     func test_runtime_has_strcmp() {
         XCTAssertTrue(compile("10 GET K$: IF K$=\"\" THEN GOTO 10").contains("_rt_strcmp:"))
     }

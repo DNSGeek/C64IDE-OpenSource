@@ -549,6 +549,27 @@ public class BasicTokenizer {
         return (byte: byte, end: str.index(after: hexEnd))
     }
 
+    /// Converts a source-level string literal to PETSCII bytes, honouring the
+    /// same `{$XX}` raw-byte escapes the tokenizer accepts.
+    ///
+    /// The compiler needs this too: emitting `s.map(asciiToPetscii)` sent the
+    /// literal characters `{`, `$`, `9`, `3`, `}` to the screen instead of the
+    /// clear-screen code, so every control code in a PRINT died.
+    static func petsciiBytes(_ str: String) -> [UInt8] {
+        var result: [UInt8] = []
+        var pos = str.startIndex
+        while pos < str.endIndex {
+            if let escaped = tryEscapeSequence(str, at: pos) {
+                result.append(escaped.byte)
+                pos = escaped.end
+                continue
+            }
+            result.append(asciiToPetscii(str[pos]))
+            pos = str.index(after: pos)
+        }
+        return result
+    }
+
     // MARK: - Write PRG File
 
     /// Tokenizes a BASIC source file and writes it to a URL.
