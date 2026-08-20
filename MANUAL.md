@@ -112,10 +112,11 @@ assembly).
 
 Seven tabs, searchable where relevant, that follow what you are typing:
 
-- **Commands** — BASIC V2 keyword reference with syntax, description and
-  examples, plus a 6502 opcode reference. This list is fixed: it does not
-  change when you switch dialects. Extended-dialect keywords are documented
-  through hover tooltips in the editor instead.
+- **Commands** — keyword reference for the BASIC you are writing, plus a 6502
+  opcode reference. It starts from BASIC V2 and picks up the active dialect's
+  keywords when you switch dialect, each with its syntax, parameters, example
+  and token bytes. Selecting MEGA65 BASIC 65, for instance, takes the list from
+  76 entries to 228.
 - **Memory** — annotated C64 memory map (VIC, SID, CIA registers and so on).
 - **ROM** — KERNAL / BASIC ROM routine list with entry points.
 - **Colors** — the 16-colour C64 palette with indices.
@@ -277,9 +278,10 @@ A dialect is a JSON file with a `.c64basic` extension describing the dialect's
 name, load address, target machine, activation `SYS`, token prefixes, and its
 keyword table.
 Each keyword carries its token bytes, category, syntax string, parameter list,
-description and an example. That documentation surfaces as a hover tooltip in
-the editor, labelled with the dialect name; the reference panel's Commands tab
-stays on the built-in BASIC V2 list.
+description and an example. That documentation drives both the hover tooltips in
+the editor and the reference panel's Commands tab, which rebuilds whenever you
+change dialect — so a plugin with good keyword documentation is immediately
+browsable and searchable.
 Plugins may also define assembler mnemonics, composite keywords (like
 `MOB SET`), and dialect-specific abbreviations.
 

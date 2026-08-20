@@ -7,6 +7,16 @@
 import Foundation
 import os
 
+extension Notification.Name {
+    /// Posted after the active BASIC dialect changes, so anything documenting
+    /// keywords can rebuild.
+    ///
+    /// `onDialectChanged` exists for the same purpose but is a single-assignment
+    /// closure already owned by AppDelegate — a second consumer would silently
+    /// replace the first. A notification lets any number of observers react.
+    static let basicDialectDidChange = Notification.Name("C64IDE.basicDialectDidChange")
+}
+
 // MARK: - Target Machine
 
 /// The physical machine a dialect targets.
@@ -332,20 +342,19 @@ class BasicDialectManager {
 
     // MARK: - Activation
 
+    /// Activates the named dialect, or standard BASIC V2 when `name` is nil.
+    /// A name with no matching plugin also falls back to V2.
     func setActiveDialect(named name: String?) {
-        if let name = name {
-            activeDialect = availableDialects.first { $0.name == name }
-        } else {
-            activeDialect = nil
-        }
-        rebuildKeywordSet()
-        onDialectChanged?()
+        setActiveDialect(name.flatMap { wanted in
+            availableDialects.first { $0.name == wanted }
+        })
     }
 
     func setActiveDialect(_ dialect: BasicDialect?) {
         activeDialect = dialect
         rebuildKeywordSet()
         onDialectChanged?()
+        NotificationCenter.default.post(name: .basicDialectDidChange, object: nil)
     }
 
     // MARK: - Keyword Lookup

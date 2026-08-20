@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		133513F12F844A5500A98A29 /* ReferencePanelDialectTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 133513F02F844A5500A98A29 /* ReferencePanelDialectTests.swift */; };
 		133513E02F844A5500A98A29 /* BasicAutoArrangeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 133513D02F844A5500A98A29 /* BasicAutoArrangeTests.swift */; };
 		133513E12F844A5500A98A29 /* BasicCodeGenTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 133513D12F844A5500A98A29 /* BasicCodeGenTests.swift */; };
 		133513E22F844A5500A98A29 /* BasicFixRegressionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 133513D22F844A5500A98A29 /* BasicFixRegressionTests.swift */; };
@@ -107,6 +108,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		133513F02F844A5500A98A29 /* ReferencePanelDialectTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReferencePanelDialectTests.swift; sourceTree = "<group>"; };
 		133513D02F844A5500A98A29 /* BasicAutoArrangeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BasicAutoArrangeTests.swift; sourceTree = "<group>"; };
 		133513D12F844A5500A98A29 /* BasicCodeGenTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BasicCodeGenTests.swift; sourceTree = "<group>"; };
 		133513D22F844A5500A98A29 /* BasicFixRegressionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BasicFixRegressionTests.swift; sourceTree = "<group>"; };
@@ -438,6 +440,7 @@
 				1347C37F2FAEFBB900FC1CBB /* EditorFontPreferencesView.swift */,
 				1347C3802FAEFBB900FC1CBB /* MemoryMapWindowController.swift */,
 				13A5C0032FF4B10000A8AF78 /* VariableListViewController.swift */,
+				133513F02F844A5500A98A29 /* ReferencePanelDialectTests.swift */,
 				13651BE32F7215E2001749B5 /* SpriteEditorWindowController.swift */,
 				131C45962F757F5700835980 /* NumberConverterWindowController.swift */,
 				138715032FF18B0D0048F245 /* NSTextField+Shake.swift */,
@@ -602,6 +605,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				133513E02F844A5500A98A29 /* BasicAutoArrangeTests.swift in Sources */,
+				133513F12F844A5500A98A29 /* ReferencePanelDialectTests.swift in Sources */,
 				133513E12F844A5500A98A29 /* BasicCodeGenTests.swift in Sources */,
 				133513E22F844A5500A98A29 /* BasicFixRegressionTests.swift in Sources */,
 				133513E32F844A5500A98A29 /* BasicLexerTests.swift in Sources */,

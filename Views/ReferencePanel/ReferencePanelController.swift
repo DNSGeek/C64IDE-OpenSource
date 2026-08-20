@@ -392,9 +392,9 @@ class CommandListViewController: NSViewController, NSTableViewDataSource, NSTabl
     private var detailView: NSTextView!
     private var detailScrollView: NSScrollView!
 
-    private var basicEntries: [(keyword: String, category: String, detail: String)] = []
+    private(set) var basicEntries: [(keyword: String, category: String, detail: String)] = []
     private var asmEntries: [(keyword: String, category: String, detail: String)] = []
-    private var filteredEntries: [(keyword: String, category: String, detail: String)] = []
+    private(set) var filteredEntries: [(keyword: String, category: String, detail: String)] = []
 
     /// 0 = BASIC, 1 = Assembly
     private var currentMode: Int = 0
@@ -410,12 +410,63 @@ class CommandListViewController: NSViewController, NSTableViewDataSource, NSTabl
         super.viewDidLoad()
         buildEntries()
         setupUI()
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(dialectDidChange(_:)),
+            name: .basicDialectDidChange,
+            object: nil
+        )
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    /// Rebuilds the BASIC list when the user switches dialect, keeping the
+    /// current mode and search query applied.
+    ///
+    /// Delivered on whichever thread changed the dialect. Today that is always
+    /// the main thread (the Tools menu), so the rebuild runs inline; the hop is
+    /// there so a future off-main caller cannot touch the table view from a
+    /// background thread.
+    @objc private func dialectDidChange(_ note: Notification) {
+        if Thread.isMainThread {
+            rebuildForDialectChange()
+        } else {
+            DispatchQueue.main.async { [weak self] in self?.rebuildForDialectChange() }
+        }
+    }
+
+    private func rebuildForDialectChange() {
+        buildEntries()
+        applyFilter()
     }
 
     private func buildEntries() {
-        for (key, ref) in C64BasicSyntax.commandReference.sorted(by: { $0.key < $1.key }) {
-            basicEntries.append((key, ref.category.rawValue, formatBasic(ref)))
+        basicEntries.removeAll()
+        asmEntries.removeAll()
+
+        // Start from BASIC V2, then let the active dialect extend it. Every
+        // bundled dialect sets extendsBasicV2, so the V2 keywords stay valid
+        // alongside the plugin's own; where a dialect redefines a keyword, its
+        // definition wins because that is the machine the user is targeting.
+        var merged: [String: (keyword: String, category: String, detail: String)] = [:]
+        for (key, ref) in C64BasicSyntax.commandReference {
+            merged[key] = (key, ref.category.rawValue, formatBasic(ref))
         }
+
+        if let dialect = BasicDialectManager.shared.activeDialect {
+            for kw in dialect.keywords {
+                let key = kw.keyword.uppercased()
+                merged[key] = (key,
+                               kw.category?.capitalized ?? dialect.name,
+                               formatDialectKeyword(kw, dialectName: dialect.name))
+            }
+        }
+
+        basicEntries = merged.values.sorted { $0.keyword < $1.keyword }
+
         for (key, ref) in C64AssemblySyntax.opcodeReference.sorted(by: { $0.key < $1.key }) {
             asmEntries.append((key, ref.fullName, formatOpcode(ref)))
         }
@@ -431,6 +482,36 @@ class CommandListViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     private func formatOpcode(_ r: OpcodeRef) -> String {
         return "━━━ \(r.mnemonic) — \(r.fullName) ━━━\n\nDESCRIPTION\n  \(r.description)\n\nFLAGS AFFECTED\n  \(r.flags)\n\nCYCLES\n  \(r.cycles)\n\nADDRESSING MODES\n  \(r.addressingModes)"
+    }
+
+    /// Renders a dialect plugin's keyword documentation in the same shape as
+    /// the built-in V2 entries. Every field is optional in the plugin schema,
+    /// so each section appears only when the plugin supplies it.
+    private func formatDialectKeyword(_ kw: BasicDialectKeyword, dialectName: String) -> String {
+        var s = "━━━ \(kw.keyword) ━━━\nDialect: \(dialectName)"
+        if let category = kw.category { s += "\nCategory: \(category.capitalized)" }
+        if let syntax = kw.syntax { s += "\n\nSYNTAX\n  \(syntax)" }
+        if let description = kw.description { s += "\n\nDESCRIPTION\n  \(description)" }
+
+        if let params = kw.parameters, !params.isEmpty {
+            s += "\n\nPARAMETERS"
+            for p in params {
+                var line = "  \(p.name)"
+                if let type = p.type { line += " (\(type))" }
+                if let range = p.range { line += " [\(range)]" }
+                if let desc = p.description { line += " — \(desc)" }
+                s += "\n\(line)"
+            }
+        }
+
+        if let example = kw.example { s += "\n\nEXAMPLE\n  \(example)" }
+        if let notes = kw.notes { s += "\n\nNOTES\n  \(notes)" }
+
+        if let token = kw.token {
+            let prefixes = kw.resolvedPrefixes.map { String(format: "$%02X ", $0) }.joined()
+            s += String(format: "\n\nTOKEN\n  %@$%02X", prefixes, token & 0xFF)
+        }
+        return s
     }
 
     private func setupUI() {
