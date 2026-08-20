@@ -56,14 +56,14 @@ final class BasicAutoArrangeTests: XCTestCase {
         let src = "10 A=1\n20 B=2\n30 C=3\n"
         XCTAssertEqual(
             BasicRenumber.autoArrangeAction(source: src, lineStart: offset(of: "20", in: src)),
-            .none
+            .some(.none)
         )
     }
 
     func test_singleLine_isNone() {
         XCTAssertEqual(
             BasicRenumber.autoArrangeAction(source: "100 A=1\n", lineStart: 0),
-            .none
+            .some(.none)
         )
     }
 
@@ -142,6 +142,6 @@ final class BasicAutoArrangeTests: XCTestCase {
         let action = BasicRenumber.autoArrangeAction(
             source: src, lineStart: offset(of: "   20", in: src)
         )
-        XCTAssertEqual(action, .none)
+        XCTAssertEqual(action, .some(.none))
     }
 }

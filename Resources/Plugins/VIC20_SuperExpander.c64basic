@@ -1,11 +1,12 @@
 {
   "name": "VIC-20 Super Expander",
-  "version": "1.0",
+  "version": "1.1",
   "author": "Thomas Knox",
   "description": "BASIC 2.0 with the VIC-1211A Super Expander cartridge for the Commodore VIC-20. Adds graphics (hires/multicolor bitmap via character-cell tricks, 160x160 effective resolution), sound control for all four VIC chip voices, joystick and lightpen input, and function key assignment. The cartridge also includes 3KB of RAM, which shifts the BASIC program start address from $1001 to $0401. Coordinates for drawing commands use a 1024x1024 virtual coordinate space scaled to the actual screen resolution. Token values sourced from the authoritative petcat cbm-basic-tokens.txt.",
   "url": "https://en.wikipedia.org/wiki/VIC-20#Super_Expander",
   "extendsBasicV2": true,
   "loadAddress": 1025,
+  "machine": "vic20",
   "requiresSYSStub": true,
   "keywords": [
     {

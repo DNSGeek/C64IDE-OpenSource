@@ -31,6 +31,15 @@ class BuildConfiguration: Codable {
     /// Path to VICE xpet emulator (PET). Used when the active dialect targets PET.
     var xpetPath: String = "/Applications/VICE/xpet.app/Contents/MacOS/xpet"
 
+    /// Path to VICE xvic emulator (VIC-20). Used when the active dialect targets
+    /// the VIC-20, e.g. the Super Expander.
+    var xvicPath: String = "/Applications/VICE/xvic.app/Contents/MacOS/xvic"
+
+    /// Optional VIC-20 Super Expander cartridge ROM image, passed to xvic as
+    /// `-cartse`. Without it the VIC-20 boots with expansion RAM but no Super
+    /// Expander keywords, so SE programs load and then fail with ?SYNTAX ERROR.
+    var xvicSuperExpanderROM: String = ""
+
     /// Path to xemu's MEGA65 emulator binary (xmega65).
     var xemuPath: String = "/usr/local/bin/xmega65"
 
@@ -87,6 +96,57 @@ class BuildConfiguration: Codable {
 
     /// Preferred emulator for C64 targets.
     var preferredC64Emulator: RunTarget = .vc64
+
+    // MARK: - Decoding
+
+    init() {}
+
+    /// Decodes tolerantly: every key is optional and falls back to its default.
+    ///
+    /// The synthesized `init(from:)` throws `keyNotFound` for any property
+    /// missing from the JSON, and `load()` turns a throw into "start from
+    /// defaults" — so adding a single new setting would have silently discarded
+    /// every path the user had configured. Decoding key by key keeps old
+    /// configuration files loadable as the schema grows, and a field whose type
+    /// changed falls back to its default instead of taking the file down.
+    required init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+
+        func value<T: Decodable>(_ key: CodingKeys, _ fallback: T) -> T {
+            ((try? c.decodeIfPresent(T.self, forKey: key)) ?? nil) ?? fallback
+        }
+
+        ca65Path  = value(.ca65Path,  ca65Path)
+        ld65Path  = value(.ld65Path,  ld65Path)
+        cc65Path  = value(.cc65Path,  cc65Path)
+
+        vicePath  = value(.vicePath,  vicePath)
+        x128Path  = value(.x128Path,  x128Path)
+        xpetPath  = value(.xpetPath,  xpetPath)
+        xvicPath  = value(.xvicPath,  xvicPath)
+        xemuPath  = value(.xemuPath,  xemuPath)
+        xvicSuperExpanderROM = value(.xvicSuperExpanderROM, xvicSuperExpanderROM)
+
+        outputDirectory   = value(.outputDirectory, outputDirectory)
+        includePaths      = value(.includePaths, includePaths)
+        defines           = value(.defines, defines)
+        targetPlatform    = value(.targetPlatform, targetPlatform)
+        customLinkerConfig = (try? c.decodeIfPresent(String.self, forKey: .customLinkerConfig)) ?? nil
+        generateDebugInfo = value(.generateDebugInfo, generateDebugInfo)
+        generateListing   = value(.generateListing, generateListing)
+
+        viceExtraArgs        = value(.viceExtraArgs, viceExtraArgs)
+        xemuExtraArgs        = value(.xemuExtraArgs, xemuExtraArgs)
+        viceAutoRun          = value(.viceAutoRun, viceAutoRun)
+        basicStripWhitespace = value(.basicStripWhitespace, basicStripWhitespace)
+        viceKernalROM        = value(.viceKernalROM, viceKernalROM)
+        viceBasicROM         = value(.viceBasicROM, viceBasicROM)
+        viceChargenROM       = value(.viceChargenROM, viceChargenROM)
+        viceC64Model         = value(.viceC64Model, viceC64Model)
+        viceSIDModel         = value(.viceSIDModel, viceSIDModel)
+        viceVideoStandard    = value(.viceVideoStandard, viceVideoStandard)
+        preferredC64Emulator = value(.preferredC64Emulator, preferredC64Emulator)
+    }
 
     // MARK: - Persistence
 
@@ -164,6 +224,10 @@ class BuildConfiguration: Codable {
             if !xpetPath.isEmpty && !FileManager.default.isExecutableFile(atPath: xpetPath) {
                 errors.append("VICE (xpet) not found at: \(xpetPath)")
             }
+        case .viceXvic:
+            if !xvicPath.isEmpty && !FileManager.default.isExecutableFile(atPath: xvicPath) {
+                errors.append("VICE (xvic) not found at: \(xvicPath)")
+            }
         case .xemu:
             if !xemuPath.isEmpty && !FileManager.default.isExecutableFile(atPath: xemuPath) {
                 errors.append("xemu (xmega65) not found at: \(xemuPath)")
@@ -225,6 +289,18 @@ class BuildConfiguration: Codable {
         for path in xpetCandidates {
             if FileManager.default.isExecutableFile(atPath: path) {
                 xpetPath = path
+                break
+            }
+        }
+
+        let xvicCandidates = [
+            "/Applications/VICE/xvic.app/Contents/MacOS/xvic",
+            "/opt/homebrew/bin/xvic",
+            "/usr/local/bin/xvic",
+        ]
+        for path in xvicCandidates {
+            if FileManager.default.isExecutableFile(atPath: path) {
+                xvicPath = path
                 break
             }
         }

@@ -1,11 +1,12 @@
 {
   "name": "Commodore PET BASIC 4",
-  "version": "1.0",
+  "version": "1.1",
   "author": "Thomas Knox",
   "description": "BASIC 4.0 for the Commodore PET 4000 and 8000 series. Extends BASIC 2.0 with disk management commands for the IEEE-488 bus and CBM disk drives. Token values sourced from the authoritative petcat cbm-basic-tokens.txt. Note: CATALOG ($D7) and DIRECTORY ($DA) are synonyms for listing the disk directory; both tokens exist in the ROM.",
   "url": "https://www.c64-wiki.com/wiki/Commodore_BASIC",
   "extendsBasicV2": true,
   "loadAddress": 1025,
+  "machine": "pet",
   "requiresSYSStub": true,
   "keywords": [
     {

@@ -99,7 +99,15 @@ final class BasicLexerTests: XCTestCase {
     }
 
     func test_identifier_long_name() {
-        XCTAssertEqual(tok("SCORE"), [.identifier("SCORE")])
+        XCTAssertEqual(tok("PLAYER"), [.identifier("PLAYER")])
+    }
+
+    func test_identifier_containing_keyword_splits() {
+        // Commodore BASIC tokenizes keywords wherever they appear, including
+        // inside what looks like a variable name — which is exactly why
+        // SCORE=0 gives ?SYNTAX ERROR on real hardware. The lexer is faithful
+        // to that: SCORE is SC, OR, E.
+        XCTAssertEqual(tok("SCORE"), [.identifier("SC"), .keyword("OR"), .identifier("E")])
     }
 
     func test_identifier_string_var() {

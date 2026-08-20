@@ -95,6 +95,7 @@ class PluginEditorViewController: NSViewController, NSTableViewDataSource, NSTab
     private var preservedTokenPrefixes: [TokenPrefix]? = nil
     private var preservedURL: String? = nil
     private var preservedLoadAddress: Int? = nil
+    private var preservedMachine: String? = nil
     private var preservedAssemblerMnemonics: [String]? = nil
     private var preservedCompositeKeywords: [CompositeKeyword]? = nil
     private var preservedShortcuts: [BasicShortcutExpander.Shortcut]? = nil
@@ -426,6 +427,7 @@ class PluginEditorViewController: NSViewController, NSTableViewDataSource, NSTab
         preservedTokenPrefixes = dialect.tokenPrefixes
         preservedURL = dialect.url
         preservedLoadAddress = dialect.loadAddress
+        preservedMachine = dialect.machine
         preservedAssemblerMnemonics = dialect.assemblerMnemonics
         preservedCompositeKeywords = dialect.compositeKeywords
         preservedShortcuts = dialect.shortcuts
@@ -454,6 +456,7 @@ class PluginEditorViewController: NSViewController, NSTableViewDataSource, NSTab
             tokenPrefixes: preservedTokenPrefixes,
             extendsBasicV2: true,
             loadAddress: preservedLoadAddress,
+            machine: preservedMachine,
             activationSYS: Int(activationSYSField.stringValue),
             keywords: keywords.map { $0.toDialectKeyword() },
             assemblerMnemonics: preservedAssemblerMnemonics,
@@ -476,6 +479,7 @@ class PluginEditorViewController: NSViewController, NSTableViewDataSource, NSTab
         preservedTokenPrefixes = nil
         preservedURL = nil
         preservedLoadAddress = nil
+        preservedMachine = nil
         preservedAssemblerMnemonics = nil
         preservedCompositeKeywords = nil
         preservedShortcuts = nil

@@ -6,6 +6,7 @@
   "url": "https://www.c64-wiki.com/wiki/Simons%27_BASIC",
   "extendsBasicV2": true,
   "loadAddress": 2049,
+  "machine": "c64",
   "activationSYS": 64738,
   "tokenPrefixes": [
     {

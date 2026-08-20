@@ -59,8 +59,9 @@ struct BuildPreferencesView: View {
                     pathField(label: "VICE (x64sc)", path: $viewModel.vicePath)
                     pathField(label: "VICE (x128)", path: $viewModel.x128Path)
                     pathField(label: "VICE (xpet)", path: $viewModel.xpetPath)
+                    pathField(label: "VICE (xvic)", path: $viewModel.xvicPath)
                     pathField(label: "xemu (xmega65)", path: $viewModel.xemuPath)
-                    Text("x128 replaces x64sc as the Run target when the active dialect targets C128 (e.g. BASIC V7). xemu replaces it for MEGA65 (e.g. BASIC 65).")
+                    Text("The active dialect picks the Run target: x128 for C128 (e.g. BASIC V7), xpet for PET (BASIC 4), xvic for VIC-20 (Super Expander), xemu for MEGA65 (BASIC 65). Everything else uses your C64 emulator below.")
                         .font(.system(size: 10, design: .monospaced))
                         .foregroundColor(.gray.opacity(0.7))
 
@@ -184,6 +185,20 @@ struct BuildPreferencesView: View {
 
                     Divider().padding(.vertical, 4)
 
+                    // ── VIC-20 ───────────────────────────────────
+                    sectionHeader("VIC-20")
+                    Text("The Super Expander is a cartridge: xvic needs its ROM image to "
+                       + "understand SE keywords. Leave blank and SE programs will load but "
+                       + "fail with ?SYNTAX ERROR. Expansion RAM is configured automatically "
+                       + "from the program's load address.")
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(.gray.opacity(0.7))
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    pathField(label: "Super Expander cartridge ROM", path: $viewModel.xvicSuperExpanderROM)
+
+                    Divider().padding(.vertical, 4)
+
                     // ── Validation ───────────────────────────────
                     if !viewModel.validationMessages.isEmpty {
                         VStack(alignment: .leading, spacing: 4) {
@@ -290,6 +305,8 @@ class BuildPreferencesViewModel: ObservableObject {
     @Published var vicePath: String
     @Published var x128Path: String
     @Published var xpetPath: String
+    @Published var xvicPath: String
+    @Published var xvicSuperExpanderROM: String
     @Published var xemuPath: String
     @Published var generateDebugInfo: Bool
     @Published var generateListing: Bool
@@ -314,6 +331,8 @@ class BuildPreferencesViewModel: ObservableObject {
         self.vicePath = config.vicePath
         self.x128Path = config.x128Path
         self.xpetPath = config.xpetPath
+        self.xvicPath = config.xvicPath
+        self.xvicSuperExpanderROM = config.xvicSuperExpanderROM
         self.xemuPath = config.xemuPath
         self.generateDebugInfo = config.generateDebugInfo
         self.generateListing = config.generateListing
@@ -335,8 +354,8 @@ class BuildPreferencesViewModel: ObservableObject {
         // subscription; the debounce collapses those into one redundant
         // validate() shortly after init, which is harmless.
         let pathPublishers: [AnyPublisher<Void, Never>] = [
-            $ca65Path, $ld65Path, $vicePath, $x128Path, $xpetPath, $xemuPath,
-            $kernalROM, $basicROM, $chargenROM,
+            $ca65Path, $ld65Path, $vicePath, $x128Path, $xpetPath, $xvicPath, $xemuPath,
+            $kernalROM, $basicROM, $chargenROM, $xvicSuperExpanderROM,
         ].map { $0.map { _ in () }.eraseToAnyPublisher() }
 
         Publishers.MergeMany(pathPublishers)
@@ -360,6 +379,7 @@ class BuildPreferencesViewModel: ObservableObject {
         scratch.vicePath = vicePath
         scratch.x128Path = x128Path
         scratch.xpetPath = xpetPath
+        scratch.xvicPath = xvicPath
         scratch.xemuPath = xemuPath
         scratch.autoDetect()
         ca65Path = scratch.ca65Path
@@ -367,6 +387,7 @@ class BuildPreferencesViewModel: ObservableObject {
         vicePath = scratch.vicePath
         x128Path = scratch.x128Path
         xpetPath = scratch.xpetPath
+        xvicPath = scratch.xvicPath
         xemuPath = scratch.xemuPath
         validate()
     }
@@ -378,6 +399,8 @@ class BuildPreferencesViewModel: ObservableObject {
         config.vicePath = vicePath
         config.x128Path = x128Path
         config.xpetPath = xpetPath
+        config.xvicPath = xvicPath
+        config.xvicSuperExpanderROM = xvicSuperExpanderROM
         config.xemuPath = xemuPath
         config.generateDebugInfo = generateDebugInfo
         config.generateListing = generateListing
@@ -410,6 +433,12 @@ class BuildPreferencesViewModel: ObservableObject {
         }
         if !xpetPath.isEmpty && !FileManager.default.isExecutableFile(atPath: xpetPath) {
             validationMessages.append("VICE xpet not found at \(xpetPath)")
+        }
+        if !xvicPath.isEmpty && !FileManager.default.isExecutableFile(atPath: xvicPath) {
+            validationMessages.append("VICE xvic not found at \(xvicPath)")
+        }
+        if !xvicSuperExpanderROM.isEmpty && !FileManager.default.fileExists(atPath: xvicSuperExpanderROM) {
+            validationMessages.append("Super Expander ROM not found at \(xvicSuperExpanderROM)")
         }
         if !xemuPath.isEmpty && !FileManager.default.isExecutableFile(atPath: xemuPath) {
             validationMessages.append("xemu not found at \(xemuPath)")

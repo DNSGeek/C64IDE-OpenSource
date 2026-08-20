@@ -6,6 +6,7 @@
   "url": "https://www.c64-wiki.com/wiki/BASIC_7.0",
   "extendsBasicV2": true,
   "loadAddress": 7169,
+  "machine": "c128",
   "requiresSYSStub": true,
   "tokenPrefixes": [
     {

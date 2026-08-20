@@ -40,11 +40,6 @@
                BlueprintName = "C64 IDETests"
                ReferencedContainer = "container:C64IDE.xcodeproj">
             </BuildableReference>
-            <SkippedTests>
-               <Test
-                  Identifier = "C64_IDETests">
-               </Test>
-            </SkippedTests>
          </TestableReference>
       </Testables>
    </TestAction>

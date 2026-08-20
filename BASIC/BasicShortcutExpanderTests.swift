@@ -1,6 +1,6 @@
 import XCTest
 // Replace with your actual open-source module name
-@testable import C64BASICParser
+@testable import C64IDE
 
 // MARK: - BasicShortcutExpanderTests
 
@@ -242,9 +242,12 @@ final class BasicShortcutExpanderTests: XCTestCase {
         let d = dialectWithShortcuts([
             .init(shortcut: "??", keyword: "PRINT#")
         ])
+        // The expander inserts a separating space when a shortcut is glued to
+        // a following alphanumeric, so `??1` becomes `PRINT# 1`. The ROM
+        // tokenizer accepts either form.
         XCTAssertEqual(
             expand("10 ??1,\"X\"", dialect: d),
-            "10 PRINT#1,\"X\""
+            "10 PRINT# 1,\"X\""
         )
     }
 

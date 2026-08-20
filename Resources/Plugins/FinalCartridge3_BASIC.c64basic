@@ -6,6 +6,7 @@
   "url": "https://github.com/mist64/final_cartridge",
   "extendsBasicV2": true,
   "loadAddress": 8193,
+  "machine": "c64",
   "requiresSYSStub": false,
   "tokenPrefixes": [],
   "keywords": [

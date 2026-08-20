@@ -324,7 +324,13 @@ final class BasicTypeAnalyserTests: XCTestCase {
         for (name, label) in [("JA","JA=56320"),("V","V=53248"),("SC","SC=53278"),
                                ("DE","DE=500"),("PL","PL=12288+64"),("MS","MS=PL+64"),
                                ("ES","ES=MS+64"),("W","FOR W=1 TO 1000"),
-                               ("TT","TT compared vs DE=500")] {
+                               ("TT","TT compared vs DE=500"),
+                               // TX is assigned EX+8 on line 172. Any addition
+                               // widens to word (byte + byte can carry past
+                               // 255), so TX is word despite only ever holding
+                               // a sprite coordinate.
+                               ("TX","TX=EX+8 — addition widens to word"),
+                               ("TY","TY=EY+26 — addition widens to word")] {
             XCTAssertEqual(t[name].width, .word, "\(label) should be word")
         }
         for i in 0...7 {
@@ -335,7 +341,7 @@ final class BasicTypeAnalyserTests: XCTestCase {
         for (name, label) in [("S","S=1"),("R","R=247"),("L","L=251"),("F","F=239"),
                                ("EX","EX=120"),("EY","EY=50"),("PX","PX=120"),("PY","PY=150"),
                                ("SF","SF=0/1"),("TF","TF=0/1"),("SX","SX=0"),("SY","SY=255"),
-                               ("TX","TX=0"),("TY","TY=255"),("N","FOR N=0 TO 62"),
+                               ("N","FOR N=0 TO 62"),
                                ("J","J=PEEK()"),("C","C=PEEK() or 0")] {
             XCTAssertEqual(t[name].width, .byte, "\(label) should be byte")
         }

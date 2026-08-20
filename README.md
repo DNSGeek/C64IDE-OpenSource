@@ -50,7 +50,8 @@ available from [gopherbrokesoftware.com](https://gopherbrokesoftware.com/).
 ### Emulators & hardware targets
 Send a freshly built program to any of:
 - **VirtualC64** — embedded, C64.
-- **VICE** — `x64sc` (C64) and `x128` (C128 / BASIC 7.0 / BASIC 3.5).
+- **VICE** — `x64sc` (C64), `x128` (C128 / BASIC 7.0), `xpet` (PET / BASIC 4.0)
+  and `xvic` (VIC-20 / Super Expander).
 - **xemu (xmega65)** — MEGA65 / BASIC 65.
 - **Ultimate 64** — real hardware over its REST API.
 - **MEGA65** — real hardware over `etherload`.
@@ -76,7 +77,7 @@ Send a freshly built program to any of:
   assembling and linking.
 - One or more of the supported emulators or hardware devices to run your
   programs:
-  - [VICE](https://vice-emu.sourceforge.io/) (`x64sc`, `x128`)
+  - [VICE](https://vice-emu.sourceforge.io/) (`x64sc`, `x128`, `xpet`, `xvic`)
   - [xemu](https://github.com/lgblgblgb/xemu) (for MEGA65)
   - An Ultimate 64 or MEGA65 for on-hardware execution.
 

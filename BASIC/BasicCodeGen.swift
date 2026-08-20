@@ -3012,6 +3012,19 @@ struct BasicCodeGen {
         case .funcCall("PEEK", _): return .byte
         case .funcCall("ASC", _):  return .byte
         case .funcCall("LEN", _):  return .word
+        case .binaryOp("AND", let l, let r), .binaryOp("OR", let l, let r):
+            // Bitwise AND/OR of two bytes is always a byte — neither can set a
+            // bit its operands lacked. Reporting nil here made
+            // `IF (C AND 5)=5` — the standard sprite-collision idiom — match
+            // neither the byte nor the word case in genConditionBranch, so it
+            // fell through to genExprToFloat and compared via the FAC.
+            // genExprToByte already lowers these to native and/ora.
+            //
+            // Byte-only on purpose: genExprToWord has no AND/OR case, so a
+            // wider result must keep returning nil rather than be routed to
+            // the word comparison path.
+            guard exprWidth(l) == .byte, exprWidth(r) == .byte else { return nil }
+            return .byte
         default: return nil
         }
     }

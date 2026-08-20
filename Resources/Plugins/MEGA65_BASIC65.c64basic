@@ -6,6 +6,7 @@
   "url": "https://mega65.org",
   "extendsBasicV2": true,
   "loadAddress": 8193,
+  "machine": "mega65",
   "requiresSYSStub": false,
   "tokenPrefixes": [
     {

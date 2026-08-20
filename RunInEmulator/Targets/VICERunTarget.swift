@@ -68,13 +68,17 @@ final class VICERunTarget: NSObject, @MainActor DebuggableTarget {
     // MARK: - Init
 
     init(emulator: RunTarget, config: BuildConfiguration) {
-        precondition(emulator == .viceX64sc || emulator == .viceX128 || emulator == .viceXpet,
-                     "VICERunTarget only handles .viceX64sc, .viceX128 or .viceXpet")
+        precondition(emulator == .viceX64sc || emulator == .viceX128
+                     || emulator == .viceXpet || emulator == .viceXvic,
+                     "VICERunTarget only handles .viceX64sc, .viceX128, .viceXpet or .viceXvic")
         self.runTarget   = emulator
         self.buildConfig = config
-        if emulator == .viceX128 { self.binaryPath = config.x128Path }
-        else if emulator == .viceXpet { self.binaryPath = config.xpetPath }
-        else { self.binaryPath = config.vicePath }
+        switch emulator {
+        case .viceX128: self.binaryPath = config.x128Path
+        case .viceXpet: self.binaryPath = config.xpetPath
+        case .viceXvic: self.binaryPath = config.xvicPath
+        default:        self.binaryPath = config.vicePath
+        }
         super.init()
     }
 
@@ -267,18 +271,79 @@ final class VICERunTarget: NSObject, @MainActor DebuggableTarget {
         }
 
         // ── ROM overrides ──────────────────────────────────
-        if !buildConfig.viceKernalROM.isEmpty  { args += ["-kernal",  buildConfig.viceKernalROM] }
-        if !buildConfig.viceBasicROM.isEmpty   { args += ["-basic",   buildConfig.viceBasicROM]  }
-        if !buildConfig.viceChargenROM.isEmpty { args += ["-chargen", buildConfig.viceChargenROM] }
+        // These are the C64 ROM images from Preferences; handing a C64 KERNAL
+        // to a VIC-20 or PET produces a machine that won't boot, so they apply
+        // to the C64 emulator only.
+        if runTarget == .viceX64sc {
+            if !buildConfig.viceKernalROM.isEmpty  { args += ["-kernal",  buildConfig.viceKernalROM] }
+            if !buildConfig.viceBasicROM.isEmpty   { args += ["-basic",   buildConfig.viceBasicROM]  }
+            if !buildConfig.viceChargenROM.isEmpty { args += ["-chargen", buildConfig.viceChargenROM] }
 
-        // ── Model / video standard ─────────────────────────
-        if !buildConfig.viceC64Model.isEmpty { args += ["-model", buildConfig.viceC64Model] }
+            // -model values are C64 model names (c64c, drean, jap…), which the
+            // other emulator binaries reject.
+            if !buildConfig.viceC64Model.isEmpty { args += ["-model", buildConfig.viceC64Model] }
+        }
+
+        // ── VIC-20 memory expansion & Super Expander ───────
+        if runTarget == .viceXvic {
+            args += vic20Arguments(prgURL: options.prgURL)
+        }
+
+        // ── Video standard ─────────────────────────────────
         args.append(buildConfig.viceVideoStandard == "ntsc" ? "-ntsc" : "-pal")
 
         // ── Extra user args ────────────────────────────────
         args += buildConfig.viceExtraArgs
 
         return args
+    }
+
+    /// VIC-20 launch arguments: RAM expansion matched to the program's load
+    /// address, plus the Super Expander cartridge when one is configured.
+    ///
+    /// On the VIC-20 the BASIC start address *is* the memory configuration —
+    /// $1001 unexpanded, $0401 with the 3K block (what the Super Expander
+    /// provides), $1201 with 8K or more. The expansion is always passed
+    /// explicitly, including `none`, because xvic otherwise inherits whatever
+    /// was last saved in the user's `vicerc`, which would relocate BASIC out
+    /// from under the program.
+    private func vic20Arguments(prgURL: URL) -> [String] {
+        var args: [String] = []
+
+        let loadAddress = Self.prgLoadAddress(of: prgURL)
+        switch loadAddress {
+        case 0x0401: args += ["-memory", "3k"]
+        case 0x1001: args += ["-memory", "none"]
+        case 0x1201: args += ["-memory", "8k"]
+        default:
+            if let addr = loadAddress {
+                log(String(format: "VIC-20: unrecognised load address $%04X — "
+                         + "leaving memory expansion as configured in VICE.", addr), .warning)
+            }
+        }
+
+        let seROM = buildConfig.xvicSuperExpanderROM
+        if !seROM.isEmpty {
+            if FileManager.default.fileExists(atPath: seROM) {
+                args += ["-cartse", seROM]
+            } else {
+                log("Super Expander ROM not found at \(seROM) — launching without it.", .warning)
+            }
+        } else if loadAddress == 0x0401 {
+            log("No Super Expander cartridge ROM set (Preferences → VIC-20). "
+              + "The program will load, but Super Expander keywords will fail with ?SYNTAX ERROR.",
+                .warning)
+        }
+
+        return args
+    }
+
+    /// Reads the 2-byte little-endian load address from a PRG header.
+    private static func prgLoadAddress(of url: URL) -> UInt16? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        guard let header = try? handle.read(upToCount: 2), header.count == 2 else { return nil }
+        return UInt16(header[0]) | (UInt16(header[1]) << 8)
     }
 
     /// Writes the `.mon` commands file containing entry breakpoint + symbol labels.

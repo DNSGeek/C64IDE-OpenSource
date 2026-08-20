@@ -23,7 +23,7 @@
 
 import XCTest
 // Note: For open-source distribution, replace 'C64IDE' with your actual package/module name
-@testable import C64BASICParser
+@testable import C64IDE
 
 // MARK: - BasicParserTests
 
@@ -77,8 +77,17 @@ final class BasicParserTests: XCTestCase {
     }
 
     func test_lineNumber_large() {
-        let lines = parse("65000 END")
-        XCTAssertEqual(lines.first?.number, 65000)
+        let lines = parse("63999 END")
+        XCTAssertEqual(lines.first?.number, 63999)
+    }
+
+    func test_lineNumber_above_hardware_max_is_rejected() {
+        // 63999 is the highest line number a C64 accepts; beyond that the
+        // parser drops the line rather than letting it vanish silently.
+        var p = BasicParser()
+        let lines = p.parse("65000 END")
+        XCTAssertTrue(lines.isEmpty)
+        XCTAssertFalse(p.errors.isEmpty, "Out-of-range line number must be reported")
     }
 
     func test_lineNumber_zero() {
@@ -103,7 +112,9 @@ final class BasicParserTests: XCTestCase {
     func test_clr()     { XCTAssertEqual(one("10 CLR"),     .clrStmt) }
     func test_return()  { XCTAssertEqual(one("10 RETURN"),  .returnStmt) }
     func test_restore() { XCTAssertEqual(one("10 RESTORE"), .restoreStmt) }
-    func test_rem()     { XCTAssertEqual(one("10 REM anything here"), .remStmt) }
+    // A REM carries no executable content, so the parser emits no statement
+    // for it — there is nothing for the code generator to lower.
+    func test_rem()     { XCTAssertTrue(stmts("10 REM anything here").isEmpty) }
 
     // MARK: GOTO / GOSUB
 
@@ -185,7 +196,14 @@ final class BasicParserTests: XCTestCase {
     }
 
     func test_let_multi_char_var() {
-        XCTAssertEqual(one("10 SCORE=0"), .letFloat("SCORE", .intLit(0)))
+        XCTAssertEqual(one("10 PLAYER=0"), .letFloat("PLAYER", .intLit(0)))
+    }
+
+    func test_let_var_containing_keyword_is_not_one_assignment() {
+        // SCORE lexes as SC, OR, E (see BasicLexerTests), so this is not an
+        // assignment to a variable called SCORE — matching the C64, where
+        // SCORE=0 is a syntax error rather than a store.
+        XCTAssertNotEqual(stmts("10 SCORE=0").first, .letFloat("SCORE", .intLit(0)))
     }
 
     // MARK: Array Writes
@@ -246,10 +264,10 @@ final class BasicParserTests: XCTestCase {
 
     func test_if_goto_lineno() {
         // IF K$="" THEN GOTO 87
-        XCTAssertEqual(
-            one("87 GET K$: IF K$=\"\" THEN GOTO 87"),
-            stmts("87 GET K$: IF K$=\"\" THEN GOTO 87")[1]
-        )
+        // Two statements on the line: the GET, then the IF...GOTO.
+        let both = stmts("87 GET K$: IF K$=\"\" THEN GOTO 87")
+        XCTAssertEqual(both.count, 2)
+        XCTAssertEqual(both[1], .ifGoto(.compareOp("=", .strVar("K$"), .strLit("")), 87))
         XCTAssertEqual(
             stmts("87 IF K$=\"\" THEN GOTO 87").first,
             .ifGoto(.compareOp("=", .strVar("K$"), .strLit("")), 87)
@@ -373,9 +391,10 @@ final class BasicParserTests: XCTestCase {
     }
 
     func test_data_negative() {
-        // C64 BASIC stores negative DATA items as a special negative token
+        // The sign is folded into the value: DATA -5 parses as .integer(-5),
+        // mirroring how the float path folds -1.5 to .float(-1.5).
         XCTAssertEqual(one("10 DATA -1,2,-3"),
-                       .dataStmt([.negative(1), .integer(2), .negative(3)]))
+                       .dataStmt([.integer(-1), .integer(2), .integer(-3)]))
     }
 
     func test_data_string() {

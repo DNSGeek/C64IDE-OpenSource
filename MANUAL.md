@@ -37,7 +37,7 @@ and the built-in asset editors.
 | macOS | The app is built with Cocoa, AppKit and SwiftUI. |
 | `cc65` toolchain (`ca65`, `ld65`) | Required for **all** assembly builds. `brew install cc65`. |
 | VirtualC64 (built in) | Embedded C64 emulator. No binary needed, but it wants real C64 ROMs. |
-| VICE (`x64sc`, `x128`, `xpet`) | Optional external emulators. `x128` is used for C128/BASIC 7.0/3.5 targets, `xpet` for PET/BASIC 4.0. |
+| VICE (`x64sc`, `x128`, `xpet`, `xvic`) | Optional external emulators. `x128` is used for C128/BASIC 7.0 targets, `xpet` for PET/BASIC 4.0, `xvic` for VIC-20 (Super Expander). |
 | xemu (`xmega65`) | Optional. Required to run MEGA65 / BASIC 65 programs. |
 | Ultimate 64 / MEGA65 hardware | Optional. Run over the network instead of an emulator. |
 
@@ -48,8 +48,8 @@ BASIC programs are tokenized directly by the IDE and do **not** require `cc65`.
 1. Open **C64 IDE → Preferences…** (`⌘,`).
 2. Click **Auto-Detect Paths**. This searches Homebrew locations
    (`/opt/homebrew/bin`, `/usr/local/bin`), `~/.local/bin` and
-   `/Applications/VICE/…` for `ca65`, `ld65`, `x64sc`, `x128`, `xpet` and
-   `xmega65`, and fills in whatever it finds.
+   `/Applications/VICE/…` for `ca65`, `ld65`, `x64sc`, `x128`, `xpet`, `xvic`
+   and `xmega65`, and fills in whatever it finds.
 3. Fill in anything it missed with **Browse…**. Warnings appear in yellow
    underneath the fields and re-check themselves as you type.
 4. Under **C64 Emulator**, choose whether C64 targets run in **VirtualC64
@@ -112,8 +112,10 @@ assembly).
 
 Seven tabs, searchable where relevant, that follow what you are typing:
 
-- **Commands** — BASIC keyword reference for the active dialect, with syntax,
-  parameters and examples.
+- **Commands** — BASIC V2 keyword reference with syntax, description and
+  examples, plus a 6502 opcode reference. This list is fixed: it does not
+  change when you switch dialects. Extended-dialect keywords are documented
+  through hover tooltips in the editor instead.
 - **Memory** — annotated C64 memory map (VIC, SID, CIA registers and so on).
 - **ROM** — KERNAL / BASIC ROM routine list with entry points.
 - **Colors** — the 16-colour C64 palette with indices.
@@ -260,19 +262,31 @@ documents. **Standard BASIC V2** is the default. Bundled dialects include:
 - Commander X16 BASIC
 - Final Cartridge III BASIC
 
-The chosen dialect changes more than highlighting: it determines the program's
-load address, and therefore which emulator **Run** uses. A BASIC 7.0 program
-routes to VICE `x128`, a BASIC 65 program to xemu, a BASIC 4.0 program to VICE
-`xpet`, and everything else to your preferred C64 emulator.
+The chosen dialect changes more than highlighting: it also decides which
+emulator **Run** launches. A BASIC 7.0 program routes to VICE `x128`, a BASIC 65
+program to xemu, a BASIC 4.0 program to VICE `xpet`, a VIC-20 Super Expander
+program to VICE `xvic`, and everything else to your preferred C64 emulator.
+
+Routing follows the dialect's declared `machine`, because load addresses alone
+are ambiguous — PET BASIC 4 and the VIC-20 Super Expander both start at $0401,
+and Final Cartridge III shares $2001 with MEGA65 BASIC 65.
 
 ### Plugin format
 
 A dialect is a JSON file with a `.c64basic` extension describing the dialect's
-name, load address, activation `SYS`, token prefixes, and its keyword table.
+name, load address, target machine, activation `SYS`, token prefixes, and its
+keyword table.
 Each keyword carries its token bytes, category, syntax string, parameter list,
-description and an example — which is what the Commands reference tab displays.
+description and an example. That documentation surfaces as a hover tooltip in
+the editor, labelled with the dialect name; the reference panel's Commands tab
+stays on the built-in BASIC V2 list.
 Plugins may also define assembler mnemonics, composite keywords (like
 `MOB SET`), and dialect-specific abbreviations.
+
+The optional `machine` field names the target machine — `c64`, `c128`, `vic20`,
+`pet` or `mega65` — and is what selects the emulator. A plugin that omits it
+(or names a machine the IDE has no target for, such as Plus/4) falls back to
+routing by load address.
 
 The submenu provides:
 
@@ -351,12 +365,29 @@ first, then **Build & Debug** the generated file.
 The run target is resolved in this order:
 
 1. A per-project emulator override, if set in Project Settings.
-2. The active dialect's load address — MEGA65 → xemu, C128 → VICE `x128`,
-   PET → VICE `xpet`.
-3. Your global **Run C64 targets with** preference — VirtualC64 or VICE `x64sc`.
+2. The active dialect's declared machine — MEGA65 → xemu, C128 → VICE `x128`,
+   PET → VICE `xpet`, VIC-20 → VICE `xvic`, C64 → your preference below.
+3. Failing that, the dialect's load address, for plugins that predate the
+   `machine` field.
+4. Your global **Run C64 targets with** preference — VirtualC64 or VICE `x64sc`.
 
 Only the binary for the target you are actually launching is validated, so a
 missing `xpet` never blocks a C64 run.
+
+### VIC-20 specifics
+
+On the VIC-20 the BASIC start address *is* the memory configuration, so the IDE
+reads the load address out of the built PRG and passes xvic a matching expansion:
+$0401 → `-memory 3k` (what the Super Expander provides), $1001 → `-memory none`
+(unexpanded), $1201 → `-memory 8k`. The expansion is always passed explicitly,
+so a stale setting in your VICE configuration cannot relocate BASIC out from
+under the program.
+
+The Super Expander itself is a cartridge, and its keywords live in cartridge
+ROM. Point **Preferences → VIC-20 → Super Expander cartridge ROM** at a ROM
+image and the IDE passes it to xvic as `-cartse`. Without it the program still
+loads, but every SE keyword fails with `?SYNTAX ERROR`; the build log warns when
+you run an SE program with no ROM configured.
 
 ---
 
@@ -630,11 +661,12 @@ in mind for anything you would rather not share.
 
 | Section | Contents |
 |---|---|
-| **Tool Paths** | `ca65`, `ld65`, VICE `x64sc` / `x128` / `xpet`, xemu `xmega65`. **Auto-Detect Paths** fills these in. |
+| **Tool Paths** | `ca65`, `ld65`, VICE `x64sc` / `x128` / `xpet` / `xvic`, xemu `xmega65`. **Auto-Detect Paths** fills these in. |
 | **C64 Emulator** | VirtualC64 (embedded) or VICE x64sc (external) for C64 targets. |
 | **Build Options** | Generate debug info (.dbg) · Generate listing file (.lst) · Auto-run in VICE after build · Strip whitespace when tokenizing BASIC · Show example file on launch. |
 | **VICE Emulator** | C64 model (PAL/NTSC variants, Drean, Japanese, C64 GS), SID model (6581, 8580, 8580 + digiboost), video standard (PAL 50 Hz / NTSC 60 Hz). |
-| **C64 ROMs** | KERNAL, BASIC and Character ROM paths. |
+| **C64 ROMs** | KERNAL, BASIC and Character ROM paths. Applied to VirtualC64 and VICE `x64sc` only — they are C64 images, so they are not handed to the VIC-20, PET or C128 emulators. |
+| **VIC-20** | Super Expander cartridge ROM image, passed to xvic as `-cartse`. |
 
 Validation warnings appear live as you edit paths and are debounced so they do
 not fire on every keystroke.
@@ -763,10 +795,16 @@ disk. The IDE prompts you to save and then continues automatically.
 C64 ROM paths at genuine Commodore ROM dumps. Without them VirtualC64 falls back
 to the MEGA65 OpenROMs, which are less accurate.
 
-**Run launches the wrong emulator.** The target follows the active BASIC dialect
-first (C128 → `x128`, MEGA65 → xemu, PET → `xpet`), then a per-project override,
-then your global preference. Check **Tools → BASIC Dialect** and Project
-Settings.
+**Run launches the wrong emulator.** A per-project override wins first, then the
+active dialect's machine (C128 → `x128`, MEGA65 → xemu, PET → `xpet`,
+VIC-20 → `xvic`), then your global preference. Check **Tools → BASIC Dialect**
+and Project Settings. A hand-written plugin with no `machine` field is routed by
+load address, which cannot tell a PET program from a VIC-20 Super Expander one —
+add `"machine": "vic20"` to fix it.
+
+**Super Expander keywords give ?SYNTAX ERROR.** The program loaded, but the
+cartridge ROM is missing. Set **Preferences → VIC-20 → Super Expander cartridge
+ROM**.
 
 **Disk export produced a stale program.** It should not — for assembly the
 export waits for the build to complete. If the build failed, the console says

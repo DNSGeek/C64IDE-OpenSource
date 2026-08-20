@@ -7,6 +7,13 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		133513E02F844A5500A98A29 /* BasicAutoArrangeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 133513D02F844A5500A98A29 /* BasicAutoArrangeTests.swift */; };
+		133513E12F844A5500A98A29 /* BasicCodeGenTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 133513D12F844A5500A98A29 /* BasicCodeGenTests.swift */; };
+		133513E22F844A5500A98A29 /* BasicFixRegressionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 133513D22F844A5500A98A29 /* BasicFixRegressionTests.swift */; };
+		133513E32F844A5500A98A29 /* BasicLexerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 133513D32F844A5500A98A29 /* BasicLexerTests.swift */; };
+		133513E42F844A5500A98A29 /* BasicParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 133513D42F844A5500A98A29 /* BasicParserTests.swift */; };
+		133513E52F844A5500A98A29 /* BasicShortcutExpanderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 133513D52F844A5500A98A29 /* BasicShortcutExpanderTests.swift */; };
+		133513E62F844A5500A98A29 /* BasicTypeAnalyserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 133513D62F844A5500A98A29 /* BasicTypeAnalyserTests.swift */; };
 		131C45972F757F5700835980 /* NumberConverterWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 131C45962F757F5700835980 /* NumberConverterWindowController.swift */; };
 		131C45992F75812100835980 /* PETSCIIMapWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 131C45982F75812100835980 /* PETSCIIMapWindowController.swift */; };
 		131C459B2F75814300835980 /* ImageConverterWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 131C459A2F75814300835980 /* ImageConverterWindowController.swift */; };
@@ -27,6 +34,7 @@
 		1347C3822FAEFBB900FC1CBB /* CharsetNotificationBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1347C37D2FAEFBB900FC1CBB /* CharsetNotificationBridge.swift */; };
 		1347C3832FAEFBB900FC1CBB /* EditorFontManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1347C37E2FAEFBB900FC1CBB /* EditorFontManager.swift */; };
 		1347C3842FAEFBB900FC1CBB /* MemoryMapWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1347C3802FAEFBB900FC1CBB /* MemoryMapWindowController.swift */; };
+		13A5C0042FF4B10000A8AF78 /* VariableListViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13A5C0032FF4B10000A8AF78 /* VariableListViewController.swift */; };
 		1347C3862FAEFBB900FC1CBB /* CharROMViewerWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1347C37C2FAEFBB900FC1CBB /* CharROMViewerWindowController.swift */; };
 		1347C3892FAEFBDC00FC1CBB /* FileWatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1347C3882FAEFBDC00FC1CBB /* FileWatcher.swift */; };
 		1347C38A2FAEFBDC00FC1CBB /* C64Timing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1347C3872FAEFBDC00FC1CBB /* C64Timing.swift */; };
@@ -65,11 +73,11 @@
 		13BA4FDC2FAEF957003331E5 /* BuildPipelineSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13BA4FD22FAEF957003331E5 /* BuildPipelineSupport.swift */; };
 		13BA4FDE2FAEF957003331E5 /* BasicCodeGen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13BA4FC42FAEF957003331E5 /* BasicCodeGen.swift */; };
 		13BA4FDF2FAEF957003331E5 /* BasicTypeAnalyser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13BA4FD02FAEF957003331E5 /* BasicTypeAnalyser.swift */; };
+		13A5C0022FF4B10000A8AF78 /* BasicVariableScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13A5C0012FF4B10000A8AF78 /* BasicVariableScanner.swift */; };
 		13BA4FE22FAEF957003331E5 /* PluginEditorWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13BA4FD32FAEF957003331E5 /* PluginEditorWindowController.swift */; };
 		13BA4FE42FAEF957003331E5 /* BasicAST.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13BA4FC32FAEF957003331E5 /* BasicAST.swift */; };
 		13C3E3B82F70E8C700111DDE /* BuildConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13C3E3B22F70E8C700111DDE /* BuildConfiguration.swift */; };
 		13C3E3B92F70E8C700111DDE /* LinkerConfigs.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13C3E3B62F70E8C700111DDE /* LinkerConfigs.swift */; };
-		13C3E3BA2F70E8C700111DDE /* BasicStubGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13C3E3B12F70E8C700111DDE /* BasicStubGenerator.swift */; };
 		13C3E3BB2F70E8C700111DDE /* BuildErrorParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13C3E3B32F70E8C700111DDE /* BuildErrorParser.swift */; };
 		13C3E3BC2F70E8C700111DDE /* BuildManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13C3E3B42F70E8C700111DDE /* BuildManager.swift */; };
 		13C3E3BD2F70E8C700111DDE /* BuildPreferencesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13C3E3B52F70E8C700111DDE /* BuildPreferencesView.swift */; };
@@ -88,7 +96,25 @@
 		AA000012 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AB000012 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		133513BF2F844A5500A98A29 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = AE000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = AD000001;
+			remoteInfo = C64IDE;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
+		133513D02F844A5500A98A29 /* BasicAutoArrangeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BasicAutoArrangeTests.swift; sourceTree = "<group>"; };
+		133513D12F844A5500A98A29 /* BasicCodeGenTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BasicCodeGenTests.swift; sourceTree = "<group>"; };
+		133513D22F844A5500A98A29 /* BasicFixRegressionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BasicFixRegressionTests.swift; sourceTree = "<group>"; };
+		133513D32F844A5500A98A29 /* BasicLexerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BasicLexerTests.swift; sourceTree = "<group>"; };
+		133513D42F844A5500A98A29 /* BasicParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BasicParserTests.swift; sourceTree = "<group>"; };
+		133513D52F844A5500A98A29 /* BasicShortcutExpanderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BasicShortcutExpanderTests.swift; sourceTree = "<group>"; };
+		133513D62F844A5500A98A29 /* BasicTypeAnalyserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BasicTypeAnalyserTests.swift; sourceTree = "<group>"; };
+		133513BA2F844A5500A98A29 /* C64 IDETests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "C64 IDETests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		131C45962F757F5700835980 /* NumberConverterWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NumberConverterWindowController.swift; sourceTree = "<group>"; };
 		131C45982F75812100835980 /* PETSCIIMapWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PETSCIIMapWindowController.swift; sourceTree = "<group>"; };
 		131C459A2F75814300835980 /* ImageConverterWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageConverterWindowController.swift; sourceTree = "<group>"; };
@@ -110,6 +136,7 @@
 		1347C37E2FAEFBB900FC1CBB /* EditorFontManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorFontManager.swift; sourceTree = "<group>"; };
 		1347C37F2FAEFBB900FC1CBB /* EditorFontPreferencesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorFontPreferencesView.swift; sourceTree = "<group>"; };
 		1347C3802FAEFBB900FC1CBB /* MemoryMapWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryMapWindowController.swift; sourceTree = "<group>"; };
+		13A5C0032FF4B10000A8AF78 /* VariableListViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VariableListViewController.swift; sourceTree = "<group>"; };
 		1347C3872FAEFBDC00FC1CBB /* C64Timing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = C64Timing.swift; sourceTree = "<group>"; };
 		1347C3882FAEFBDC00FC1CBB /* FileWatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileWatcher.swift; sourceTree = "<group>"; };
 		1347C3C52FAEFC5A00FC1CBB /* UpdateChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateChecker.swift; sourceTree = "<group>"; };
@@ -148,6 +175,7 @@
 		13BA4FCA2FAEF957003331E5 /* BasicParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BasicParser.swift; sourceTree = "<group>"; };
 		13BA4FCD2FAEF957003331E5 /* BasicShortcutExpander.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BasicShortcutExpander.swift; sourceTree = "<group>"; };
 		13BA4FD02FAEF957003331E5 /* BasicTypeAnalyser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BasicTypeAnalyser.swift; sourceTree = "<group>"; };
+		13A5C0012FF4B10000A8AF78 /* BasicVariableScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BasicVariableScanner.swift; sourceTree = "<group>"; };
 		13BA4FD22FAEF957003331E5 /* BuildPipelineSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BuildPipelineSupport.swift; sourceTree = "<group>"; };
 		13BA4FD32FAEF957003331E5 /* PluginEditorWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PluginEditorWindowController.swift; sourceTree = "<group>"; };
 		13C3E3B22F70E8C700111DDE /* BuildConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BuildConfiguration.swift; sourceTree = "<group>"; };
@@ -220,6 +248,16 @@
 		13DD98F22FC1749200AF4F9F /* Templates */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (13DD98FA2FC174BC00AF4F9F /* PBXFileSystemSynchronizedBuildFileExceptionSet */, ); explicitFileTypes = {}; explicitFolders = (); path = Templates; sourceTree = "<group>"; };
 /* End PBXFileSystemSynchronizedRootGroup section */
 
+/* Begin PBXFrameworksBuildPhase section */
+		133513B72F844A5500A98A29 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
 /* Begin PBXGroup section */
 		130259392FC54F5600A77E5A /* Frameworks */ = {
 			isa = PBXGroup;
@@ -249,6 +287,14 @@
 				13BA4FCA2FAEF957003331E5 /* BasicParser.swift */,
 				13BA4FCD2FAEF957003331E5 /* BasicShortcutExpander.swift */,
 				13BA4FD02FAEF957003331E5 /* BasicTypeAnalyser.swift */,
+				13A5C0012FF4B10000A8AF78 /* BasicVariableScanner.swift */,
+				133513D02F844A5500A98A29 /* BasicAutoArrangeTests.swift */,
+				133513D12F844A5500A98A29 /* BasicCodeGenTests.swift */,
+				133513D22F844A5500A98A29 /* BasicFixRegressionTests.swift */,
+				133513D32F844A5500A98A29 /* BasicLexerTests.swift */,
+				133513D42F844A5500A98A29 /* BasicParserTests.swift */,
+				133513D52F844A5500A98A29 /* BasicShortcutExpanderTests.swift */,
+				133513D62F844A5500A98A29 /* BasicTypeAnalyserTests.swift */,
 				13BA4FD22FAEF957003331E5 /* BuildPipelineSupport.swift */,
 				13BA4FD32FAEF957003331E5 /* PluginEditorWindowController.swift */,
 				13651BE72F721B60001749B5 /* BasicRenumber.swift */,
@@ -391,6 +437,7 @@
 				1347C37E2FAEFBB900FC1CBB /* EditorFontManager.swift */,
 				1347C37F2FAEFBB900FC1CBB /* EditorFontPreferencesView.swift */,
 				1347C3802FAEFBB900FC1CBB /* MemoryMapWindowController.swift */,
+				13A5C0032FF4B10000A8AF78 /* VariableListViewController.swift */,
 				13651BE32F7215E2001749B5 /* SpriteEditorWindowController.swift */,
 				131C45962F757F5700835980 /* NumberConverterWindowController.swift */,
 				138715032FF18B0D0048F245 /* NSTextField+Shake.swift */,
@@ -441,6 +488,7 @@
 			isa = PBXGroup;
 			children = (
 				AB000099 /* C64IDE.app */,
+				133513BA2F844A5500A98A29 /* C64 IDETests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -448,6 +496,24 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		133513B92F844A5500A98A29 /* C64 IDETests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 133513C22F844A5500A98A29 /* Build configuration list for PBXNativeTarget "C64 IDETests" */;
+			buildPhases = (
+				133513B62F844A5500A98A29 /* Sources */,
+				133513B72F844A5500A98A29 /* Frameworks */,
+				133513B82F844A5500A98A29 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				133513C02F844A5500A98A29 /* PBXTargetDependency */,
+			);
+			name = "C64 IDETests";
+			productName = "C64 IDETests";
+			productReference = 133513BA2F844A5500A98A29 /* C64 IDETests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 		AD000001 /* C64IDE */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = AE000003 /* Build configuration list for PBXNativeTarget "C64IDE" */;
@@ -485,6 +551,12 @@
 				BuildIndependentTargetsInParallel = 1;
 				LastSwiftUpdateCheck = 1500;
 				LastUpgradeCheck = 2660;
+				TargetAttributes = {
+					133513B92F844A5500A98A29 = {
+						CreatedOnToolsVersion = 26.0;
+						TestTargetID = AD000001;
+					};
+				};
 			};
 			buildConfigurationList = AE000002 /* Build configuration list for PBXProject "C64IDE" */;
 			developmentRegion = en;
@@ -500,11 +572,19 @@
 			projectRoot = "";
 			targets = (
 				AD000001 /* C64IDE */,
+				133513B92F844A5500A98A29 /* C64 IDETests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		133513B82F844A5500A98A29 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		AD000003 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -517,6 +597,20 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		133513B62F844A5500A98A29 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				133513E02F844A5500A98A29 /* BasicAutoArrangeTests.swift in Sources */,
+				133513E12F844A5500A98A29 /* BasicCodeGenTests.swift in Sources */,
+				133513E22F844A5500A98A29 /* BasicFixRegressionTests.swift in Sources */,
+				133513E32F844A5500A98A29 /* BasicLexerTests.swift in Sources */,
+				133513E42F844A5500A98A29 /* BasicParserTests.swift in Sources */,
+				133513E52F844A5500A98A29 /* BasicShortcutExpanderTests.swift in Sources */,
+				133513E62F844A5500A98A29 /* BasicTypeAnalyserTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		AD000002 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -535,6 +629,7 @@
 				13BA4FDC2FAEF957003331E5 /* BuildPipelineSupport.swift in Sources */,
 				13BA4FDE2FAEF957003331E5 /* BasicCodeGen.swift in Sources */,
 				13BA4FDF2FAEF957003331E5 /* BasicTypeAnalyser.swift in Sources */,
+				13A5C0022FF4B10000A8AF78 /* BasicVariableScanner.swift in Sources */,
 				13BA4FE22FAEF957003331E5 /* PluginEditorWindowController.swift in Sources */,
 				13BA4FE42FAEF957003331E5 /* BasicAST.swift in Sources */,
 				13BA4FBF2FAEF8C3003331E5 /* AppTheme.swift in Sources */,
@@ -549,6 +644,7 @@
 				1347C3822FAEFBB900FC1CBB /* CharsetNotificationBridge.swift in Sources */,
 				1347C3832FAEFBB900FC1CBB /* EditorFontManager.swift in Sources */,
 				1347C3842FAEFBB900FC1CBB /* MemoryMapWindowController.swift in Sources */,
+				13A5C0042FF4B10000A8AF78 /* VariableListViewController.swift in Sources */,
 				1347C3862FAEFBB900FC1CBB /* CharROMViewerWindowController.swift in Sources */,
 				1347C37A2FAEFB6F00FC1CBB /* CfgFileParser.swift in Sources */,
 				13BA4FC22FAEF8C3003331E5 /* AppDelegate+Menu.swift in Sources */,
@@ -602,7 +698,56 @@
 		};
 /* End PBXSourcesBuildPhase section */
 
+/* Begin PBXTargetDependency section */
+		133513C02F844A5500A98A29 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = AD000001 /* C64IDE */;
+			targetProxy = 133513BF2F844A5500A98A29 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
 /* Begin XCBuildConfiguration section */
+		133513C32F844A5500A98A29 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_IDENTITY = "-";
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/VirtualC64",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 13.3;
+				PRODUCT_BUNDLE_IDENTIFIER = com.c64ide.app.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/C64IDE.app/Contents/MacOS/C64IDE";
+			};
+			name = Debug;
+		};
+		133513C42F844A5500A98A29 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/VirtualC64",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 13.3;
+				PRODUCT_BUNDLE_IDENTIFIER = com.c64ide.app.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/C64IDE.app/Contents/MacOS/C64IDE";
+			};
+			name = Release;
+		};
 		AF000001 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -649,7 +794,7 @@
 				RUNTIME_EXCEPTION_ALLOW_UNSIGNED_EXECUTABLE_MEMORY = NO;
 				RUNTIME_EXCEPTION_DEBUGGING_TOOL = NO;
 				RUNTIME_EXCEPTION_DISABLE_EXECUTABLE_PAGE_PROTECTION = NO;
-				RUNTIME_EXCEPTION_DISABLE_LIBRARY_VALIDATION = NO;
+				RUNTIME_EXCEPTION_DISABLE_LIBRARY_VALIDATION = YES;
 				SWIFT_VERSION = 5.0;
 			};
 			name = Debug;
@@ -791,6 +936,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		133513C22F844A5500A98A29 /* Build configuration list for PBXNativeTarget "C64 IDETests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				133513C32F844A5500A98A29 /* Debug */,
+				133513C42F844A5500A98A29 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		AE000002 /* Build configuration list for PBXProject "C64IDE" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

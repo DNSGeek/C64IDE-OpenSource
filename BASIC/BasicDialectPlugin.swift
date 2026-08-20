@@ -7,6 +7,25 @@
 import Foundation
 import os
 
+// MARK: - Target Machine
+
+/// The physical machine a dialect targets.
+///
+/// Declared by a plugin's optional `machine` field. This is the authoritative
+/// signal for choosing a run target, because load addresses are not unique
+/// across the Commodore range — PET BASIC 4 and the VIC-20 Super Expander both
+/// start at $0401, and Final Cartridge III shares $2001 with MEGA65 BASIC 65.
+///
+/// Plugins that omit `machine` (or declare a value not listed here) fall back
+/// to load-address routing, preserving the previous behaviour.
+enum BasicMachine: String, Codable {
+    case c64
+    case c128
+    case vic20
+    case pet
+    case mega65
+}
+
 // MARK: - Dialect Data Model
 
 /// Represents a BASIC dialect plugin configuration.
@@ -35,6 +54,10 @@ struct BasicDialect: Codable {
     /// Override for the program load address (default $0801 for C64).
     let loadAddress: Int?
 
+    /// The machine this dialect targets, e.g. `"vic20"`. Optional: plugins
+    /// written before this field existed fall back to load-address routing.
+    let machine: String?
+
     /// SYS address to activate the dialect extension (e.g., SYS 2368 for VisionBASIC).
     let activationSYS: Int?
 
@@ -51,6 +74,13 @@ struct BasicDialect: Codable {
     let shortcuts: [BasicShortcutExpander.Shortcut]?
 
     // ── Computed Helpers ──────────────────────────────────
+
+    /// The declared target machine, or `nil` when the plugin omits `machine`
+    /// or names one the IDE has no run target for (e.g. Plus/4, X16).
+    var targetMachine: BasicMachine? {
+        guard let machine else { return nil }
+        return BasicMachine(rawValue: machine.lowercased())
+    }
 
     var prefixBytes: Set<UInt8> {
         guard let prefixes = tokenPrefixes else { return [] }
