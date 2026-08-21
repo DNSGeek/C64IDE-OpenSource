@@ -146,7 +146,11 @@ final class ReferencePanelDialectTests: XCTestCase {
         BasicDialectManager.shared.setActiveDialect(nil)
         let panel = makeLoadedPanel()
         panel.filter(by: "CIRCLE")
-        XCTAssertTrue(panel.filteredEntries.isEmpty, "CIRCLE is not a V2 keyword")
+        // The filter also searches the detail text, so assert on the keyword
+        // rather than on an empty result -- a V2 entry is free to mention the
+        // word in its notes without CIRCLE becoming a V2 keyword.
+        XCTAssertFalse(panel.filteredEntries.contains { $0.keyword == "CIRCLE" },
+                       "CIRCLE is not a V2 keyword")
 
         BasicDialectManager.shared.setActiveDialect(try dialect(named: "Simons' BASIC"))
         XCTAssertTrue(panel.filteredEntries.contains { $0.keyword == "CIRCLE" },
@@ -169,6 +173,51 @@ final class ReferencePanelDialectTests: XCTestCase {
                           "\(dialect.name): V2 keywords should still be listed")
             let added = listed.subtracting(v2)
             XCTAssertFalse(added.isEmpty, "\(dialect.name): should contribute keywords")
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════
+    // MARK: V2 reference completeness
+    // ═══════════════════════════════════════════════════════
+
+    /// The Commands tab is the only place a V2 keyword is documented, so a
+    /// keyword the tokenizer knows but the reference does not is invisible to
+    /// the user. `BasicTokenizer.tokenTable` is the authoritative $80-$CB list.
+    func test_everyV2TokenIsDocumented() {
+        for (keyword, token) in BasicTokenizer.tokenTable {
+            // TAB( and SPC( carry the opening parenthesis in the token; the
+            // reference documents them under the bare keyword.
+            let key = keyword.hasSuffix("(") ? String(keyword.dropLast()) : keyword
+            guard let ref = C64BasicSyntax.commandReference[key] else {
+                XCTFail("No reference entry for V2 keyword \(keyword)")
+                continue
+            }
+            XCTAssertEqual(ref.token, token,
+                           "\(keyword): documented token does not match the tokenizer's")
+        }
+    }
+
+    /// Every entry should carry the sections the reference panel renders, so
+    /// that built-in V2 keywords read the same as dialect plugin keywords.
+    func test_everyV2EntryHasSyntaxExampleAndNotes() {
+        for (key, ref) in C64BasicSyntax.commandReference {
+            XCTAssertEqual(key, ref.keyword, "Dictionary key and keyword should agree")
+            XCTAssertFalse(ref.syntax.isEmpty, "\(key): missing syntax")
+            XCTAssertFalse(ref.description.isEmpty, "\(key): missing description")
+            XCTAssertFalse(ref.example?.isEmpty ?? true, "\(key): missing example")
+            XCTAssertFalse(ref.notes?.isEmpty ?? true, "\(key): missing notes")
+        }
+    }
+
+    /// The four entries that are documented but are not ROM tokens: the
+    /// reserved variables, and GET#, which crunches as GET plus a "#".
+    func test_nonTokenEntriesCarryNoTokenByte() {
+        for key in ["TI", "TI$", "ST", "GET#"] {
+            guard let ref = C64BasicSyntax.commandReference[key] else {
+                XCTFail("\(key) should be documented")
+                continue
+            }
+            XCTAssertNil(ref.token, "\(key) is not a BASIC V2 token")
         }
     }
 }

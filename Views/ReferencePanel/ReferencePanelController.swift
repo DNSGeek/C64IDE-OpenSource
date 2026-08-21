@@ -473,10 +473,48 @@ class CommandListViewController: NSViewController, NSTableViewDataSource, NSTabl
         filteredEntries = basicEntries
     }
 
+    /// Indents every line of a field so that continuation lines of a multi-line
+    /// example or note stay aligned under the first one.
+    private func indented(_ text: String) -> String {
+        text.split(separator: "\n", omittingEmptySubsequences: false)
+            .map { "  " + $0 }
+            .joined(separator: "\n")
+    }
+
+    /// Renders one PARAMETERS line. Shared by the built-in V2 entries and the
+    /// dialect plugin entries so both read the same way.
+    private func parameterLine(name: String,
+                               type: String?,
+                               range: String?,
+                               description: String?,
+                               optional: Bool) -> String {
+        var line = "  \(name)"
+        if let type = type { line += " (\(type))" }
+        if let range = range { line += " [\(range)]" }
+        if let description = description { line += " — \(description)" }
+        if optional { line += " (optional)" }
+        return line
+    }
+
     private func formatBasic(_ r: C64CommandRef) -> String {
-        var s = "━━━ \(r.keyword) ━━━\nCategory: \(r.category.rawValue)\n\nSYNTAX\n  \(r.syntax)\n\nDESCRIPTION\n  \(r.description)"
-        if let ex = r.example { s += "\n\nEXAMPLE\n  \(ex)" }
-        if let n = r.notes { s += "\n\nNOTES\n  \(n)" }
+        var s = "━━━ \(r.keyword) ━━━\nCategory: \(r.category.rawValue)"
+        s += "\n\nSYNTAX\n\(indented(r.syntax))"
+        s += "\n\nDESCRIPTION\n\(indented(r.description))"
+
+        if let params = r.parameters, !params.isEmpty {
+            s += "\n\nPARAMETERS"
+            for p in params {
+                s += "\n" + parameterLine(name: p.name,
+                                          type: p.type,
+                                          range: p.range,
+                                          description: p.description,
+                                          optional: p.optional)
+            }
+        }
+
+        if let ex = r.example { s += "\n\nEXAMPLE\n\(indented(ex))" }
+        if let n = r.notes { s += "\n\nNOTES\n\(indented(n))" }
+        if let token = r.token { s += String(format: "\n\nTOKEN\n  $%02X", token) }
         return s
     }
 
@@ -490,22 +528,22 @@ class CommandListViewController: NSViewController, NSTableViewDataSource, NSTabl
     private func formatDialectKeyword(_ kw: BasicDialectKeyword, dialectName: String) -> String {
         var s = "━━━ \(kw.keyword) ━━━\nDialect: \(dialectName)"
         if let category = kw.category { s += "\nCategory: \(category.capitalized)" }
-        if let syntax = kw.syntax { s += "\n\nSYNTAX\n  \(syntax)" }
-        if let description = kw.description { s += "\n\nDESCRIPTION\n  \(description)" }
+        if let syntax = kw.syntax { s += "\n\nSYNTAX\n\(indented(syntax))" }
+        if let description = kw.description { s += "\n\nDESCRIPTION\n\(indented(description))" }
 
         if let params = kw.parameters, !params.isEmpty {
             s += "\n\nPARAMETERS"
             for p in params {
-                var line = "  \(p.name)"
-                if let type = p.type { line += " (\(type))" }
-                if let range = p.range { line += " [\(range)]" }
-                if let desc = p.description { line += " — \(desc)" }
-                s += "\n\(line)"
+                s += "\n" + parameterLine(name: p.name,
+                                          type: p.type,
+                                          range: p.range,
+                                          description: p.description,
+                                          optional: p.optional ?? false)
             }
         }
 
-        if let example = kw.example { s += "\n\nEXAMPLE\n  \(example)" }
-        if let notes = kw.notes { s += "\n\nNOTES\n  \(notes)" }
+        if let example = kw.example { s += "\n\nEXAMPLE\n\(indented(example))" }
+        if let notes = kw.notes { s += "\n\nNOTES\n\(indented(notes))" }
 
         if let token = kw.token {
             let prefixes = kw.resolvedPrefixes.map { String(format: "$%02X ", $0) }.joined()

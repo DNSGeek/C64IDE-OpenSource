@@ -185,6 +185,19 @@ class TooltipProvider {
         lines.append("")
         lines.append(ref.description)
 
+        if let params = ref.parameters, !params.isEmpty {
+            lines.append("")
+            lines.append("Parameters:")
+            for p in params {
+                var line = "  \(p.name)"
+                if let type = p.type { line += " (\(type))" }
+                if let range = p.range { line += " [\(range)]" }
+                if let desc = p.description { line += " — \(desc)" }
+                if p.optional { line += " (optional)" }
+                lines.append(line)
+            }
+        }
+
         if let example = ref.example {
             lines.append("")
             lines.append("Example:")
