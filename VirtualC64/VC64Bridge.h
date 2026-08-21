@@ -21,19 +21,33 @@ NS_ASSUME_NONNULL_BEGIN
 /// Snapshot of 6502 CPU registers. Plain struct designed to cross the ObjC/C++
 /// bridge cleanly without boxing or pointer indirection.
 typedef struct {
-    uint16_t pc;
-    uint8_t  a, x, y, sp;
-    uint8_t  flags;     // NV-BDIZC (6502 status register)
+  uint16_t pc;
+  uint8_t a, x, y, sp;
+  uint8_t flags; // NV-BDIZC (6502 status register)
 } VC64RegisterState;
 
 /// Convenience bit-tests on the flags byte.
-static inline BOOL VC64FlagNegative (VC64RegisterState s) { return (s.flags & 0x80) != 0; }
-static inline BOOL VC64FlagOverflow (VC64RegisterState s) { return (s.flags & 0x40) != 0; }
-static inline BOOL VC64FlagBreak    (VC64RegisterState s) { return (s.flags & 0x10) != 0; }
-static inline BOOL VC64FlagDecimal  (VC64RegisterState s) { return (s.flags & 0x08) != 0; }
-static inline BOOL VC64FlagIRQ      (VC64RegisterState s) { return (s.flags & 0x04) != 0; }
-static inline BOOL VC64FlagZero     (VC64RegisterState s) { return (s.flags & 0x02) != 0; }
-static inline BOOL VC64FlagCarry    (VC64RegisterState s) { return (s.flags & 0x01) != 0; }
+static inline BOOL VC64FlagNegative(VC64RegisterState s) {
+  return (s.flags & 0x80) != 0;
+}
+static inline BOOL VC64FlagOverflow(VC64RegisterState s) {
+  return (s.flags & 0x40) != 0;
+}
+static inline BOOL VC64FlagBreak(VC64RegisterState s) {
+  return (s.flags & 0x10) != 0;
+}
+static inline BOOL VC64FlagDecimal(VC64RegisterState s) {
+  return (s.flags & 0x08) != 0;
+}
+static inline BOOL VC64FlagIRQ(VC64RegisterState s) {
+  return (s.flags & 0x04) != 0;
+}
+static inline BOOL VC64FlagZero(VC64RegisterState s) {
+  return (s.flags & 0x02) != 0;
+}
+static inline BOOL VC64FlagCarry(VC64RegisterState s) {
+  return (s.flags & 0x01) != 0;
+}
 
 // ─────────────────────────────────────────────────────────────
 // MARK: - Keyboard
@@ -53,35 +67,33 @@ static inline BOOL VC64FlagCarry    (VC64RegisterState s) { return (s.flags & 0x
 /// codes press the bare key; the explicit *Shift* helpers below let Swift ask
 /// for the shifted direction without managing leftShift itself.
 typedef NS_ENUM(NSInteger, VC64KeyCode) {
-    VC64KeyDelete,          // DEL — acts as Backspace on the C64
-    VC64KeyReturn,
-    VC64KeyHome,            // CLR/HOME (unshifted = HOME)
-    VC64KeyRunStop,
-    VC64KeyRestore,         // not in the keyboard matrix (NMI line)
-    VC64KeySpace,
+  VC64KeyDelete, // DEL — acts as Backspace on the C64
+  VC64KeyReturn,
+  VC64KeyHome, // CLR/HOME (unshifted = HOME)
+  VC64KeyRunStop,
+  VC64KeyRestore, // not in the keyboard matrix (NMI line)
+  VC64KeySpace,
 
-    // Cursor keys. The C64 has TWO physical cursor keys, each doing two
-    // directions via shift. Press these bare for down/right; use the
-    // -pressCursor… helpers (or hold a shift) for up/left.
-    VC64KeyCursorLeftRight, // bare = RIGHT, shifted = LEFT
-    VC64KeyCursorUpDown,    // bare = DOWN,  shifted = UP
+  // Cursor keys. The C64 has TWO physical cursor keys, each doing two
+  // directions via shift. Press these bare for down/right; use the
+  // -pressCursor… helpers (or hold a shift) for up/left.
+  VC64KeyCursorLeftRight, // bare = RIGHT, shifted = LEFT
+  VC64KeyCursorUpDown,    // bare = DOWN,  shifted = UP
 
-    // Function keys. Bare = odd (F1/F3/F5/F7), shifted = even (F2/F4/F6/F8).
-    // NS_SWIFT_NAME pins the Swift spelling: without it the importer stops
-    // lowercasing at the digit and yields .f1F2 (capital F), which is easy
-    // to get wrong at the call site. These give clean .f1f2/.f3f4/… names.
-    VC64KeyF1F2 NS_SWIFT_NAME(f1f2),
-    VC64KeyF3F4 NS_SWIFT_NAME(f3f4),
-    VC64KeyF5F6 NS_SWIFT_NAME(f5f6),
-    VC64KeyF7F8 NS_SWIFT_NAME(f7f8),
+  // Function keys. Bare = odd (F1/F3/F5/F7), shifted = even (F2/F4/F6/F8).
+  // NS_SWIFT_NAME pins the Swift spelling: without it the importer stops
+  // lowercasing at the digit and yields .f1F2 (capital F), which is easy
+  // to get wrong at the call site. These give clean .f1f2/.f3f4/… names.
+  VC64KeyF1F2 NS_SWIFT_NAME(f1f2),
+      VC64KeyF3F4 NS_SWIFT_NAME(f3f4),
+          VC64KeyF5F6 NS_SWIFT_NAME(f5f6),
+              VC64KeyF7F8 NS_SWIFT_NAME(f7f8),
 
-    // Modifiers — hold these down across other presses.
-    VC64KeyLeftShift,
-    VC64KeyRightShift,
-    VC64KeyCommodore,
-    VC64KeyControl,
-    VC64KeyShiftLock,       // latching SHIFT (not in the matrix)
-};
+                  // Modifiers — hold these down across other presses.
+                  VC64KeyLeftShift, VC64KeyRightShift, VC64KeyCommodore,
+                  VC64KeyControl,
+                  VC64KeyShiftLock, // latching SHIFT (not in the matrix)
+          };
 
 // ─────────────────────────────────────────────────────────────
 // MARK: - Emulator messages (mirrors vc64::Msg)
@@ -91,23 +103,23 @@ typedef NS_ENUM(NSInteger, VC64KeyCode) {
 /// Add entries here as you need them — the handler in VC64Bridge.mm
 /// maps from the full vc64::Msg enum to these.
 typedef NS_ENUM(NSInteger, VC64Message) {
-    VC64MessagePowerOn,
-    VC64MessagePowerOff,
-    VC64MessageRun,
-    VC64MessagePause,
-    VC64MessageReset,
-    VC64MessageWarpOn,          // emulator entered warp mode (value=1)
-    VC64MessageWarpOff,         // emulator exited warp mode  (value=0)
-    VC64MessageBreakpoint,      // CPU hit a breakpoint
-    VC64MessageWatchpoint,      // CPU hit a watchpoint
-    VC64MessageCPUJammed,       // CPU halted on an illegal opcode (KIL/JAM)
-    VC64MessageScriptDone,      // asyncExecScript finished
-    VC64MessageScriptAbort,
-    VC64MessageScriptPause,     // script hit a 'wait' command
-    VC64MessageRetroShellUpdate,// console text changed (isDirty)
-    VC64MessageDiskInserted,
-    VC64MessageDiskEjected,
-    VC64MessageUnknown,
+  VC64MessagePowerOn,
+  VC64MessagePowerOff,
+  VC64MessageRun,
+  VC64MessagePause,
+  VC64MessageReset,
+  VC64MessageWarpOn,     // emulator entered warp mode (value=1)
+  VC64MessageWarpOff,    // emulator exited warp mode  (value=0)
+  VC64MessageBreakpoint, // CPU hit a breakpoint
+  VC64MessageWatchpoint, // CPU hit a watchpoint
+  VC64MessageCPUJammed,  // CPU halted on an illegal opcode (KIL/JAM)
+  VC64MessageScriptDone, // asyncExecScript finished
+  VC64MessageScriptAbort,
+  VC64MessageScriptPause,      // script hit a 'wait' command
+  VC64MessageRetroShellUpdate, // console text changed (isDirty)
+  VC64MessageDiskInserted,
+  VC64MessageDiskEjected,
+  VC64MessageUnknown,
 };
 
 // ─────────────────────────────────────────────────────────────
@@ -118,8 +130,8 @@ typedef NS_ENUM(NSInteger, VC64Message) {
 /// VCCore's VICII revision option without leaking the full revision enum
 /// into Swift.
 typedef NS_ENUM(NSInteger, VC64Standard) {
-    VC64StandardPAL,
-    VC64StandardNTSC,
+  VC64StandardPAL,
+  VC64StandardNTSC,
 };
 
 // ─────────────────────────────────────────────────────────────
@@ -153,13 +165,13 @@ typedef NS_ENUM(NSInteger, VC64Standard) {
 /// the lifetime of the emulator window.
 @interface VC64Bridge : NSObject
 
-@property (nonatomic, weak, nullable) id<VC64BridgeDelegate> delegate;
+@property(nonatomic, weak, nullable) id<VC64BridgeDelegate> delegate;
 
 /// YES after -launch has been called and ROMs are loaded.
-@property (nonatomic, readonly) BOOL isReady;
-@property (nonatomic, readonly) BOOL isPoweredOn;
-@property (nonatomic, readonly) BOOL isRunning;
-@property (nonatomic, readonly) BOOL isPaused;
+@property(nonatomic, readonly) BOOL isReady;
+@property(nonatomic, readonly) BOOL isPoweredOn;
+@property(nonatomic, readonly) BOOL isRunning;
+@property(nonatomic, readonly) BOOL isPaused;
 
 // ─────────────────────────────────────────────────────────────
 // MARK: Lifecycle
@@ -295,8 +307,8 @@ typedef NS_ENUM(NSInteger, VC64Standard) {
 
 /// Copy the current stable frame into a caller-supplied RGBA buffer.
 ///
-/// Call this from your Metal render loop, between -lockTexture / -unlockTexture,
-/// or use the convenience -updateMetalTexture:device: below.
+/// Call this from your Metal render loop, between -lockTexture /
+/// -unlockTexture, or use the convenience -updateMetalTexture:device: below.
 ///
 /// @param buffer   Destination buffer. Must be at least width*height*4 bytes.
 /// @param width    Receives the texture width in pixels.
@@ -363,7 +375,8 @@ typedef NS_ENUM(NSInteger, VC64Standard) {
 /// for stereo sample storage, so this method is safe to call from a
 /// real-time audio render thread.
 ///
-/// @param buffer   Destination buffer, sized at least `frames * 2 * sizeof(float)`.
+/// @param buffer   Destination buffer, sized at least `frames * 2 *
+/// sizeof(float)`.
 /// @param frames   Number of stereo frames requested (one frame = L + R).
 /// @return         Number of frames actually written (0..frames).
 - (NSInteger)copyInterleavedSamples:(float *)buffer frames:(NSInteger)frames;
@@ -379,8 +392,8 @@ typedef NS_ENUM(NSInteger, VC64Standard) {
 /// @param frames   Number of stereo frames requested.
 /// @return         Number of frames actually written (0..frames).
 - (NSInteger)copyStereoSamplesLeft:(float *)left
-                              right:(float *)right
-                             frames:(NSInteger)frames;
+                             right:(float *)right
+                            frames:(NSInteger)frames;
 
 /// Pull mono samples (left+right summed) into a single-channel destination
 /// buffer. Useful for hardware that doesn't have a stereo output, or for
@@ -419,7 +432,8 @@ typedef NS_ENUM(NSInteger, VC64Standard) {
 
 /// Disassemble `count` instructions starting at addr.
 /// Returns an array of strings, one per instruction.
-- (NSArray<NSString *> *)disassemble:(NSInteger)count instructionsFrom:(uint16_t)address;
+- (NSArray<NSString *> *)disassemble:(NSInteger)count
+                    instructionsFrom:(uint16_t)address;
 
 // ─────────────────────────────────────────────────────────────
 // MARK: Debugger — Breakpoints
@@ -466,4 +480,3 @@ typedef NS_ENUM(NSInteger, VC64Standard) {
 @end
 
 NS_ASSUME_NONNULL_END
-

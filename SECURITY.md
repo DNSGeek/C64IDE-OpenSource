@@ -6,10 +6,10 @@ This software is provided as-is, with no guarantee of fitness for any particular
 purpose, freedom from defects, or ongoing maintenance. That said, every reasonable
 effort has been made to ensure the code is free from major security issues.
 
-| Version | Supported |
-|---------|-----------|
+| Version        | Supported   |
+| -------------- | ----------- |
 | Latest release | Best-effort |
-| Older releases | No |
+| Older releases | No          |
 
 ## Use At Your Own Risk
 

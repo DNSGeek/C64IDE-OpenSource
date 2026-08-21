@@ -32,14 +32,14 @@ and the built-in asset editors.
 
 ### What you need
 
-| Requirement | Why |
-|---|---|
-| macOS | The app is built with Cocoa, AppKit and SwiftUI. |
-| `cc65` toolchain (`ca65`, `ld65`) | Required for **all** assembly builds. `brew install cc65`. |
-| VirtualC64 (built in) | Embedded C64 emulator. No binary needed, but it wants real C64 ROMs. |
+| Requirement                            | Why                                                                                                                                   |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| macOS                                  | The app is built with Cocoa, AppKit and SwiftUI.                                                                                      |
+| `cc65` toolchain (`ca65`, `ld65`)      | Required for **all** assembly builds. `brew install cc65`.                                                                            |
+| VirtualC64 (built in)                  | Embedded C64 emulator. No binary needed, but it wants real C64 ROMs.                                                                  |
 | VICE (`x64sc`, `x128`, `xpet`, `xvic`) | Optional external emulators. `x128` is used for C128/BASIC 7.0 targets, `xpet` for PET/BASIC 4.0, `xvic` for VIC-20 (Super Expander). |
-| xemu (`xmega65`) | Optional. Required to run MEGA65 / BASIC 65 programs. |
-| Ultimate 64 / MEGA65 hardware | Optional. Run over the network instead of an emulator. |
+| xemu (`xmega65`)                       | Optional. Required to run MEGA65 / BASIC 65 programs.                                                                                 |
+| Ultimate 64 / MEGA65 hardware          | Optional. Run over the network instead of an emulator.                                                                                |
 
 BASIC programs are tokenized directly by the IDE and do **not** require `cc65`.
 
@@ -60,7 +60,7 @@ BASIC programs are tokenized directly by the IDE and do **not** require `cc65`.
    which are less accurate. VICE has its own ROMs and can ignore these.
 6. Click **Save**.
 
-Tool paths are stored globally (per machine). Build *options* — debug info,
+Tool paths are stored globally (per machine). Build _options_ — debug info,
 listing files, auto-run and so on — are saved into the active project when one
 is open.
 
@@ -90,15 +90,15 @@ The window is split into three regions plus a toolbar.
 
 ### Toolbar
 
-| Item | Action |
-|---|---|
-| **Run** | Build and run the active file (`⌘R`). The icon and tooltip change when the active dialect routes to xemu. |
-| **Stop** | Stop the running emulator (`⌘.`). |
-| **U64 / MEGA65** | Send the build to real hardware (shown when configured). |
-| **Git** | Repository status dot. Click for commit / push / pull. |
-| **Theme** | Toggle light and dark mode. |
-| **Reference** | Show/hide the right-hand reference panel (`⌥⌘R`). |
-| **Console** | Show/hide the bottom panel (`⇧⌘Y`). |
+| Item             | Action                                                                                                    |
+| ---------------- | --------------------------------------------------------------------------------------------------------- |
+| **Run**          | Build and run the active file (`⌘R`). The icon and tooltip change when the active dialect routes to xemu. |
+| **Stop**         | Stop the running emulator (`⌘.`).                                                                         |
+| **U64 / MEGA65** | Send the build to real hardware (shown when configured).                                                  |
+| **Git**          | Repository status dot. Click for commit / push / pull.                                                    |
+| **Theme**        | Toggle light and dark mode.                                                                               |
+| **Reference**    | Show/hide the right-hand reference panel (`⌥⌘R`).                                                         |
+| **Console**      | Show/hide the bottom panel (`⇧⌘Y`).                                                                       |
 
 Right-click the toolbar to customize which items appear.
 
@@ -159,14 +159,14 @@ lives in the project file, it survives a `git clone` onto another machine.
 
 ### Creating and opening
 
-| Action | Where |
-|---|---|
-| New empty project | **File → New → New Project…** (`⌥⌘N`) |
+| Action                      | Where                                       |
+| --------------------------- | ------------------------------------------- |
+| New empty project           | **File → New → New Project…** (`⌥⌘N`)       |
 | New project from a template | **File → New → New Project from Template…** |
-| Open | **File → Open Project…** (`⇧⌘O`) |
-| Recently used | **File → Recent Projects** |
-| Save | **File → Save Project** (`⌥⌘S`) |
-| Close | **File → Close Project** |
+| Open                        | **File → Open Project…** (`⇧⌘O`)            |
+| Recently used               | **File → Recent Projects**                  |
+| Save                        | **File → Save Project** (`⌥⌘S`)             |
+| Close                       | **File → Close Project**                    |
 
 The last project reopens automatically at launch unless you opened something
 else first.
@@ -341,16 +341,16 @@ your own `.cfg` file.
 
 ### Build menu commands
 
-| Command | Shortcut | What it does |
-|---|---|---|
-| **Build & Run** | `⌘R` | Build (or tokenize) and launch. |
-| **Build & Debug** | `⇧⌘R` | Build with debug info and attach the debugger. Assembly only. |
-| **Build Only** | `⌘B` | Build without launching. |
-| **Stop** | `⌘.` | Stop the build or the running emulator. |
-| **Build & Save to Disk…** | `⌥⌘D` | Build, then write the PRG to a new or existing D64/D81. |
-| **Compile BASIC to ASM** | `⇧⌘G` | Compile BASIC source to 6502 assembly in a new tab. |
-| **Compile Assembly to DATA…** | — | Assemble, then emit the result as BASIC `DATA` statements. |
-| **Import PRG as DATA…** | — | Turn an existing PRG into BASIC `DATA` statements. |
+| Command                       | Shortcut | What it does                                                  |
+| ----------------------------- | -------- | ------------------------------------------------------------- |
+| **Build & Run**               | `⌘R`     | Build (or tokenize) and launch.                               |
+| **Build & Debug**             | `⇧⌘R`    | Build with debug info and attach the debugger. Assembly only. |
+| **Build Only**                | `⌘B`     | Build without launching.                                      |
+| **Stop**                      | `⌘.`     | Stop the build or the running emulator.                       |
+| **Build & Save to Disk…**     | `⌥⌘D`    | Build, then write the PRG to a new or existing D64/D81.       |
+| **Compile BASIC to ASM**      | `⇧⌘G`    | Compile BASIC source to 6502 assembly in a new tab.           |
+| **Compile Assembly to DATA…** | —        | Assemble, then emit the result as BASIC `DATA` statements.    |
+| **Import PRG as DATA…**       | —        | Turn an existing PRG into BASIC `DATA` statements.            |
 
 **Build & Save to Disk** asks whether to create a new image or add to an
 existing one; for a new image it asks D64 (1541, 170 KB) or D81 (1581, 800 KB).
@@ -390,7 +390,7 @@ missing `xpet` never blocks a C64 run.
 
 ### VIC-20 specifics
 
-On the VIC-20 the BASIC start address *is* the memory configuration, so the IDE
+On the VIC-20 the BASIC start address _is_ the memory configuration, so the IDE
 reads the load address out of the built PRG and passes xvic a matching expansion:
 $0401 → `-memory 3k` (what the Super Expander provides), $1001 → `-memory none`
 (unexpanded), $1201 → `-memory 8k`. The expansion is always passed explicitly,
@@ -471,11 +471,11 @@ written back to the `.cfg` file.
 **Tools → U64 Settings…** — enter the U64's hostname or IP and password. The
 sheet reports connection status. Then:
 
-| Command | Shortcut |
-|---|---|
-| Run on U64 | `⌃⌘R` |
-| Load on U64 | `⌃⌘L` |
-| Reset U64 | — |
+| Command     | Shortcut |
+| ----------- | -------- |
+| Run on U64  | `⌃⌘R`    |
+| Load on U64 | `⌃⌘L`    |
+| Reset U64   | —        |
 
 Delivery is over the Ultimate 64's REST API.
 
@@ -483,12 +483,12 @@ Delivery is over the Ultimate 64's REST API.
 
 **Tools → MEGA65 Settings…** — point the IDE at your `etherload` binary. Then:
 
-| Command | Shortcut |
-|---|---|
-| Run on MEGA65 | `⌃⌘M` |
-| Load on MEGA65 | — |
+| Command        | Shortcut |
+| -------------- | -------- |
+| Run on MEGA65  | `⌃⌘M`    |
+| Load on MEGA65 | —        |
 
-For MEGA65 *emulation* rather than hardware, set the dialect to MEGA65 BASIC 65
+For MEGA65 _emulation_ rather than hardware, set the dialect to MEGA65 BASIC 65
 and configure the xemu (`xmega65`) path; **Run** then routes there automatically
 and the toolbar Run icon changes to reflect it.
 
@@ -673,14 +673,14 @@ in mind for anything you would rather not share.
 
 **C64 IDE → Preferences…** (`⌘,`):
 
-| Section | Contents |
-|---|---|
-| **Tool Paths** | `ca65`, `ld65`, VICE `x64sc` / `x128` / `xpet` / `xvic`, xemu `xmega65`. **Auto-Detect Paths** fills these in. |
-| **C64 Emulator** | VirtualC64 (embedded) or VICE x64sc (external) for C64 targets. |
-| **Build Options** | Generate debug info (.dbg) · Generate listing file (.lst) · Auto-run in VICE after build · Strip whitespace when tokenizing BASIC · Show example file on launch. |
-| **VICE Emulator** | C64 model (PAL/NTSC variants, Drean, Japanese, C64 GS), SID model (6581, 8580, 8580 + digiboost), video standard (PAL 50 Hz / NTSC 60 Hz). |
-| **C64 ROMs** | KERNAL, BASIC and Character ROM paths. Applied to VirtualC64 and VICE `x64sc` only — they are C64 images, so they are not handed to the VIC-20, PET or C128 emulators. |
-| **VIC-20** | Super Expander cartridge ROM image, passed to xvic as `-cartse`. |
+| Section           | Contents                                                                                                                                                               |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Tool Paths**    | `ca65`, `ld65`, VICE `x64sc` / `x128` / `xpet` / `xvic`, xemu `xmega65`. **Auto-Detect Paths** fills these in.                                                         |
+| **C64 Emulator**  | VirtualC64 (embedded) or VICE x64sc (external) for C64 targets.                                                                                                        |
+| **Build Options** | Generate debug info (.dbg) · Generate listing file (.lst) · Auto-run in VICE after build · Strip whitespace when tokenizing BASIC · Show example file on launch.       |
+| **VICE Emulator** | C64 model (PAL/NTSC variants, Drean, Japanese, C64 GS), SID model (6581, 8580, 8580 + digiboost), video standard (PAL 50 Hz / NTSC 60 Hz).                             |
+| **C64 ROMs**      | KERNAL, BASIC and Character ROM paths. Applied to VirtualC64 and VICE `x64sc` only — they are C64 images, so they are not handed to the VIC-20, PET or C128 emulators. |
+| **VIC-20**        | Super Expander cartridge ROM image, passed to xvic as `-cartse`.                                                                                                       |
 
 Validation warnings appear live as you edit paths and are debounced so they do
 not fire on every keystroke.
@@ -694,84 +694,84 @@ Other appearance controls: the toolbar theme button (light/dark), and
 
 ### File
 
-| Shortcut | Command |
-|---|---|
-| `⌘N` | New BASIC File |
-| `⇧⌘N` | New Assembly File |
-| `⌥⌘N` | New Project… |
-| `⌘O` | Open… |
-| `⇧⌘O` | Open Project… |
-| `⌘S` | Save |
-| `⇧⌘S` | Save As… |
-| `⌥⌘S` | Save Project |
-| `⇧⌘,` | Project Settings… |
-| `⌘W` | Close Tab |
-| `⇧⌘W` | Close Window |
-| `⌘,` | Preferences… |
-| `⌘Q` | Quit |
+| Shortcut | Command           |
+| -------- | ----------------- |
+| `⌘N`     | New BASIC File    |
+| `⇧⌘N`    | New Assembly File |
+| `⌥⌘N`    | New Project…      |
+| `⌘O`     | Open…             |
+| `⇧⌘O`    | Open Project…     |
+| `⌘S`     | Save              |
+| `⇧⌘S`    | Save As…          |
+| `⌥⌘S`    | Save Project      |
+| `⇧⌘,`    | Project Settings… |
+| `⌘W`     | Close Tab         |
+| `⇧⌘W`    | Close Window      |
+| `⌘,`     | Preferences…      |
+| `⌘Q`     | Quit              |
 
 ### Edit
 
-| Shortcut | Command |
-|---|---|
-| `⌘Z` / `⇧⌘Z` | Undo / Redo |
+| Shortcut            | Command                      |
+| ------------------- | ---------------------------- |
+| `⌘Z` / `⇧⌘Z`        | Undo / Redo                  |
 | `⌘X` `⌘C` `⌘V` `⌘A` | Cut, Copy, Paste, Select All |
-| `⌘F` | Find… |
-| `⇧⌘L` | Renumber BASIC Lines… |
+| `⌘F`                | Find…                        |
+| `⇧⌘L`               | Renumber BASIC Lines…        |
 
 ### Build
 
-| Shortcut | Command |
-|---|---|
-| `⌘R` | Build & Run |
-| `⇧⌘R` | Build & Debug |
-| `⌘B` | Build Only |
-| `⌘.` | Stop |
-| `⌥⌘D` | Build & Save to Disk… |
-| `⇧⌘G` | Compile BASIC to ASM |
-| `⌃⌘R` | Run on U64 |
-| `⌃⌘L` | Load on U64 |
-| `⌃⌘M` | Run on MEGA65 |
+| Shortcut | Command               |
+| -------- | --------------------- |
+| `⌘R`     | Build & Run           |
+| `⇧⌘R`    | Build & Debug         |
+| `⌘B`     | Build Only            |
+| `⌘.`     | Stop                  |
+| `⌥⌘D`    | Build & Save to Disk… |
+| `⇧⌘G`    | Compile BASIC to ASM  |
+| `⌃⌘R`    | Run on U64            |
+| `⌃⌘L`    | Load on U64           |
+| `⌃⌘M`    | Run on MEGA65         |
 
 ### Tools
 
-| Shortcut | Command |
-|---|---|
-| `⇧⌘E` | Sprite Editor |
-| `⇧⌘D` | Character Set Editor |
-| `⌥⌘C` | ROM Character Set Viewer |
-| `⌥⌘Y` | Debugger |
-| `⇧⌘I` | Disassembler |
-| `⇧⌘K` | Disk Browser |
-| `⇧⌘T` | Tape Browser |
-| `⇧⌘M` | SID Editor |
-| `⌥⌘G` | Graphics Editor |
-| `⇧⌘U` | Number Converter |
-| `⇧⌘P` | PETSCII Map |
-| `⌥⌘I` | Image Converter |
-| `⌥⌘M` | Map Editor |
+| Shortcut | Command                  |
+| -------- | ------------------------ |
+| `⇧⌘E`    | Sprite Editor            |
+| `⇧⌘D`    | Character Set Editor     |
+| `⌥⌘C`    | ROM Character Set Viewer |
+| `⌥⌘Y`    | Debugger                 |
+| `⇧⌘I`    | Disassembler             |
+| `⇧⌘K`    | Disk Browser             |
+| `⇧⌘T`    | Tape Browser             |
+| `⇧⌘M`    | SID Editor               |
+| `⌥⌘G`    | Graphics Editor          |
+| `⇧⌘U`    | Number Converter         |
+| `⇧⌘P`    | PETSCII Map              |
+| `⌥⌘I`    | Image Converter          |
+| `⌥⌘M`    | Map Editor               |
 
 ### View
 
-| Shortcut | Command |
-|---|---|
+| Shortcut    | Command                              |
+| ----------- | ------------------------------------ |
 | `⌘+` / `⌘-` | Increase / Decrease editor font size |
-| `⌘0` | Reset editor font size |
-| `⌥⌘R` | Toggle Reference Panel |
-| `⇧⌘Y` | Toggle Console |
+| `⌘0`        | Reset editor font size               |
+| `⌥⌘R`       | Toggle Reference Panel               |
+| `⇧⌘Y`       | Toggle Console                       |
 
 ---
 
 ## 15. Where the IDE keeps its files
 
-| Path | Contents |
-|---|---|
-| `~/Library/Application Support/C64IDE/c64ide_build.json` | Global build configuration: tool paths, emulator preference, ROM paths, build options. |
-| `~/Library/Application Support/C64IDE/Plugins/` | Installed BASIC dialect plugins (`.c64basic`). Also scanned: `~/Plugins/` and the app bundle's `Resources/Plugins/`. |
-| `<project>/<name>.c64proj` | Project file: metadata, build options, disk configuration, session state and breakpoints. |
-| `<source dir>/build/` | Build output — `.prg`, `.o`, `.map`, `.dbg`, `.lst`, and bundled disk images. Configurable per project. |
-| macOS Keychain | AI provider API keys, one entry per provider. |
-| `NSUserDefaults` | AI provider selection, model, thinking and token settings; editor font; theme; recent projects. |
+| Path                                                     | Contents                                                                                                             |
+| -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `~/Library/Application Support/C64IDE/c64ide_build.json` | Global build configuration: tool paths, emulator preference, ROM paths, build options.                               |
+| `~/Library/Application Support/C64IDE/Plugins/`          | Installed BASIC dialect plugins (`.c64basic`). Also scanned: `~/Plugins/` and the app bundle's `Resources/Plugins/`. |
+| `<project>/<name>.c64proj`                               | Project file: metadata, build options, disk configuration, session state and breakpoints.                            |
+| `<source dir>/build/`                                    | Build output — `.prg`, `.o`, `.map`, `.dbg`, `.lst`, and bundled disk images. Configurable per project.              |
+| macOS Keychain                                           | AI provider API keys, one entry per provider.                                                                        |
+| `NSUserDefaults`                                         | AI provider selection, model, thinking and token settings; editor font; theme; recent projects.                      |
 
 ---
 

@@ -13,6 +13,7 @@ available from [gopherbrokesoftware.com](https://gopherbrokesoftware.com/).
 ## Features
 
 ### Editing & languages
+
 - **6502/6510 assembly** editing with syntax highlighting, built on the
   `ca65` / `ld65` toolchain.
 - **BASIC** editing with support for many dialects through a plugin system,
@@ -23,6 +24,7 @@ available from [gopherbrokesoftware.com](https://gopherbrokesoftware.com/).
 - BASIC utilities: renumbering, shortcut expansion, and tokenization support.
 
 ### Build & run
+
 - One-click **Build & Run** through the `ca65 → ld65` pipeline with a parsed
   error/warning list.
 - Multiple build layouts: standard PRG with a BASIC SYS stub, raw PRG, upper-RAM
@@ -30,6 +32,7 @@ available from [gopherbrokesoftware.com](https://gopherbrokesoftware.com/).
 - Assemble to disk bundles and export to disk images.
 
 ### Debugging
+
 - **Source-level debugger** with breakpoints, driven through the VICE monitor
   protocol, that maps machine addresses back to your source lines using
   assembler debug info.
@@ -37,6 +40,7 @@ available from [gopherbrokesoftware.com](https://gopherbrokesoftware.com/).
 - **Memory map viewer** generated from the linker `.map` file.
 
 ### Graphics & audio tools
+
 - **Sprite editor** and **character set editor**.
 - **Graphics/bitmap editor** and an **image format converter**.
 - **Tile map editor** with undo support.
@@ -44,11 +48,14 @@ available from [gopherbrokesoftware.com](https://gopherbrokesoftware.com/).
 - **Character ROM viewer** and **PETSCII character map**.
 
 ### Disk & tape images
+
 - Browse and manipulate **D64** and **D81** disk images.
 - Read and write **TAP** tape images.
 
 ### Emulators & hardware targets
+
 Send a freshly built program to any of:
+
 - **VirtualC64** — embedded, C64.
 - **VICE** — `x64sc` (C64), `x128` (C128 / BASIC 7.0), `xpet` (PET / BASIC 4.0)
   and `xvic` (VIC-20 / Super Expander).
@@ -57,15 +64,18 @@ Send a freshly built program to any of:
 - **MEGA65** — real hardware over `etherload`.
 
 ### Project management
+
 - Project files (`.c64proj`) with per-project settings and build configuration.
 - Built-in **project templates** (assembly and BASIC game starters).
 - **Git** integration for version control of your projects.
 
 ### AI assistance
+
 - Optional **Claude** integration that is aware of your IDE context, for help
   while you write code.
 
 ### Extra utilities
+
 - Number base converter, plugin editor for BASIC dialects, and more.
 
 ---
@@ -91,6 +101,7 @@ This is an Xcode project written in Swift with a small amount of Objective-C++
 ### Steps
 
 1. Clone this repository:
+
    ```sh
    git clone https://github.com/DNSGeek/C64IDE-OpenSource.git
    cd C64IDE-OpenSource
@@ -105,6 +116,7 @@ This is an Xcode project written in Swift with a small amount of Objective-C++
    Hoffmann. Its C++ source must be cloned **as a sibling** of this repository
    (the Xcode project references headers via `$(SRCROOT)/../virtualc64`), and
    its static libraries built with CMake:
+
    ```sh
    # Clone VirtualC64 next to C64IDE-OpenSource
    git clone https://github.com/dirkwhoffmann/virtualc64.git ../virtualc64
@@ -127,24 +139,24 @@ This is an Xcode project written in Swift with a small amount of Objective-C++
 
 ## Repository layout
 
-| Directory | Contents |
-|-----------|----------|
-| `Assembler/` | Build pipeline, linker configuration, and assembly-to-data tools |
-| `BASIC/` | BASIC lexer, parser, code generation, dialect plugins, and tokenizer |
-| `Debugger/` | Source-level debugger and VICE monitor client |
-| `Disassembler/` | 6502 disassembler and ROM symbol tables |
-| `GfxEditor/` | Bitmap/graphics editor and image converter |
-| `MapEditor/` | Tile map editor |
-| `SIDEditor/` | SID chip editor and audio engine |
-| `D64/`, `TAP/` | Disk and tape image handling |
-| `VirtualC64/`, `U64/`, `MEGA65/` | Emulator and hardware target integration |
-| `RunInEmulator/` | Run-target abstraction and emulator coordination |
-| `Project/` | Project model, templates, and Git integration |
-| `Views/` | Editor, tool windows, and UI controllers |
-| `SyntaxHighlighting/` | Assembly and BASIC syntax highlighters |
-| `Claude/` | Claude AI integration |
-| `Models/` | Shared data models and C64 reference data |
-| `Resources/` | Assets, BASIC dialect plugins, and project templates |
+| Directory                        | Contents                                                             |
+| -------------------------------- | -------------------------------------------------------------------- |
+| `Assembler/`                     | Build pipeline, linker configuration, and assembly-to-data tools     |
+| `BASIC/`                         | BASIC lexer, parser, code generation, dialect plugins, and tokenizer |
+| `Debugger/`                      | Source-level debugger and VICE monitor client                        |
+| `Disassembler/`                  | 6502 disassembler and ROM symbol tables                              |
+| `GfxEditor/`                     | Bitmap/graphics editor and image converter                           |
+| `MapEditor/`                     | Tile map editor                                                      |
+| `SIDEditor/`                     | SID chip editor and audio engine                                     |
+| `D64/`, `TAP/`                   | Disk and tape image handling                                         |
+| `VirtualC64/`, `U64/`, `MEGA65/` | Emulator and hardware target integration                             |
+| `RunInEmulator/`                 | Run-target abstraction and emulator coordination                     |
+| `Project/`                       | Project model, templates, and Git integration                        |
+| `Views/`                         | Editor, tool windows, and UI controllers                             |
+| `SyntaxHighlighting/`            | Assembly and BASIC syntax highlighters                               |
+| `Claude/`                        | Claude AI integration                                                |
+| `Models/`                        | Shared data models and C64 reference data                            |
+| `Resources/`                     | Assets, BASIC dialect plugins, and project templates                 |
 
 ---
 

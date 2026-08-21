@@ -12,4 +12,3 @@
 #import "VC64Bridge.h"
 
 #endif /* C64IDE_Bridging_Header_h */
-
