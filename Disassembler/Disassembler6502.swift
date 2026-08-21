@@ -32,6 +32,25 @@ enum AddressingMode: String {
 
     /// Total instruction size in bytes (opcode + operands)
     var instructionSize: Int { 1 + operandSize }
+
+    /// Human-readable name used by the ASM reference panel's encoding table.
+    var displayName: String {
+        switch self {
+        case .implied:     return "Implied"
+        case .accumulator: return "Accumulator"
+        case .immediate:   return "Immediate"
+        case .zeroPage:    return "Zero Page"
+        case .zeroPageX:   return "Zero Page,X"
+        case .zeroPageY:   return "Zero Page,Y"
+        case .absolute:    return "Absolute"
+        case .absoluteX:   return "Absolute,X"
+        case .absoluteY:   return "Absolute,Y"
+        case .indirect:    return "Indirect"
+        case .indirectX:   return "(Indirect,X)"
+        case .indirectY:   return "(Indirect),Y"
+        case .relative:    return "Relative"
+        }
+    }
 }
 
 // ═══════════════════════════════════════════════════════════

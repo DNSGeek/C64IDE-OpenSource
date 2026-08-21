@@ -519,7 +519,47 @@ class CommandListViewController: NSViewController, NSTableViewDataSource, NSTabl
     }
 
     private func formatOpcode(_ r: OpcodeRef) -> String {
-        return "━━━ \(r.mnemonic) — \(r.fullName) ━━━\n\nDESCRIPTION\n  \(r.description)\n\nFLAGS AFFECTED\n  \(r.flags)\n\nCYCLES\n  \(r.cycles)\n\nADDRESSING MODES\n  \(r.addressingModes)"
+        var s = "━━━ \(r.mnemonic) — \(r.fullName) ━━━"
+        if r.isIllegal {
+            s += "\nStatus: Undocumented (\"illegal\") — not specified by MOS, but executes on the C64's 6510"
+        }
+        if let aliases = r.aliases { s += "\nAlso known as: \(aliases)" }
+
+        s += "\n\nDESCRIPTION\n\(indented(r.description))"
+        s += "\n\nFLAGS AFFECTED\n  \(r.flags)"
+        s += "\n\nCYCLES\n  \(r.cycles)"
+        s += "\n\nADDRESSING MODES\n  \(r.addressingModes)"
+
+        let encodings = r.encodings
+        if !encodings.isEmpty {
+            // A documented mnemonic can own undocumented encodings too -- NOP
+            // has 27 of them and SBC one -- and only there does a per-row
+            // marker say anything: on an undocumented entry every row would
+            // carry it, which the Status line has already established.
+            let mixed = !r.isIllegal && encodings.contains { $0.isIllegal }
+            s += "\n\nENCODINGS\n" + encodingTable(encodings, markUndocumented: mixed)
+            if mixed { s += "\n  († undocumented encoding)" }
+        }
+
+        if let ex = r.example { s += "\n\nEXAMPLE\n\(indented(ex))" }
+        if let n = r.notes { s += "\n\nNOTES\n\(indented(n))" }
+        return s
+    }
+
+    /// Renders one aligned row per opcode byte: mode, hex byte, length, cycles.
+    ///
+    /// The columns are padded rather than tab-separated because the detail
+    /// view is a plain monospaced text view with no tab stops set.
+    private func encodingTable(_ encodings: [OpcodeEncoding],
+                               markUndocumented: Bool) -> String {
+        let modeWidth = encodings.map { $0.mode.displayName.count }.max() ?? 0
+        return encodings.map { e in
+            let mode = e.mode.displayName.padding(toLength: modeWidth, withPad: " ", startingAt: 0)
+            let byte = String(format: "$%02X", e.opcode)
+            let size = "\(e.bytes) byte\(e.bytes == 1 ? " " : "s")"
+            let mark = (markUndocumented && e.isIllegal) ? " †" : ""
+            return "  \(mode)  \(byte)  \(size)  \(e.cycleText)\(mark)"
+        }.joined(separator: "\n")
     }
 
     /// Renders a dialect plugin's keyword documentation in the same shape as
@@ -716,7 +756,8 @@ class CommandListViewController: NSViewController, NSTableViewDataSource, NSTabl
 
         let nsText = entry.detail as NSString
         // Highlight structural headers in the detail view
-        for header in ["SYNTAX", "DESCRIPTION", "EXAMPLE", "NOTES", "FLAGS AFFECTED", "CYCLES", "ADDRESSING MODES", "Category:"] {
+        for header in ["SYNTAX", "DESCRIPTION", "EXAMPLE", "NOTES", "FLAGS AFFECTED", "CYCLES",
+                       "ADDRESSING MODES", "ENCODINGS", "Category:", "Status:", "Also known as:"] {
             var searchRange = NSRange(location: 0, length: nsText.length)
             while true {
                 let range = nsText.range(of: header, options: [], range: searchRange)

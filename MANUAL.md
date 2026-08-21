@@ -113,10 +113,22 @@ assembly).
 Seven tabs, searchable where relevant, that follow what you are typing:
 
 - **Commands** — keyword reference for the BASIC you are writing, plus a 6502
-  opcode reference. It starts from BASIC V2 and picks up the active dialect's
+  opcode reference; the segmented control at the top switches between them, and
+  the panel picks the right one for the file you are editing.
+  The BASIC list starts from BASIC V2 and picks up the active dialect's
   keywords when you switch dialect, each with its syntax, parameters, example
   and token bytes. Selecting MEGA65 BASIC 65, for instance, takes the list from
   76 entries to 228.
+  The assembly list covers all 56 documented 6502 instructions and the 19
+  undocumented ("illegal") mnemonics the 6510 also executes — every one of the
+  256 opcode bytes is accounted for. Each entry gives a description, the flags
+  it affects, a table of every encoding (opcode byte, length and cycle count,
+  including the conditional page-cross and branch-taken penalties), a worked
+  example and notes. The undocumented entries flag the genuinely unstable
+  instructions, and record where ca65 spells a mnemonic differently from the
+  Disassembler window — `ISC` for `ISB`, `ANE` for `XAA`, `AXS` for `SBX`.
+  Searching finds either spelling. ca65 assembles these only after
+  `.setcpu "6502X"`.
 - **Memory** — annotated C64 memory map (VIC, SID, CIA registers and so on).
 - **ROM** — KERNAL / BASIC ROM routine list with entry points.
 - **Colors** — the 16-colour C64 palette with indices.
