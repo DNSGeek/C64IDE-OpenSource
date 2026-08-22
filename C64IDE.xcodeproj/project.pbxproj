@@ -13,6 +13,7 @@
 		133513E12F844A5500A98A29 /* BasicCodeGenTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 133513D12F844A5500A98A29 /* BasicCodeGenTests.swift */; };
 		133513E22F844A5500A98A29 /* BasicFixRegressionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 133513D22F844A5500A98A29 /* BasicFixRegressionTests.swift */; };
 		133513E32F844A5500A98A29 /* BasicLexerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 133513D32F844A5500A98A29 /* BasicLexerTests.swift */; };
+		13C0DE012FB0000100C64ADE /* CharsetMapEditorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13C0DE022FB0000100C64ADE /* CharsetMapEditorTests.swift */; };
 		133513E42F844A5500A98A29 /* BasicParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 133513D42F844A5500A98A29 /* BasicParserTests.swift */; };
 		133513E52F844A5500A98A29 /* BasicShortcutExpanderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 133513D52F844A5500A98A29 /* BasicShortcutExpanderTests.swift */; };
 		133513E62F844A5500A98A29 /* BasicTypeAnalyserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 133513D62F844A5500A98A29 /* BasicTypeAnalyserTests.swift */; };
@@ -148,6 +149,7 @@
 		13651BE02F7211DB001749B5 /* BasicTokenizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BasicTokenizer.swift; sourceTree = "<group>"; };
 		13651BE32F7215E2001749B5 /* SpriteEditorWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpriteEditorWindowController.swift; sourceTree = "<group>"; };
 		13651BE52F7217DC001749B5 /* CharEditorWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharEditorWindowController.swift; sourceTree = "<group>"; };
+		13C0DE022FB0000100C64ADE /* CharsetMapEditorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharsetMapEditorTests.swift; sourceTree = "<group>"; };
 		13651BE72F721B60001749B5 /* BasicRenumber.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BasicRenumber.swift; sourceTree = "<group>"; };
 		13651BE92F721E76001749B5 /* DebuggerWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebuggerWindowController.swift; sourceTree = "<group>"; };
 		13651BEA2F721E76001749B5 /* VICEMonitorClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VICEMonitorClient.swift; sourceTree = "<group>"; };
@@ -449,6 +451,7 @@
 				138715032FF18B0D0048F245 /* NSTextField+Shake.swift */,
 				131C45982F75812100835980 /* PETSCIIMapWindowController.swift */,
 				13651BE52F7217DC001749B5 /* CharEditorWindowController.swift */,
+				13C0DE022FB0000100C64ADE /* CharsetMapEditorTests.swift */,
 				137E71282F710266008BFE9A /* BottomPanel */,
 				137E71252F710253008BFE9A /* ReferencePanel */,
 				AB000002 /* EditorViewController.swift */,
@@ -616,6 +619,7 @@
 				133513E42F844A5500A98A29 /* BasicParserTests.swift in Sources */,
 				133513E52F844A5500A98A29 /* BasicShortcutExpanderTests.swift in Sources */,
 				133513E62F844A5500A98A29 /* BasicTypeAnalyserTests.swift in Sources */,
+				13C0DE012FB0000100C64ADE /* CharsetMapEditorTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

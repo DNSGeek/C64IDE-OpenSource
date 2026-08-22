@@ -147,6 +147,10 @@ extension AppDelegate {
             if !diskVC.promptToSaveIfNeeded() { return .terminateCancel }
         }
 
+        if let charWC = charEditorController {
+            if !charWC.promptToSaveIfNeeded() { return .terminateCancel }
+        }
+
         if let mapWC = mapEditorController {
             if !mapWC.promptToSaveIfNeeded() { return .terminateCancel }
         }

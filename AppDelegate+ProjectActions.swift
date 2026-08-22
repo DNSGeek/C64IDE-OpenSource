@@ -77,9 +77,20 @@ extension AppDelegate {
         wc.window?.title = "\(project.name)\(dot) — C64 IDE"
     }
 
-    /// Opens the map editor when triggered by a charset notification.
+    /// Opens the map editor when triggered by a charset notification, then
+    /// hands it the charset directly.
+    ///
+    /// The direct hand-off is required, not just belt-and-braces: opening the
+    /// window creates the Map Editor's own observer *while this notification
+    /// is being delivered*, and NotificationCenter does not deliver an
+    /// in-flight notification to an observer registered during its dispatch.
+    /// Relying on the observer alone made the first "Send to Map Editor"
+    /// click do nothing.
     @MainActor @objc func handleCharsetSendToMapEditor(_ notification: Notification) {
+        let wasOpen = mapEditorController != nil
         openMapEditor(nil)
+        guard !wasOpen, let payload = CharsetPayload(notification: notification) else { return }
+        mapEditorController?.applyCharset(payload)
     }
 }
 

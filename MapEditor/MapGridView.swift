@@ -3,29 +3,33 @@ import Cocoa
 // MARK: - C64 Color Palette
 
 /// The standard C64 color palette (VIC-II colors 0–15).
+///
+/// There is exactly one palette definition in the app — `C64Reference.colorPalette`.
+/// This type is the AppKit-facing view of it, so the Map Editor and the
+/// Character Set Editor can never drift apart on what "color 6" looks like.
 public struct C64Palette {
-    public static let colors: [NSColor] = [
-        NSColor(red: 0.000, green: 0.000, blue: 0.000, alpha: 1), // 0  Black
-        NSColor(red: 1.000, green: 1.000, blue: 1.000, alpha: 1), // 1  White
-        NSColor(red: 0.533, green: 0.200, blue: 0.200, alpha: 1), // 2  Red
-        NSColor(red: 0.400, green: 0.733, blue: 0.733, alpha: 1), // 3  Cyan
-        NSColor(red: 0.533, green: 0.267, blue: 0.600, alpha: 1), // 4  Purple
-        NSColor(red: 0.333, green: 0.600, blue: 0.267, alpha: 1), // 5  Green
-        NSColor(red: 0.200, green: 0.133, blue: 0.533, alpha: 1), // 6  Blue
-        NSColor(red: 0.800, green: 0.800, blue: 0.467, alpha: 1), // 7  Yellow
-        NSColor(red: 0.533, green: 0.333, blue: 0.133, alpha: 1), // 8  Orange
-        NSColor(red: 0.333, green: 0.200, blue: 0.000, alpha: 1), // 9  Brown
-        NSColor(red: 0.733, green: 0.467, blue: 0.467, alpha: 1), // 10 Light Red
-        NSColor(red: 0.267, green: 0.267, blue: 0.267, alpha: 1), // 11 Dark Grey
-        NSColor(red: 0.467, green: 0.467, blue: 0.467, alpha: 1), // 12 Grey
-        NSColor(red: 0.600, green: 0.867, blue: 0.533, alpha: 1), // 13 Light Green
-        NSColor(red: 0.467, green: 0.400, blue: 0.733, alpha: 1), // 14 Light Blue
-        NSColor(red: 0.667, green: 0.667, blue: 0.667, alpha: 1), // 15 Light Grey
-    ]
+
+    /// RGB components (0–255) for each palette index.
+    public static let components: [(r: UInt8, g: UInt8, b: UInt8)] = C64Reference.colorPalette.map {
+        let rgb = $0.rgb
+        return (UInt8(clamping: rgb.r), UInt8(clamping: rgb.g), UInt8(clamping: rgb.b))
+    }
+
+    public static let colors: [NSColor] = components.map {
+        NSColor(red: CGFloat($0.r) / 255.0,
+                green: CGFloat($0.g) / 255.0,
+                blue: CGFloat($0.b) / 255.0,
+                alpha: 1)
+    }
 
     /// Returns the NSColor corresponding to a VIC-II color index (0–15).
     public static func nsColor(for index: UInt8) -> NSColor {
         colors[Int(index) & 0x0F]
+    }
+
+    /// Returns the RGB components corresponding to a VIC-II color index (0–15).
+    public static func rgb(for index: Int) -> (r: UInt8, g: UInt8, b: UInt8) {
+        components[index & 0x0F]
     }
 }
 
@@ -38,6 +42,125 @@ public enum MapEditorTool {
     case floodFill  // bucket fill (connected region)
     case select     // rectangular selection
     case eyedropper // pick tile+color from map
+}
+
+// MARK: - Glyph Cache
+
+/// Renders 8×8 character glyphs into cached `CGImage`s.
+///
+/// Drawing a map cell used to cost up to 64 `CGContext.fill` calls; with the
+/// cache it is a single `draw(_:in:)` per cell, and each distinct
+/// (character, color, mode) combination is rasterized only once.
+final class GlyphCache {
+
+    /// 256 characters × 8 bytes.
+    private var bitmaps: [[UInt8]] = GlyphCache.bitmaps(from: C64ROMCharset.data)
+    private var images: [Int: CGImage] = [:]
+
+    /// Multi-color registers ($D022/$D023), baked into multi-color glyphs.
+    private var extraColor1: Int = 1
+    private var extraColor2: Int = 2
+
+    /// Replaces the charset. No-op if the data is identical, so redundant
+    /// charset syncs do not throw away a warm cache.
+    func setCharset(_ data: Data?) {
+        let source = (data?.count ?? 0) >= CharSetData.byteCount ? data! : C64ROMCharset.data
+        let new = GlyphCache.bitmaps(from: source)
+        guard new != bitmaps else { return }
+        bitmaps = new
+        images.removeAll(keepingCapacity: true)
+    }
+
+    /// Updates the multi-color registers, dropping cached glyphs that baked
+    /// in the old values.
+    func setMultiColorRegisters(_ color1: Int, _ color2: Int) {
+        guard color1 != extraColor1 || color2 != extraColor2 else { return }
+        extraColor1 = color1
+        extraColor2 = color2
+        images.removeAll(keepingCapacity: true)
+    }
+
+    func invalidate() {
+        images.removeAll(keepingCapacity: true)
+    }
+
+    /// Returns the glyph for `tile` drawn in `colorIndex`, transparent where
+    /// the character has no foreground pixels.
+    func image(tile: UInt8, colorIndex: Int, multiColor: Bool) -> CGImage? {
+        let key = Int(tile) | ((colorIndex & 0x0F) << 8) | (multiColor ? 1 << 12 : 0)
+        if let cached = images[key] { return cached }
+        guard let made = render(tile: tile, colorIndex: colorIndex, multiColor: multiColor) else { return nil }
+        images[key] = made
+        return made
+    }
+
+    private static func bitmaps(from data: Data) -> [[UInt8]] {
+        var result: [[UInt8]] = []
+        result.reserveCapacity(CharSetData.charCount)
+        let bytes = [UInt8](data)
+        for i in 0..<CharSetData.charCount {
+            let offset = i * 8
+            if offset + 8 <= bytes.count {
+                result.append(Array(bytes[offset..<offset + 8]))
+            } else {
+                result.append(Array(repeating: 0, count: 8))
+            }
+        }
+        return result
+    }
+
+    private func render(tile: UInt8, colorIndex: Int, multiColor: Bool) -> CGImage? {
+        let index = Int(tile)
+        guard index < bitmaps.count else { return nil }
+        let bitmap = bitmaps[index]
+
+        var raw = [UInt8](repeating: 0, count: 8 * 8 * 4)   // RGBA, transparent
+
+        // Palette for the four multi-color bit-pair values. 00 stays
+        // transparent so the cell background (or a lower layer) shows through.
+        let pairColors: [(r: UInt8, g: UInt8, b: UInt8)?] = multiColor
+            ? [nil, C64Palette.rgb(for: extraColor1), C64Palette.rgb(for: extraColor2), C64Palette.rgb(for: colorIndex)]
+            : [nil, C64Palette.rgb(for: colorIndex), nil, nil]
+
+        for py in 0..<8 {
+            let byte = bitmap[py]
+            guard byte != 0 else { continue }
+            // The map grid is a flipped view, where CGContext.draw mirrors
+            // images vertically — so store scanlines bottom-up here and the
+            // glyph lands the right way up on screen.
+            let imageRow = 7 - py
+            if multiColor {
+                for pair in 0..<4 {
+                    let value = Int((byte >> (6 - pair * 2)) & 0x03)
+                    guard let color = pairColors[value] else { continue }
+                    for px in (pair * 2)...(pair * 2 + 1) {
+                        let offset = (imageRow * 8 + px) * 4
+                        raw[offset] = color.r
+                        raw[offset + 1] = color.g
+                        raw[offset + 2] = color.b
+                        raw[offset + 3] = 255
+                    }
+                }
+            } else {
+                guard let color = pairColors[1] else { continue }
+                for px in 0..<8 where byte & (0x80 >> px) != 0 {
+                    let offset = (imageRow * 8 + px) * 4
+                    raw[offset] = color.r
+                    raw[offset + 1] = color.g
+                    raw[offset + 2] = color.b
+                    raw[offset + 3] = 255
+                }
+            }
+        }
+
+        guard let provider = CGDataProvider(data: Data(raw) as CFData) else { return nil }
+        return CGImage(width: 8, height: 8,
+                       bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: 32,
+                       space: CGColorSpaceCreateDeviceRGB(),
+                       bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+                       provider: provider, decode: nil,
+                       shouldInterpolate: false, intent: .defaultIntent)
+    }
 }
 
 // MARK: - Delegate Protocol
@@ -106,13 +229,13 @@ public final class MapGridView: NSView {
     /// Whether to draw grid lines between cells.
     public var showGrid: Bool = true { didSet { needsDisplay = true } }
 
-    /// Whether to show layer transparency (dims hidden layers).
-    public var showLayerDimming: Bool = true
+    /// Whether inactive layers are dimmed as an editing hint.
+    public var showLayerDimming: Bool = true { didSet { needsDisplay = true } }
 
     // MARK: - Internal State
 
-    /// Cached character glyph bitmaps (256 entries, 8×8 bits each).
-    private var charsetBitmaps: [[UInt8]]?
+    /// Rasterized character glyphs, keyed by character/color/mode.
+    private let glyphs = GlyphCache()
 
     /// Drag tracking for fill/select tools.
     private var dragOrigin: MapPoint?
@@ -142,53 +265,63 @@ public final class MapGridView: NSView {
     /// Renders the map grid, optimizing performance by only drawing dirty regions.
     override public func draw(_ dirtyRect: NSRect) {
         guard let doc = document, let ctx = NSGraphicsContext.current?.cgContext else { return }
+        guard doc.width > 0, doc.height > 0 else { return }
 
         let cell = cellSize
         let bgColor = C64Palette.nsColor(for: doc.backgroundColor)
 
-        // Determine visible cell range from dirtyRect for performance
-        let minCol = max(0, Int(floor(dirtyRect.minX / cell.width)))
-        let maxCol = min(doc.width - 1, Int(floor(dirtyRect.maxX / cell.width)))
-        let minRow = max(0, Int(floor(dirtyRect.minY / cell.height)))
-        let maxRow = min(doc.height - 1, Int(floor(dirtyRect.maxY / cell.height)))
+        // Determine visible cell range from dirtyRect for performance.
+        // Clamped at both ends: an empty or edge-aligned dirty rect could
+        // otherwise produce minCol > maxCol, which traps when used as a range.
+        let minCol = max(0, min(doc.width - 1, Int(floor(dirtyRect.minX / cell.width))))
+        let maxCol = max(minCol, min(doc.width - 1, Int(floor(dirtyRect.maxX / cell.width))))
+        let minRow = max(0, min(doc.height - 1, Int(floor(dirtyRect.minY / cell.height))))
+        let maxRow = max(minRow, min(doc.height - 1, Int(floor(dirtyRect.maxY / cell.height))))
 
-        // Ensure charset bitmaps are loaded
-        let bitmaps = charsetBitmaps ?? loadCharsetBitmaps()
+        // The charset itself is only re-read when the document says so
+        // (invalidateCharsetCache); rebuilding it per draw would allocate
+        // 256 arrays just to compare them.
+        glyphs.setMultiColorRegisters(Int(doc.extraColor1), Int(doc.extraColor2))
+        ctx.interpolationQuality = .none
 
-        // Draw cells
-        for row in minRow...maxRow {
-            for col in minCol...maxCol {
-                let x = CGFloat(col) * cell.width
-                let y = CGFloat(row) * cell.height
-                let cellRect = CGRect(x: x, y: y, width: cell.width, height: cell.height)
+        // Background for the whole dirty area in one fill.
+        ctx.setFillColor(bgColor.cgColor)
+        ctx.fill(CGRect(x: CGFloat(minCol) * cell.width,
+                        y: CGFloat(minRow) * cell.height,
+                        width: CGFloat(maxCol - minCol + 1) * cell.width,
+                        height: CGFloat(maxRow - minRow + 1) * cell.height))
 
-                // Background
-                ctx.setFillColor(bgColor.cgColor)
-                ctx.fill(cellRect)
+        // Composite visible layers bottom to top
+        for (layerIdx, layer) in doc.layers.enumerated() {
+            guard layer.isVisible else { continue }
 
-                // Composite visible layers bottom to top
-                for (layerIdx, layer) in doc.layers.enumerated() {
-                    guard layer.isVisible else { continue }
+            // Apply layer opacity for non-active layers (editor hint)
+            let opacity: CGFloat = showLayerDimming && layerIdx != doc.activeLayerIndex
+                ? CGFloat(layer.opacity) * 0.5
+                : CGFloat(layer.opacity)
+            ctx.setAlpha(opacity)
+
+            for row in minRow...maxRow {
+                for col in minCol...maxCol {
                     let tile = layer.tiles[row][col]
-                    let color = layer.colors[row][col]
 
                     // On upper layers, skip space chars ($20) to let lower layers show through
                     if layerIdx > 0 && tile == 0x20 { continue }
 
-                    // Apply layer opacity for non-active layers (editor hint)
-                    let opacity: CGFloat
-                    if showLayerDimming && layerIdx != doc.activeLayerIndex {
-                        opacity = CGFloat(layer.opacity) * 0.5
-                    } else {
-                        opacity = CGFloat(layer.opacity)
-                    }
-
-                    drawCharGlyph(ctx: ctx, bitmaps: bitmaps, tile: tile,
-                                  fgColor: C64Palette.nsColor(for: color),
-                                  rect: cellRect, opacity: opacity)
+                    let color = Int(layer.colors[row][col]) & 0x0F
+                    // The VIC-II only treats a cell as multi-color when bit 3
+                    // of its color RAM value is set; colors 0-7 stay hi-res.
+                    let multi = doc.isMultiColorMode && (color & 0x08) != 0
+                    guard let glyph = glyphs.image(tile: tile,
+                                                   colorIndex: multi ? color & 0x07 : color,
+                                                   multiColor: multi) else { continue }
+                    ctx.draw(glyph, in: CGRect(x: CGFloat(col) * cell.width,
+                                               y: CGFloat(row) * cell.height,
+                                               width: cell.width, height: cell.height))
                 }
             }
         }
+        ctx.setAlpha(1.0)
 
         // Grid lines
         if showGrid && zoom >= 1.0 {
@@ -232,68 +365,12 @@ public final class MapGridView: NSView {
         // MapRasterRulerView owned by the view controller, not here.
     }
 
-    /// Draws a single 8x8 character glyph scaled into the given rect.
-    /// The cell background is filled by the caller, so only foreground
-    /// pixels are drawn here.
-    private func drawCharGlyph(ctx: CGContext, bitmaps: [[UInt8]], tile: UInt8,
-                               fgColor: NSColor,
-                               rect: CGRect, opacity: CGFloat) {
-        let charIdx = Int(tile)
-        guard charIdx < bitmaps.count else { return }
-        let bitmap = bitmaps[charIdx]
-
-        let pixW = rect.width / 8.0
-        let pixH = rect.height / 8.0
-
-        let fg = fgColor.withAlphaComponent(opacity).cgColor
-
-        ctx.setFillColor(fg)
-
-        for py in 0..<8 {
-            let byte = bitmap[py]
-            guard byte != 0 else { continue }  // skip blank rows
-            for px in 0..<8 {
-                if byte & (0x80 >> px) != 0 {
-                    let pixRect = CGRect(
-                        x: rect.origin.x + CGFloat(px) * pixW,
-                        y: rect.origin.y + CGFloat(py) * pixH,
-                        width: pixW, height: pixH
-                    )
-                    ctx.fill(pixRect)
-                }
-            }
-        }
-    }
-
     // MARK: - Charset Loading
 
-    /// Loads the charset bitmaps from the document (or falls back to the built-in ROM charset).
-    private func loadCharsetBitmaps() -> [[UInt8]] {
-        var bitmaps: [[UInt8]] = []
-        let data: Data
-
-        if let charsetData = document?.charsetData, charsetData.count >= 2048 {
-            data = charsetData
-        } else {
-            data = C64ROMCharset.data
-        }
-
-        for i in 0..<256 {
-            let offset = i * 8
-            if offset + 8 <= data.count {
-                bitmaps.append(Array(data[offset..<offset + 8]))
-            } else {
-                bitmaps.append(Array(repeating: 0, count: 8))
-            }
-        }
-
-        charsetBitmaps = bitmaps
-        return bitmaps
-    }
-
-    /// Invalidates the cached charset bitmaps to force reload on next draw.
+    /// Invalidates the cached glyph images to force a rebuild on next draw.
     public func invalidateCharsetCache() {
-        charsetBitmaps = nil
+        glyphs.invalidate()
+        glyphs.setCharset(document?.charsetData)
     }
 
     // MARK: - Mouse Events
@@ -328,8 +405,16 @@ public final class MapGridView: NSView {
         case .paint:
             let current = MapPoint(col: col, row: row)
             if current != lastPaintedCell {
+                // A fast drag skips cells between events; walk the line so
+                // the stroke stays continuous instead of dotted.
+                if let previous = lastPaintedCell {
+                    for point in MapGridView.line(from: previous, to: current) where point != previous {
+                        delegate?.mapGridView(self, didDragTo: point.col, row: point.row)
+                    }
+                } else {
+                    delegate?.mapGridView(self, didDragTo: col, row: row)
+                }
                 lastPaintedCell = current
-                delegate?.mapGridView(self, didDragTo: col, row: row)
             }
 
         case .fill, .select:
@@ -431,6 +516,24 @@ public final class MapGridView: NSView {
                        height: maxRow - minRow + 1)
     }
 
+    /// Bresenham line between two cells, inclusive of both ends.
+    private static func line(from a: MapPoint, to b: MapPoint) -> [MapPoint] {
+        var points: [MapPoint] = []
+        var (x0, y0) = (a.col, a.row)
+        let (x1, y1) = (b.col, b.row)
+        let dx = abs(x1 - x0), sx = x0 < x1 ? 1 : -1
+        let dy = -abs(y1 - y0), sy = y0 < y1 ? 1 : -1
+        var err = dx + dy
+        while true {
+            points.append(MapPoint(col: x0, row: y0))
+            if x0 == x1 && y0 == y1 { break }
+            let e2 = 2 * err
+            if e2 >= dy { err += dy; x0 += sx }
+            if e2 <= dx { err += dx; y0 += sy }
+        }
+        return points
+    }
+
     // MARK: - Zoom
 
     override public func magnify(with event: NSEvent) {
@@ -439,9 +542,10 @@ public final class MapGridView: NSView {
 
     /// Zooms to fit the entire map in the visible area.
     public func zoomToFit(in visibleSize: NSSize) {
-        guard let doc = document else { return }
+        guard let doc = document, doc.width > 0, doc.height > 0 else { return }
         let mapWidth = CGFloat(doc.width) * 8.0
         let mapHeight = CGFloat(doc.height) * 8.0
+        guard mapWidth > 0, mapHeight > 0 else { return }
         let scaleX = visibleSize.width / mapWidth
         let scaleY = visibleSize.height / mapHeight
         zoom = min(scaleX, scaleY)
@@ -453,15 +557,7 @@ public final class MapGridView: NSView {
 /// Provides the standard C64 ROM character set data as a fallback.
 public struct C64ROMCharset {
     /// 2048 bytes: 256 characters × 8 bytes each (Set 1: uppercase/graphics).
-    public static var data: Data {
-        Data(C64CharROM.romData.prefix(2048))
-    }
-
-    /// 2048 bytes: Set 2 (lowercase/uppercase), offset 2048 in the ROM.
-    public static var lowercaseData: Data {
-        let rom = C64CharROM.romData
-        guard rom.count >= 4096 else { return data }
-        return Data(rom[2048..<4096])
-    }
+    /// Set 2 (lowercase) is reachable through
+    /// `CharSetData.loadROMCharset(.lowercaseUppercase)`.
+    public static let data: Data = Data(C64CharROM.romData.prefix(CharSetData.byteCount))
 }
-

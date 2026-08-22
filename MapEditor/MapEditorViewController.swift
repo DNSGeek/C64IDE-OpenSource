@@ -1,4 +1,5 @@
 import Cocoa
+import UniformTypeIdentifiers
 
 // MARK: - Map Editor View Controller
 
@@ -15,7 +16,12 @@ public final class MapEditorViewController: NSViewController, MapGridViewDelegat
     public var selectedTile: UInt8 = 1 { didSet { tilePickerView?.selectedTile = selectedTile } }
 
     /// Currently selected color index for painting. Updates the color picker when changed.
-    public var selectedColor: UInt8 = 1 { didSet { colorPickerView?.selectedColor = selectedColor } }
+    public var selectedColor: UInt8 = 1 {
+        didSet {
+            colorPickerView?.selectedColor = selectedColor
+            tilePickerView?.foregroundColorIndex = selectedColor
+        }
+    }
 
     /// Tracks whether the document has been modified since the last save.
     public private(set) var isModified = false
@@ -29,6 +35,7 @@ public final class MapEditorViewController: NSViewController, MapGridViewDelegat
     private var scrollView: NSScrollView!
     private var tilePickerView: TilePickerView!
     private var colorPickerView: ColorPickerView!
+    private var bgPickerView: ColorPickerView!
     private var layerListView: LayerListView!
     private var toolSegment: NSSegmentedControl!
     private var zoomSlider: NSSlider!
@@ -36,6 +43,9 @@ public final class MapEditorViewController: NSViewController, MapGridViewDelegat
     private var bankWarningLabel: NSTextField!
     private var gridToggle: NSButton!
     private var rasterToggle: NSButton!
+    private var dimToggle: NSButton!
+    private var fitButton: NSButton!
+    private var panelLabels: [NSTextField] = []
     private var rasterRulerView: MapRasterRulerView!
     private var exportPopup: NSPopUpButton!
 
@@ -106,6 +116,8 @@ public final class MapEditorViewController: NSViewController, MapGridViewDelegat
             .foregroundColor: AppTheme.current.syntaxKeyword,
         ])
         rasterToggle?.attributedTitle = rasterAttr
+        panelLabels.forEach { $0.textColor = AppTheme.current.statusLabel }
+        coordLabel?.textColor = AppTheme.current.statusLabel
         tilePickerView?.needsDisplay  = true
         rasterRulerView?.needsDisplay = true
         layerListView?.needsDisplay   = true
@@ -115,42 +127,77 @@ public final class MapEditorViewController: NSViewController, MapGridViewDelegat
 
     /// Applies charset data when live sync is enabled.
     @objc private func charsetDidChange(_ notification: Notification) {
-        guard isLiveSyncEnabled else { return }
-        applyCharsetFromNotification(notification)
+        guard isLiveSyncEnabled, let payload = CharsetPayload(notification: notification) else { return }
+        // Live sync mirrors the glyphs and the mode they are drawn in, but not
+        // the background color: that one belongs to the map, and silently
+        // repainting it from the Character Editor was the old behavior.
+        apply(payload, adoptBackground: false)
     }
 
     /// Applies charset data unconditionally and enables live sync for future updates.
     @objc private func charsetSentToMapEditor(_ notification: Notification) {
-        isLiveSyncEnabled = true
-        applyCharsetFromNotification(notification)
+        guard let payload = CharsetPayload(notification: notification) else { return }
+        applyCharset(payload)
     }
 
-    /// Extracts charset data from the notification and updates the document and views.
-    private func applyCharsetFromNotification(_ notification: Notification) {
-        guard let userInfo = notification.userInfo,
-              let raw = userInfo["charsetData"] as? Data else { return }
+    /// Adopts a charset sent explicitly from the Character Set Editor,
+    /// including its background color, and turns on live sync.
+    ///
+    /// Called directly by the app delegate as well as via notification: a
+    /// Map Editor created *while* `.charsetSendToMapEditor` is being
+    /// delivered never receives that notification, so the first "Send to Map
+    /// Editor" would otherwise do nothing at all.
+    public func applyCharset(_ payload: CharsetPayload) {
+        setLiveSync(true)
+        apply(payload, adoptBackground: true)
+    }
 
-        // Re-base into a fresh Data. If the sender ever hands us a slice
-        // with a nonzero startIndex, integer subscripting downstream
-        // (TilePickerView) would crash otherwise.
-        let data = Data(raw.prefix(2048))
+    private func apply(_ payload: CharsetPayload, adoptBackground: Bool) {
+        var changed = false
 
-        document.charsetData = data
-        mapGridView.invalidateCharsetCache()
-        mapGridView.needsDisplay = true
-        tilePickerView?.charsetData = data
-        isModified = true
-
-        // Optionally sync the background color too
-        if let bgColor = userInfo["bgColor"] as? Int {
-            document.backgroundColor = UInt8(bgColor & 0x0F)
-            mapGridView.needsDisplay = true
+        if document.charsetData != payload.charset {
+            document.charsetData = payload.charset
+            // The embedded data no longer came from the file on disk; keeping
+            // the old path would save a .c64map pointing at a charset it does
+            // not actually use.
+            document.charsetPath = nil
+            mapGridView.invalidateCharsetCache()
+            tilePickerView?.charsetData = payload.charset
+            changed = true
         }
+
+        // Multi-color is a property of the charset itself — a multi-color
+        // charset drawn as hi-res is unreadable — so it travels with the
+        // glyphs even on a live sync.
+        let mc1 = UInt8(payload.multiColor1 & 0x0F)
+        let mc2 = UInt8(payload.multiColor2 & 0x0F)
+        if document.isMultiColorMode != payload.isMultiColor
+            || document.extraColor1 != mc1 || document.extraColor2 != mc2 {
+            document.isMultiColorMode = payload.isMultiColor
+            document.extraColor1 = mc1
+            document.extraColor2 = mc2
+            colorPickerView?.multiColorHint = document.isMultiColorMode
+            changed = true
+        }
+
+        if adoptBackground, document.backgroundColor != UInt8(payload.bgColor & 0x0F) {
+            document.backgroundColor = UInt8(payload.bgColor & 0x0F)
+            bgPickerView?.selectedColor = document.backgroundColor
+            changed = true
+        }
+
+        guard changed else { return }
+        tilePickerView?.applyDocumentColors(document)
+        mapGridView.needsDisplay = true
+        isModified = true
     }
 
-    /// Toggles live sync with the Character Editor.
+    /// Turns live charset sync with the Character Set Editor on or off.
     public func setLiveSync(_ enabled: Bool) {
         isLiveSyncEnabled = enabled
+        exportPopup?.menu?.items
+            .first { $0.title == MapEditorViewController.liveSyncTitle }?
+            .state = enabled ? .on : .off
     }
 
     // MARK: - UI Setup
@@ -169,13 +216,17 @@ public final class MapEditorViewController: NSViewController, MapGridViewDelegat
         exportPopup.translatesAutoresizingMaskIntoConstraints = false
         exportPopup.controlSize = .small
         exportPopup.font = NSFont.systemFont(ofSize: 11)
-        exportPopup.addItem(withTitle: "Export ▾")
-        exportPopup.addItem(withTitle: "Export as Assembly (.s)…")
-        exportPopup.addItem(withTitle: "Export as Binary (.bin)…")
-        exportPopup.menu?.addItem(.separator())
-        exportPopup.addItem(withTitle: "Save Map (.c64map)…")
-        exportPopup.addItem(withTitle: "Open Map…")
-        exportPopup.addItem(withTitle: "Load Charset…")
+        // Index 0 is the pull-down's title; the rest are matched by title in
+        // exportMenuSelected() so inserting an item cannot silently re-map
+        // the actions.
+        exportPopup.addItem(withTitle: "Map ▾")
+        for title in MapEditorViewController.menuTitles {
+            if title.isEmpty {
+                exportPopup.menu?.addItem(.separator())
+            } else {
+                exportPopup.addItem(withTitle: title)
+            }
+        }
         exportPopup.target = self
         exportPopup.action = #selector(exportMenuSelected(_:))
         view.addSubview(exportPopup)
@@ -200,6 +251,19 @@ public final class MapEditorViewController: NSViewController, MapGridViewDelegat
         ])
         rasterToggle.attributedTitle = rasterAttr
         view.addSubview(rasterToggle)
+
+        dimToggle = NSButton(checkboxWithTitle: "Dim", target: self, action: #selector(dimToggled(_:)))
+        dimToggle.state = .on
+        dimToggle.toolTip = "Dim layers other than the active one"
+        dimToggle.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(dimToggle)
+
+        fitButton = NSButton(title: "Fit", target: self, action: #selector(zoomToFit(_:)))
+        fitButton.bezelStyle = .rounded
+        fitButton.controlSize = .small
+        fitButton.toolTip = "Zoom so the whole map is visible"
+        fitButton.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(fitButton)
     }
 
     private func setupMapGrid() {
@@ -251,6 +315,32 @@ public final class MapEditorViewController: NSViewController, MapGridViewDelegat
             self?.selectedColor = color
         }
         view.addSubview(colorPickerView)
+
+        // The background color ($D021) belongs to the map, so it needs its own
+        // control here rather than being dictated by the Character Editor.
+        bgPickerView = ColorPickerView()
+        bgPickerView.translatesAutoresizingMaskIntoConstraints = false
+        bgPickerView.selectedColor = document.backgroundColor
+        bgPickerView.onColorSelected = { [weak self] color in
+            guard let self else { return }
+            guard self.document.backgroundColor != color else { return }
+            self.document.backgroundColor = color
+            self.mapGridView.needsDisplay = true
+            self.tilePickerView?.applyDocumentColors(self.document)
+            self.isModified = true
+        }
+        view.addSubview(bgPickerView)
+    }
+
+    /// Small caption above a left-panel control.
+    private func panelLabel(_ text: String) -> NSTextField {
+        let label = NSTextField(labelWithString: text)
+        label.font = NSFont.monospacedSystemFont(ofSize: 9, weight: .bold)
+        label.textColor = .secondaryLabelColor
+        label.translatesAutoresizingMaskIntoConstraints = false
+        panelLabels.append(label)
+        view.addSubview(label)
+        return label
     }
 
     private func setupLayerList() {
@@ -259,6 +349,11 @@ public final class MapEditorViewController: NSViewController, MapGridViewDelegat
         layerListView.onLayerChanged = { [weak self] in
             self?.mapGridView.needsDisplay = true
             self?.updateBankWarning()
+        }
+        // Adding a layer or toggling visibility changes what gets saved, so
+        // the close/quit prompt has to know about it.
+        layerListView.onLayerEdited = { [weak self] in
+            self?.isModified = true
         }
         // Structural changes (layer removal) invalidate recorded layer
         // indices in the undo stack, so history must be discarded.
@@ -289,6 +384,12 @@ public final class MapEditorViewController: NSViewController, MapGridViewDelegat
         let leftPanelWidth: CGFloat = 180
         let statusBarHeight: CGFloat = 24
         let toolbarHeight: CGFloat = 32
+        // The tile picker draws 16 rows of square tiles plus two 18pt bank
+        // headers; sizing it to exactly that avoids a large dead gap.
+        let tileSide = (leftPanelWidth - 8) / 16.0
+        let tilePickerHeight = ceil(tileSide * 16 + 36)
+        let paintLabel = panelLabel("PAINT COLOR")
+        let bgLabel = panelLabel("BACKGROUND ($D021)")
 
         NSLayoutConstraint.activate([
             // Toolbar row
@@ -309,18 +410,36 @@ public final class MapEditorViewController: NSViewController, MapGridViewDelegat
             rasterToggle.centerYAnchor.constraint(equalTo: toolSegment.centerYAnchor),
             rasterToggle.trailingAnchor.constraint(equalTo: gridToggle.leadingAnchor, constant: -12),
 
+            dimToggle.centerYAnchor.constraint(equalTo: toolSegment.centerYAnchor),
+            dimToggle.trailingAnchor.constraint(equalTo: rasterToggle.leadingAnchor, constant: -12),
+
+            fitButton.centerYAnchor.constraint(equalTo: toolSegment.centerYAnchor),
+            fitButton.trailingAnchor.constraint(equalTo: dimToggle.leadingAnchor, constant: -12),
+            fitButton.leadingAnchor.constraint(greaterThanOrEqualTo: exportPopup.trailingAnchor, constant: 8),
+
             // Left panel: tile picker + color picker + layer list
             tilePickerView.topAnchor.constraint(equalTo: view.topAnchor, constant: 6),
             tilePickerView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 4),
             tilePickerView.widthAnchor.constraint(equalToConstant: leftPanelWidth - 8),
-            tilePickerView.heightAnchor.constraint(equalToConstant: 300),
+            tilePickerView.heightAnchor.constraint(equalToConstant: tilePickerHeight),
 
-            colorPickerView.topAnchor.constraint(equalTo: tilePickerView.bottomAnchor, constant: 8),
+            paintLabel.topAnchor.constraint(equalTo: tilePickerView.bottomAnchor, constant: 6),
+            paintLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 6),
+
+            colorPickerView.topAnchor.constraint(equalTo: paintLabel.bottomAnchor, constant: 2),
             colorPickerView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 4),
             colorPickerView.widthAnchor.constraint(equalToConstant: leftPanelWidth - 8),
-            colorPickerView.heightAnchor.constraint(equalToConstant: 60),
+            colorPickerView.heightAnchor.constraint(equalToConstant: 44),
 
-            layerListView.topAnchor.constraint(equalTo: colorPickerView.bottomAnchor, constant: 8),
+            bgLabel.topAnchor.constraint(equalTo: colorPickerView.bottomAnchor, constant: 6),
+            bgLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 6),
+
+            bgPickerView.topAnchor.constraint(equalTo: bgLabel.bottomAnchor, constant: 2),
+            bgPickerView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 4),
+            bgPickerView.widthAnchor.constraint(equalToConstant: leftPanelWidth - 8),
+            bgPickerView.heightAnchor.constraint(equalToConstant: 30),
+
+            layerListView.topAnchor.constraint(equalTo: bgPickerView.bottomAnchor, constant: 8),
             layerListView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 4),
             layerListView.widthAnchor.constraint(equalToConstant: leftPanelWidth - 8),
             layerListView.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -statusBarHeight - 4),
@@ -351,6 +470,7 @@ public final class MapEditorViewController: NSViewController, MapGridViewDelegat
 
     @objc private func toolChanged(_ sender: NSSegmentedControl) {
         let tools: [MapEditorTool] = [.paint, .fill, .floodFill, .select, .eyedropper]
+        guard tools.indices.contains(sender.selectedSegment) else { return }
         mapGridView.currentTool = tools[sender.selectedSegment]
     }
 
@@ -368,30 +488,109 @@ public final class MapEditorViewController: NSViewController, MapGridViewDelegat
         rasterRulerView.isHidden = sender.state != .on
     }
 
+    @objc private func dimToggled(_ sender: NSButton) {
+        mapGridView.showLayerDimming = sender.state == .on
+    }
+
+    @objc private func zoomToFit(_ sender: Any?) {
+        mapGridView.zoomToFit(in: scrollView.contentView.bounds.size)
+    }
+
     @objc private func mapScrolled(_ notification: Notification) {
         rasterRulerView.scrollOffset = scrollView.contentView.bounds.origin.y
         rasterRulerView.needsDisplay = true
     }
 
+    /// Pull-down entries, in order. An empty string is a separator.
+    private static let menuTitles = [
+        "New Map…",
+        "Resize Map…",
+        "",
+        "Save Map (.c64map)…",
+        "Open Map…",
+        "Load Charset…",
+        MapEditorViewController.liveSyncTitle,
+        "",
+        "Export as Assembly (.s)…",
+        "Export as Binary (.bin)…",
+    ]
+
+    private static let liveSyncTitle = "Live Charset Sync"
+
     @objc private func exportMenuSelected(_ sender: NSPopUpButton) {
-        // Index 0 is the pull-down title "Export ▾", real items start at 1
-        switch sender.indexOfSelectedItem {
-        case 1:
-            exportAssembly()
-        case 2:
-            exportBinary()
-        // index 3 is the separator
-        case 4:
+        switch sender.titleOfSelectedItem {
+        case "New Map…":
+            NSApp.sendAction(#selector(MapEditorWindowController.newMapPrompt), to: nil, from: self)
+        case "Resize Map…":
+            promptResizeMap()
+        case "Save Map (.c64map)…":
             saveDocument()
-        case 5:
+        case "Open Map…":
             // Open — delegate to window controller via responder chain
             NSApp.sendAction(#selector(MapEditorWindowController.openMap), to: nil, from: self)
-        case 6:
+        case "Load Charset…":
             // Load Charset — delegate to window controller
             NSApp.sendAction(#selector(MapEditorWindowController.loadCharset), to: nil, from: self)
+        case MapEditorViewController.liveSyncTitle:
+            setLiveSync(!isLiveSyncEnabled)
+        case "Export as Assembly (.s)…":
+            exportAssembly()
+        case "Export as Binary (.bin)…":
+            exportBinary()
         default:
             break
         }
+    }
+
+    /// Asks for new map dimensions and resizes in place, preserving overlap.
+    private func promptResizeMap() {
+        guard let size = MapEditorViewController.promptForMapSize(
+            title: "Resize Map",
+            message: "Existing tiles are kept where the old and new maps overlap.",
+            width: document.width, height: document.height) else { return }
+        guard size.width != document.width || size.height != document.height else { return }
+        document.resize(to: size.width, height: size.height)
+        // Recorded undo actions reference cells that may no longer exist.
+        undoMgr.clearHistory()
+        currentSelection = nil
+        resetPaintStroke()
+        rasterRulerView?.rows = document.height
+        mapGridView.invalidateIntrinsicContentSize()
+        mapGridView.needsDisplay = true
+        updateBankWarning()
+        isModified = true
+    }
+
+    /// Shared width/height prompt used by New Map and Resize Map.
+    static func promptForMapSize(title: String, message: String,
+                                 width: Int, height: Int) -> (width: Int, height: Int)? {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message + "\n\nSize in characters (1–\(MapDocument.maxDimension)). "
+            + "A single C64 screen is 40×25."
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Cancel")
+
+        let accessory = NSView(frame: NSRect(x: 0, y: 0, width: 220, height: 26))
+        let widthField = NSTextField(frame: NSRect(x: 46, y: 2, width: 56, height: 22))
+        let heightField = NSTextField(frame: NSRect(x: 156, y: 2, width: 56, height: 22))
+        widthField.integerValue = width
+        heightField.integerValue = height
+        let widthLabel = NSTextField(labelWithString: "Width:")
+        widthLabel.frame = NSRect(x: 0, y: 5, width: 44, height: 16)
+        let heightLabel = NSTextField(labelWithString: "Height:")
+        heightLabel.frame = NSRect(x: 106, y: 5, width: 48, height: 16)
+        accessory.addSubview(widthLabel)
+        accessory.addSubview(widthField)
+        accessory.addSubview(heightLabel)
+        accessory.addSubview(heightField)
+        alert.accessoryView = accessory
+        alert.window.initialFirstResponder = widthField
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        let newWidth = max(1, min(MapDocument.maxDimension, widthField.integerValue))
+        let newHeight = max(1, min(MapDocument.maxDimension, heightField.integerValue))
+        return (newWidth, newHeight)
     }
 
     // MARK: - Document Management
@@ -418,6 +617,10 @@ public final class MapEditorViewController: NSViewController, MapGridViewDelegat
         mapGridView.document = document
         layerListView.document = document
         tilePickerView?.charsetData = document.charsetData ?? C64ROMCharset.data
+        tilePickerView?.applyDocumentColors(document)
+        tilePickerView?.foregroundColorIndex = selectedColor
+        bgPickerView?.selectedColor = document.backgroundColor
+        colorPickerView?.multiColorHint = document.isMultiColorMode
         rasterRulerView?.rows = document.height
         resetPaintStroke()
         currentSelection = nil
@@ -434,7 +637,7 @@ public final class MapEditorViewController: NSViewController, MapGridViewDelegat
 
     public func saveDocumentAs() {
         let panel = NSSavePanel()
-        panel.allowedContentTypes = [.init(filenameExtension: "c64map")!]
+        panel.allowedContentTypes = [UTType(filenameExtension: "c64map")].compactMap { $0 }
         panel.nameFieldStringValue = document.name + ".c64map"
         panel.begin { [weak self] response in
             guard response == .OK, let url = panel.url, let self = self else { return }
@@ -451,7 +654,7 @@ public final class MapEditorViewController: NSViewController, MapGridViewDelegat
         var url = fileURL
         if url == nil {
             let panel = NSSavePanel()
-            panel.allowedContentTypes = [.init(filenameExtension: "c64map")!]
+            panel.allowedContentTypes = [UTType(filenameExtension: "c64map")].compactMap { $0 }
             panel.nameFieldStringValue = document.name + ".c64map"
             guard panel.runModal() == .OK, let chosen = panel.url else { return false }
             url = chosen
@@ -481,7 +684,10 @@ public final class MapEditorViewController: NSViewController, MapGridViewDelegat
     }
 
     public func loadCharset(from url: URL) {
-        guard let data = try? Data(contentsOf: url), data.count >= 2048 else {
+        // Same reader as the Character Set Editor's import, so a .prg or .64c
+        // with a load-address header works in both places.
+        guard let data = try? Data(contentsOf: url),
+              let bytes = CharEditorViewController.extractCharset(from: data) else {
             let alert = NSAlert()
             alert.messageText = "Invalid Character Set"
             alert.informativeText = "Expected at least 2048 bytes (256 characters × 8 bytes)."
@@ -489,12 +695,13 @@ public final class MapEditorViewController: NSViewController, MapGridViewDelegat
             alert.runModal()
             return
         }
-        let charset = Data(data.prefix(2048))  // re-base into a fresh Data
+        let charset = Data(bytes)
         document.charsetData = charset
         document.charsetPath = url.path
         mapGridView.invalidateCharsetCache()
         mapGridView.needsDisplay = true
         tilePickerView?.charsetData = charset
+        tilePickerView?.applyDocumentColors(document)
         isModified = true
     }
 
@@ -519,7 +726,7 @@ public final class MapEditorViewController: NSViewController, MapGridViewDelegat
 
     public func exportAssembly() {
         let panel = NSSavePanel()
-        panel.allowedContentTypes = [.init(filenameExtension: "s")!, .init(filenameExtension: "asm")!]
+        panel.allowedContentTypes = ["s", "asm"].compactMap { UTType(filenameExtension: $0) }
         let baseName = MapDocument.sanitizeAssemblyLabel(
             document.name.replacingOccurrences(of: " ", with: "_").lowercased())
         panel.nameFieldStringValue = "\(baseName)_map.s"
@@ -580,6 +787,12 @@ public final class MapEditorViewController: NSViewController, MapGridViewDelegat
     private var strokeVisited = Set<Int>()
     private var strokeLayerIndex = 0
 
+    /// The tile/color actually painted by the current stroke. Captured when
+    /// the stroke starts: committing with whatever is selected *now* would
+    /// re-apply the wrong tile if the selection changed before the commit.
+    private var strokeTile: UInt8 = 0
+    private var strokeColor: UInt8 = 0
+
     private func resetPaintStroke() {
         strokeCells.removeAll()
         strokeOldTiles.removeAll()
@@ -594,8 +807,8 @@ public final class MapEditorViewController: NSViewController, MapGridViewDelegat
                                           cells: strokeCells,
                                           oldTiles: strokeOldTiles,
                                           oldColors: strokeOldColors,
-                                          newTile: selectedTile,
-                                          newColor: selectedColor)
+                                          newTile: strokeTile,
+                                          newColor: strokeColor)
         resetPaintStroke()
         // perform() re-applies the same values already painted live, which
         // is an idempotent no-op, then records the action.
@@ -651,7 +864,9 @@ public final class MapEditorViewController: NSViewController, MapGridViewDelegat
     }
 
     public func mapGridView(_ view: MapGridView, didFloodFillAt col: Int, row: Int) {
-        guard let layer = document.activeLayer else { return }
+        guard let layer = document.activeLayer,
+              row >= 0, row < document.height,
+              col >= 0, col < document.width else { return }
         let layerIdx = document.activeLayerIndex
         let targetTile = layer.tiles[row][col]
         let targetColor = layer.colors[row][col]
@@ -803,7 +1018,9 @@ public final class MapEditorViewController: NSViewController, MapGridViewDelegat
     }
 
     public func mapGridView(_ view: MapGridView, didPickAt col: Int, row: Int) {
-        guard let layer = document.activeLayer else { return }
+        guard let layer = document.activeLayer,
+              row >= 0, row < document.height,
+              col >= 0, col < document.width else { return }
         selectedTile = layer.tiles[row][col]
         selectedColor = layer.colors[row][col]
         tilePickerView?.selectedTile = selectedTile
@@ -835,14 +1052,19 @@ public final class MapEditorViewController: NSViewController, MapGridViewDelegat
         let key = row * document.width + col
         guard !strokeVisited.contains(key) else { return }
 
+        let newTile = strokeCells.isEmpty ? selectedTile : strokeTile
+        let newColor = strokeCells.isEmpty ? selectedColor : strokeColor
         let oldTile = layer.tiles[row][col]
         let oldColor = layer.colors[row][col]
-        guard oldTile != selectedTile || oldColor != selectedColor else { return }
+        guard oldTile != newTile || oldColor != newColor else { return }
 
-        // First cell of a stroke pins the layer the whole stroke belongs to
-        // (a drag can begin outside the map, so mouseDown is not reliable).
+        // First cell of a stroke pins the layer and the painted tile/color for
+        // the whole stroke (a drag can begin outside the map, so mouseDown is
+        // not reliable).
         if strokeCells.isEmpty {
             strokeLayerIndex = document.activeLayerIndex
+            strokeTile = selectedTile
+            strokeColor = selectedColor
         }
 
         strokeVisited.insert(key)
@@ -850,8 +1072,8 @@ public final class MapEditorViewController: NSViewController, MapGridViewDelegat
         strokeOldTiles.append(oldTile)
         strokeOldColors.append(oldColor)
 
-        layer.tiles[row][col] = selectedTile
-        layer.colors[row][col] = selectedColor
+        layer.tiles[row][col] = newTile
+        layer.colors[row][col] = newColor
 
         mapGridView.setNeedsDisplay(
             NSRect(x: CGFloat(col) * 8.0 * mapGridView.zoom,
@@ -886,12 +1108,14 @@ public final class MapEditorViewController: NSViewController, MapGridViewDelegat
 
     @objc public func undo(_ sender: Any?) {
         undoMgr.undo()
+        resetPaintStroke()
         updateBankWarning()
         mapGridView.needsDisplay = true
     }
 
     @objc public func redo(_ sender: Any?) {
         undoMgr.redo()
+        resetPaintStroke()
         updateBankWarning()
         mapGridView.needsDisplay = true
     }
@@ -901,9 +1125,30 @@ public final class MapEditorViewController: NSViewController, MapGridViewDelegat
 
 /// Displays the 256-character tileset as a 16×16 grid for selection.
 public final class TilePickerView: NSView {
-    public var charsetData: Data? { didSet { needsDisplay = true } }
+    public var charsetData: Data? {
+        didSet {
+            glyphs.setCharset(charsetData)
+            needsDisplay = true
+        }
+    }
     public var selectedTile: UInt8 = 1 { didSet { needsDisplay = true } }
     public var onTileSelected: ((UInt8) -> Void)?
+
+    /// Colors mirrored from the document so the picker previews tiles the
+    /// way they will actually appear on the map.
+    public var backgroundColorIndex: UInt8 = 6 { didSet { needsDisplay = true } }
+    public var foregroundColorIndex: UInt8 = 1 { didSet { needsDisplay = true } }
+    public var isMultiColorMode = false { didSet { needsDisplay = true } }
+
+    private let glyphs = GlyphCache()
+
+    /// Copies every color-affecting setting from the document.
+    public func applyDocumentColors(_ document: MapDocument) {
+        backgroundColorIndex = document.backgroundColor
+        isMultiColorMode = document.isMultiColorMode
+        glyphs.setMultiColorRegisters(Int(document.extraColor1), Int(document.extraColor2))
+        needsDisplay = true
+    }
 
     override public var isFlipped: Bool { true }
 
@@ -934,9 +1179,10 @@ public final class TilePickerView: NSView {
 
     override public func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
-        let data = charsetData ?? C64ROMCharset.data
         let cs   = self.cs
         let w    = bounds.width
+        guard cs > 0 else { return }
+        ctx.interpolationQuality = .none
 
         let amber     = NSColor.systemOrange
         let amberDim  = amber.withAlphaComponent(0.15)
@@ -953,8 +1199,7 @@ public final class TilePickerView: NSView {
             .draw(in: CGRect(x: 4, y: 3, width: w - 8, height: headerH - 2))
 
         // ── Bank 0 tiles (chars $00–$7F, rows 0–7) ──────────────────────────
-        drawTileBlock(ctx: ctx, data: data, cs: cs,
-                      startChar: 0, rows: 8, originY: bank0TilesY)
+        drawTileBlock(ctx: ctx, cs: cs, startChar: 0, rows: 8, originY: bank0TilesY)
 
         // ── Separator bar ────────────────────────────────────────────────────
         let sepRect = CGRect(x: 0, y: separatorY, width: w, height: separatorH)
@@ -970,8 +1215,7 @@ public final class TilePickerView: NSView {
             .draw(in: CGRect(x: 4, y: separatorY + 3, width: w - 8, height: separatorH - 4))
 
         // ── Bank 1 tiles (chars $80–$FF, rows 8–15) ─────────────────────────
-        drawTileBlock(ctx: ctx, data: data, cs: cs,
-                      startChar: 128, rows: 8, originY: bank1TilesY)
+        drawTileBlock(ctx: ctx, cs: cs, startChar: 128, rows: 8, originY: bank1TilesY)
 
         // ── Selection highlight ──────────────────────────────────────────────
         if let selRect = tileRect(for: selectedTile, cs: cs) {
@@ -982,8 +1226,14 @@ public final class TilePickerView: NSView {
     }
 
     /// Draws a block of tile rows starting at `startChar`, for `rows` rows, at `originY`.
-    private func drawTileBlock(ctx: CGContext, data: Data, cs: CGFloat,
+    private func drawTileBlock(ctx: CGContext, cs: CGFloat,
                                 startChar: Int, rows: Int, originY: CGFloat) {
+        let selectedBg = NSColor.systemBlue.cgColor
+        let bg = C64Palette.nsColor(for: backgroundColorIndex).cgColor
+        let color = Int(foregroundColorIndex) & 0x0F
+        // A cell is only multi-color when bit 3 of its color RAM value is set.
+        let multi = isMultiColorMode && (color & 0x08) != 0
+
         for r in 0..<rows {
             for c in 0..<16 {
                 let charIdx = startChar + r * 16 + c
@@ -993,25 +1243,15 @@ public final class TilePickerView: NSView {
 
                 // Cell background
                 let isSelected = UInt8(charIdx) == selectedTile
-                ctx.setFillColor(isSelected ? NSColor.systemBlue.cgColor : NSColor.black.cgColor)
+                ctx.setFillColor(isSelected ? selectedBg : bg)
                 ctx.fill(rect)
 
-                // Glyph pixels
-                let offset = charIdx * 8
-                guard offset + 8 <= data.count else { continue }
-                let pixSize = cs / 8.0
-                ctx.setFillColor(NSColor.white.cgColor)
-                for py in 0..<8 {
-                    let byte = data[offset + py]
-                    guard byte != 0 else { continue }
-                    for px in 0..<8 {
-                        if byte & (0x80 >> px) != 0 {
-                            ctx.fill(CGRect(
-                                x: rect.origin.x + CGFloat(px) * pixSize,
-                                y: rect.origin.y + CGFloat(py) * pixSize,
-                                width: pixSize, height: pixSize))
-                        }
-                    }
+                // Glyph — one cached image per (char, color, mode) instead of
+                // up to 64 fills per tile, 256 tiles per redraw.
+                if let glyph = glyphs.image(tile: UInt8(charIdx),
+                                            colorIndex: multi ? color & 0x07 : color,
+                                            multiColor: multi) {
+                    ctx.draw(glyph, in: rect)
                 }
             }
         }
@@ -1065,6 +1305,10 @@ public final class ColorPickerView: NSView {
     public var selectedColor: UInt8 = 1 { didSet { needsDisplay = true } }
     public var onColorSelected: ((UInt8) -> Void)?
 
+    /// When set, colors 8–15 are marked: in multi-color text mode only those
+    /// color RAM values make a cell render as multi-color.
+    public var multiColorHint = false { didSet { needsDisplay = true } }
+
     override public var isFlipped: Bool { true }
 
     override public func draw(_ dirtyRect: NSRect) {
@@ -1080,6 +1324,11 @@ public final class ColorPickerView: NSView {
 
             ctx.setFillColor(C64Palette.nsColor(for: UInt8(i)).cgColor)
             ctx.fill(rect)
+
+            if multiColorHint && i >= 8 {
+                ctx.setFillColor(NSColor.systemYellow.withAlphaComponent(0.9).cgColor)
+                ctx.fillEllipse(in: CGRect(x: rect.maxX - 7, y: rect.minY + 3, width: 4, height: 4))
+            }
 
             if UInt8(i) == selectedColor {
                 ctx.setStrokeColor(NSColor.systemYellow.cgColor)
@@ -1109,6 +1358,11 @@ public final class LayerListView: NSView {
 
     /// Fires for display-affecting changes (visibility, selection, add/remove).
     public var onLayerChanged: (() -> Void)?
+
+    /// Fires for changes that alter what would be written to disk
+    /// (add/remove a layer, toggle visibility) so the owner can mark the
+    /// document modified. Selecting the active layer does not fire this.
+    public var onLayerEdited: (() -> Void)?
 
     /// Fires for structural changes that invalidate recorded undo history
     /// (currently: layer removal). The owner must clear the undo stack.
@@ -1199,14 +1453,15 @@ public final class LayerListView: NSView {
     }
 
     @objc private func toggleVisibility(_ sender: NSButton) {
-        guard let doc = document, sender.tag < doc.layers.count else { return }
+        guard let doc = document, sender.tag >= 0, sender.tag < doc.layers.count else { return }
         doc.layers[sender.tag].isVisible.toggle()
         rebuildList()
+        onLayerEdited?()
         onLayerChanged?()
     }
 
     @objc private func selectLayer(_ sender: NSButton) {
-        guard let doc = document, sender.tag < doc.layers.count else { return }
+        guard let doc = document, sender.tag >= 0, sender.tag < doc.layers.count else { return }
         doc.activeLayerIndex = sender.tag
         rebuildList()
         onLayerChanged?()
@@ -1215,6 +1470,7 @@ public final class LayerListView: NSView {
     @objc private func addLayer() {
         document?.addLayer()
         rebuildList()
+        onLayerEdited?()
         onLayerChanged?()
     }
 

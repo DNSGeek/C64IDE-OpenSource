@@ -515,12 +515,23 @@ BASIC `DATA`, assembly `.byte`, C array or hex string, copied to the clipboard.
 ### Character Set Editor — `⇧⌘D`
 
 8×8 character editing across a 256-character map, with foreground and background
-colour selection. Tools: Draw, Clear, Flip H, Flip V, Invert and pixel shifting.
+colour selection. Tools: Draw, Clear, Flip H, Flip V, Invert, pixel shifting and
+per-character Copy/Paste. The arrow keys step through the character map. The
+editor opens on the C64 ROM character set — the same set the Map Editor falls
+back to — so a fresh charset can be edited a character at a time.
 
-**Load ROM** pulls in the C64 ROM character set as a starting point;
-**Import…** loads a charset file; **Save .bin** writes raw binary. Export the
-selected character or the whole set as assembly, BASIC `DATA`, or hex, and
-**Send to Map Editor** pushes the charset straight into the tile map editor.
+**Multi-Color** switches the grid to four 2-bit pixel pairs per row, drawn with
+the `$D021`/`$D022`/`$D023` registers plus colour RAM; the **Pen** control picks
+which of the four values the mouse paints. The bytes are unchanged by the
+toggle — as on real hardware, multi-color simply reinterprets them. Flip H and
+horizontal shifts move whole pixel pairs in this mode, so colours survive.
+
+**Load ROM** pulls in either ROM character set (uppercase/graphics or
+lowercase/uppercase) as a starting point; **Import…** loads a charset file
+(a 2-byte PRG load address is stripped automatically); **Save .bin** — or `⌘S` —
+writes raw binary. Export the selected character or the whole set as assembly,
+BASIC `DATA`, or hex, and **Send to Map Editor** pushes the charset straight
+into the tile map editor.
 
 ### Graphics Editor — `⌥⌘G`
 
@@ -542,9 +553,22 @@ existing D64.
 Tile map editing on a character grid. Tools: Paint, Fill, Flood, Pick and
 Select, with rectangular copy and paste. Multiple layers with visibility toggles
 and removal, a grid overlay, a raster overlay, and charset bank selection
-(Bank 0 / Bank 1) — the editor warns if a map mixes charset banks. **Load
-Charset…** brings in a character set (or receive one from the Character Set
-Editor). Save as `.c64map`; export as assembly (`.s`) or binary (`.bin`).
+(Bank 0 / Bank 1) — the editor warns if a map mixes charset banks. **Fit** zooms
+the whole map into view, and **Dim** shades the layers that are not being edited.
+
+The tile picker previews characters in the map's own colours, and the left panel
+carries both the paint colour and the map's background colour (`$D021`).
+
+The **Map ▾** menu holds **New Map…** and **Resize Map…** (1–256 characters in
+each direction; a single C64 screen is 40×25), save/open, **Load Charset…**, and
+the assembly (`.s`) / binary (`.bin`) exports. `⌘S` saves the map.
+
+**Send to Map Editor** in the Character Set Editor hands the charset over and
+switches on **Live Charset Sync**, so later edits to the glyphs appear in the map
+as you make them. The map keeps its own background colour; toggle the sync off
+from the **Map ▾** menu. If the charset is in multi-color mode, cells whose
+colour RAM value is 8–15 render as multi-color — the same rule the VIC-II uses —
+and those colours are marked in the paint palette.
 
 Undo is supported throughout.
 

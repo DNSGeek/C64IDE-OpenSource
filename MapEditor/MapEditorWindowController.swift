@@ -1,4 +1,5 @@
 import Cocoa
+import UniformTypeIdentifiers
 
 // MARK: - Map Editor Window Controller
 
@@ -10,13 +11,15 @@ public final class MapEditorWindowController: NSWindowController {
     /// Creates a new Map Editor window with default dimensions.
     public init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 960, height: 660),
+            contentRect: NSRect(x: 0, y: 0, width: 1040, height: 700),
             styleMask: [.titled, .closable, .resizable, .miniaturizable],
             backing: .buffered,
             defer: false
         )
         window.title = "Map Editor - Untitled"
-        window.minSize = NSSize(width: 640, height: 480)
+        // The single toolbar row needs about 1000pt; below that its
+        // constraints cannot all be satisfied.
+        window.contentMinSize = NSSize(width: 1000, height: 560)
         window.center()
 
         super.init(window: window)
@@ -50,10 +53,29 @@ public final class MapEditorWindowController: NSWindowController {
         window?.title = "Map Editor - Untitled"
     }
 
+    /// Asks for the dimensions, then creates a new blank map.
+    @objc public func newMapPrompt() {
+        guard let size = MapEditorViewController.promptForMapSize(
+            title: "New Map",
+            message: "Create a new empty map.",
+            width: 40, height: 25) else { return }
+        newMap(width: size.width, height: size.height)
+    }
+
+    /// Routes ⌘S to the map document. Without this the responder chain falls
+    /// through to the app delegate, which would save the front source
+    /// document instead of the map.
+    @objc public func saveCurrentDocument(_ sender: Any?) {
+        mapEditorVC.saveDocumentModally()
+        if let name = mapEditorVC.fileURL?.deletingPathExtension().lastPathComponent {
+            window?.title = "Map Editor - \(name)"
+        }
+    }
+
     /// Opens a file dialog to load a `.c64map` document.
     @objc public func openMap() {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.init(filenameExtension: "c64map")!]
+        panel.allowedContentTypes = [UTType(filenameExtension: "c64map")].compactMap { $0 }
         panel.begin { [weak self] response in
             guard response == .OK, let url = panel.url else { return }
             self?.loadMap(from: url)
@@ -74,27 +96,11 @@ public final class MapEditorWindowController: NSWindowController {
         }
     }
 
-    /// Saves the current map to its last known URL.
-    public func saveMap() {
-        mapEditorVC.saveDocument()
-        if let name = mapEditorVC.fileURL?.deletingPathExtension().lastPathComponent {
-            window?.title = "Map Editor - \(name)"
-        }
-    }
-
-    /// Opens a save panel for exporting the current map as a new `.c64map` file.
-    public func saveMapAs() {
-        mapEditorVC.saveDocumentAs()
-    }
-
     /// Opens a file dialog to load a custom character set (`.chr`, `.bin`, or `.charset`).
     @objc public func loadCharset() {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [
-            .init(filenameExtension: "chr")!,
-            .init(filenameExtension: "bin")!,
-            .init(filenameExtension: "charset")!,
-        ]
+        panel.allowedContentTypes = ["chr", "bin", "charset", "64c", "prg", "raw"]
+            .compactMap { UTType(filenameExtension: $0) }
         panel.title = "Load Character Set"
         panel.message = "Select a 2048-byte (or larger) character set file."
         panel.begin { [weak self] response in
@@ -103,14 +109,9 @@ public final class MapEditorWindowController: NSWindowController {
         }
     }
 
-    /// Exports the current map as ca65-compatible assembly source.
-    public func exportAssembly() {
-        mapEditorVC.exportAssembly()
-    }
-
-    /// Exports the current map as raw Screen RAM and Color RAM binaries.
-    public func exportBinary() {
-        mapEditorVC.exportBinary()
+    /// Applies a charset handed over directly by the app delegate.
+    public func applyCharset(_ payload: CharsetPayload) {
+        mapEditorVC.applyCharset(payload)
     }
 
     /// Prompts the user to save unsaved changes before a destructive

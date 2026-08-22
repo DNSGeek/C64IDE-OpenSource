@@ -5,11 +5,6 @@ import Foundation
 /// Represents a single undoable edit to the map.
 /// Note: Not Codable, as it's only used for in-memory undo/redo state.
 public enum MapEditAction {
-    /// A single tile was painted.
-    case paint(layer: Int, col: Int, row: Int,
-               oldTile: UInt8, oldColor: UInt8,
-               newTile: UInt8, newColor: UInt8)
-
     /// A rectangular region was filled.
     case fill(layer: Int, rect: MapRect,
               oldTiles: [[UInt8]], oldColors: [[UInt8]],
@@ -46,10 +41,6 @@ public struct MapRect: Codable, Equatable {
 
     public var maxCol: Int { origin.col + width - 1 }
     public var maxRow: Int { origin.row + height - 1 }
-
-    public func contains(col: Int, row: Int) -> Bool {
-        col >= origin.col && col <= maxCol && row >= origin.row && row <= maxRow
-    }
 }
 
 // MARK: - Undo Manager Integration
@@ -121,13 +112,6 @@ public final class MapUndoManager {
 
     private func apply(_ action: MapEditAction, to doc: MapDocument) {
         switch action {
-        case let .paint(layer, col, row, _, _, newTile, newColor):
-            guard layer >= 0, layer < doc.layers.count else { return }
-            let l = doc.layers[layer]
-            guard isValidCell(l, row: row, col: col) else { return }
-            l.tiles[row][col] = newTile
-            l.colors[row][col] = newColor
-
         case let .fill(layer, rect, _, _, newTile, newColor):
             guard layer >= 0, layer < doc.layers.count else { return }
             let l = doc.layers[layer]
@@ -166,13 +150,6 @@ public final class MapUndoManager {
 
     private func unapply(_ action: MapEditAction, from doc: MapDocument) {
         switch action {
-        case let .paint(layer, col, row, oldTile, oldColor, _, _):
-            guard layer >= 0, layer < doc.layers.count else { return }
-            let l = doc.layers[layer]
-            guard isValidCell(l, row: row, col: col) else { return }
-            l.tiles[row][col] = oldTile
-            l.colors[row][col] = oldColor
-
         case let .fill(layer, rect, oldTiles, oldColors, _, _):
             guard layer >= 0, layer < doc.layers.count else { return }
             let l = doc.layers[layer]

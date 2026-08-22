@@ -58,7 +58,14 @@ public final class MapDocument: Codable {
     /// Background color index (0–15, maps to VIC-II register $D021)
     public var backgroundColor: UInt8 = 6  // C64 blue
 
-    /// Multicolor registers ($D022, $D023) — optional, for multicolor charset mode
+    /// Multicolor charset mode. When enabled, a cell whose color RAM value is
+    /// 8–15 is drawn as four 2-bit pixel pairs (00 = background, 01 =
+    /// extraColor1, 10 = extraColor2, 11 = colour RAM value & 7), exactly as
+    /// the VIC-II does with bit 4 of $D016 set. Cells with colour 0–7 stay
+    /// hi-res.
+    public var isMultiColorMode: Bool = false
+
+    /// Multicolor registers ($D022, $D023) — used when `isMultiColorMode` is on
     public var extraColor1: UInt8 = 1   // white
     public var extraColor2: UInt8 = 2   // red
 
@@ -79,9 +86,11 @@ public final class MapDocument: Codable {
     // MARK: - Lifecycle
 
     public init(width: Int = 40, height: Int = 25) {
-        self.width = width
-        self.height = height
-        self.layers = [MapLayer(name: "Background", width: width, height: height)]
+        let w = max(1, min(MapDocument.maxDimension, width))
+        let h = max(1, min(MapDocument.maxDimension, height))
+        self.width = w
+        self.height = h
+        self.layers = [MapLayer(name: "Background", width: w, height: h)]
     }
 
     // MARK: - Layer Management
@@ -106,6 +115,7 @@ public final class MapDocument: Codable {
     /// MapUndoManager.clearHistory() afterwards.
     public func removeLayer(at index: Int) {
         guard layers.count > 1 else { return }  // always keep at least one layer
+        guard index >= 0, index < layers.count else { return }
         layers.remove(at: index)
         if activeLayerIndex >= layers.count {
             activeLayerIndex = layers.count - 1
@@ -145,12 +155,18 @@ public final class MapDocument: Codable {
     /// (stored coordinates may fall outside the new bounds). Call
     /// MapUndoManager.clearHistory() after this.
     public func resize(to newWidth: Int, height newHeight: Int) {
-        width = newWidth
-        height = newHeight
+        let clampedWidth = max(1, min(MapDocument.maxDimension, newWidth))
+        let clampedHeight = max(1, min(MapDocument.maxDimension, newHeight))
+        width = clampedWidth
+        height = clampedHeight
         for layer in layers {
-            layer.resize(to: newWidth, height: newHeight)
+            layer.resize(to: clampedWidth, height: clampedHeight)
         }
     }
+
+    /// Upper bound on either map dimension. Screen RAM addressing is 16-bit,
+    /// and a map this large already exceeds anything the C64 can display.
+    public static let maxDimension = 256
 
     // MARK: - Serialization
 
@@ -163,6 +179,7 @@ public final class MapDocument: Codable {
 
     public enum MapDocumentError: LocalizedError {
         case unsupportedFormatVersion(Int)
+        case invalidDimensions(width: Int, height: Int)
 
         public var errorDescription: String? {
             switch self {
@@ -170,6 +187,10 @@ public final class MapDocument: Codable {
                 return "This map file uses format version \(v), but this build "
                      + "only supports up to version \(MapDocument.formatVersion). "
                      + "Please update the application."
+            case let .invalidDimensions(width, height):
+                return "This map file declares an unusable size of \(width)×\(height) "
+                     + "characters. Maps must be between 1×1 and "
+                     + "\(MapDocument.maxDimension)×\(MapDocument.maxDimension)."
             }
         }
     }
@@ -181,7 +202,31 @@ public final class MapDocument: Codable {
         guard doc.formatVersion <= MapDocument.formatVersion else {
             throw MapDocumentError.unsupportedFormatVersion(doc.formatVersion)
         }
+        try doc.normalize()
         return doc
+    }
+
+    /// Brings a freshly decoded document into a state the editor can rely on:
+    /// positive dimensions, at least one layer, and every layer's grid exactly
+    /// `height` × `width`. Rendering and editing index these arrays directly,
+    /// so a hand-edited or truncated file would otherwise crash the editor.
+    private func normalize() throws {
+        guard width > 0, height > 0,
+              width <= MapDocument.maxDimension, height <= MapDocument.maxDimension else {
+            throw MapDocumentError.invalidDimensions(width: width, height: height)
+        }
+        if layers.isEmpty {
+            layers = [MapLayer(name: "Background", width: width, height: height)]
+        }
+        for layer in layers where layer.tiles.count != height
+            || layer.colors.count != height
+            || layer.tiles.contains(where: { $0.count != width })
+            || layer.colors.contains(where: { $0.count != width }) {
+            layer.resize(to: width, height: height)
+        }
+        if activeLayerIndex < 0 || activeLayerIndex >= layers.count {
+            activeLayerIndex = 0
+        }
     }
 
     // MARK: - Export
@@ -192,22 +237,40 @@ public final class MapDocument: Codable {
         var screenBytes = Array(repeating: UInt8(0x20), count: width * height)
         var colorBytes = Array(repeating: UInt8(14), count: width * height)
 
+        // The lowest visible layer paints every cell, including its spaces;
+        // layers above it let their spaces show what is underneath.
+        let baseLayer = layers.first(where: { $0.isVisible })
+
         for layer in layers where layer.isVisible {
+            let isBase = layer === baseLayer
             for row in 0..<height {
                 for col in 0..<width {
                     let tile = layer.tiles[row][col]
-                    let color = layer.colors[row][col]
                     // Skip "empty" tiles (space char $20) on upper layers so lower layers show through
-                    if tile != 0x20 || layer === layers.first {
+                    if tile != 0x20 || isBase {
                         let idx = row * width + col
                         screenBytes[idx] = tile
-                        colorBytes[idx] = color & 0x0F
+                        colorBytes[idx] = layer.colors[row][col] & 0x0F
                     }
                 }
             }
         }
 
         return (Data(screenBytes), Data(colorBytes))
+    }
+
+    /// The tile visible at a cell once all visible layers are composited,
+    /// following the same rule as `exportFlattened`.
+    public func compositedTile(col: Int, row: Int) -> UInt8 {
+        guard row >= 0, row < height, col >= 0, col < width else { return 0x20 }
+        var result: UInt8 = 0x20
+        var isBase = true
+        for layer in layers where layer.isVisible {
+            let tile = layer.tiles[row][col]
+            if tile != 0x20 || isBase { result = tile }
+            isBase = false
+        }
+        return result
     }
 
     // MARK: - Charset Bank Validation
@@ -226,15 +289,17 @@ public final class MapDocument: Codable {
         var hasBank0 = false
         var hasBank1 = false
 
-        // Reuse the export compositor so this can never drift from what
-        // actually gets exported.
-        let (screen, _) = exportFlattened()
-
-        for tile in screen {
-            guard tile != 0x20 else { continue }   // skip spaces
-            if tile < 0x80 { hasBank0 = true }
-            else            { hasBank1 = true }
-            if hasBank0 && hasBank1 { return .mixed }  // short-circuit
+        // Composite per cell rather than calling exportFlattened(): this runs
+        // after every edit, and allocating two full-map buffers each time is
+        // pure overhead on a large map.
+        for row in 0..<height {
+            for col in 0..<width {
+                let tile = compositedTile(col: col, row: row)
+                guard tile != 0x20 else { continue }   // skip spaces
+                if tile < 0x80 { hasBank0 = true }
+                else            { hasBank1 = true }
+                if hasBank0 && hasBank1 { return .mixed }  // short-circuit
+            }
         }
 
         if hasBank0 { return .bankZeroOnly }
@@ -263,7 +328,13 @@ public final class MapDocument: Codable {
 
         asm += "\(label)_width = \(width)\n"
         asm += "\(label)_height = \(height)\n"
-        asm += "\(label)_bgcolor = \(backgroundColor)\n\n"
+        asm += "\(label)_bgcolor = \(backgroundColor)        ; $D021\n"
+        if isMultiColorMode {
+            asm += "\(label)_mcolor1 = \(extraColor1)        ; $D022\n"
+            asm += "\(label)_mcolor2 = \(extraColor2)        ; $D023\n"
+            asm += "; multi-color text mode: set bit 4 of $D016\n"
+        }
+        asm += "\n"
 
         // Screen RAM
         asm += "\(label)_screen:\n"
