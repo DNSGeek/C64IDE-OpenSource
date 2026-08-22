@@ -57,8 +57,9 @@ class SpriteEditorWindowController: NSWindowController, NSWindowDelegate {
 /// Coordinate system: rows 0..20 (top to bottom), cols 0..23 (left to right).
 class SpriteData {
     /// 24x21 pixel grid. Values:
-    /// Hi-res: 0 = transparent, 1 = sprite color
-    /// Multi-color: 0 = transparent, 1 = multi-color 1, 2 = sprite color, 3 = multi-color 2
+    /// Hi-res: 0 = transparent, 1 = sprite color ($D027+n)
+    /// Multi-color: 0 = transparent, 1 = multi-color 1 ($D025), 2 = sprite color ($D027+n),
+    ///              3 = multi-color 2 ($D026). Only columns 0..11 are used in multi-color mode.
     var pixels: [[UInt8]] = Array(repeating: Array(repeating: 0, count: 24), count: 21)
     var isMultiColor: Bool = false
     var spriteColor: Int = 1      // C64 color index (0-15)
@@ -131,10 +132,32 @@ class SpriteData {
         pixels = Array(repeating: Array(repeating: UInt8(0), count: 24), count: 21)
     }
 
+    /// Re-maps the pixel grid when switching between hi-res and multi-color.
+    /// Without this, 24 one-bit hi-res columns get reinterpreted as 12 two-bit pairs
+    /// (and vice versa), which scrambles the artwork on every mode toggle.
+    func convertPixels(toMultiColor: Bool) {
+        var newPixels = Array(repeating: Array(repeating: UInt8(0), count: 24), count: 21)
+        for row in 0..<21 {
+            for col in 0..<12 {
+                if toMultiColor {
+                    // Two hi-res columns collapse into one double-wide multi-color pixel.
+                    let lit = pixels[row][col * 2] != 0 || pixels[row][col * 2 + 1] != 0
+                    newPixels[row][col] = lit ? 2 : 0  // 2 = the sprite's own color
+                } else {
+                    // One multi-color pixel expands back into two hi-res columns.
+                    let lit: UInt8 = pixels[row][col] != 0 ? 1 : 0
+                    newPixels[row][col * 2] = lit
+                    newPixels[row][col * 2 + 1] = lit
+                }
+            }
+        }
+        pixels = newPixels
+    }
+
     /// Creates a deep copy of the current sprite data.
     func deepCopy() -> SpriteData {
         let copy = SpriteData()
-        copy.pixels = pixels.map { $0 }
+        copy.pixels = pixels
         copy.isMultiColor = isMultiColor
         copy.spriteColor = spriteColor
         copy.multiColor1 = multiColor1
@@ -214,6 +237,7 @@ class SpriteEditorViewController: NSViewController, NSMenuItemValidation {
     private var exportTextView: NSTextView!
     private var exportScrollView: NSScrollView!
     private var multiColorToggle: NSButton!
+    private var wrapBtn: NSButton!
     private var formatSelector: NSPopUpButton!
 
     // ── Animation Strip UI ────────────────────────────────
@@ -300,6 +324,16 @@ class SpriteEditorViewController: NSViewController, NSMenuItemValidation {
         applyThemeColors()
     }
 
+    override func viewWillDisappear() {
+        super.viewWillDisappear()
+        stopAnimation()
+    }
+
+    deinit {
+        animTimer?.invalidate()
+        NotificationCenter.default.removeObserver(self)
+    }
+
     private func applyThemeColors() {
         view.window?.appearance      = AppTheme.current.nsAppearance
         view.window?.backgroundColor = AppTheme.current.editorBackground
@@ -370,11 +404,18 @@ class SpriteEditorViewController: NSViewController, NSMenuItemValidation {
         colorPicker = SpriteColorPickerView(spriteData: spriteData)
         colorPicker.frame = NSRect(x: rightX, y: rightTop + 50, width: 230, height: 200)
         colorPicker.autoresizingMask = [.minYMargin]
-        colorPicker.onColorChanged = { [weak self] in
+        // Undo must snapshot BEFORE the colour is written, otherwise the snapshot
+        // already contains the new value and "Undo" appears to do nothing.
+        colorPicker.onColorWillChange = { [weak self] in
             self?.pushUndo("Change Color")
-            self?.gridView.needsDisplay = true
-            self?.updatePreview()
-            self?.updateExport()
+        }
+        colorPicker.onColorChanged = { [weak self] in
+            guard let self else { return }
+            self.syncSharedColors()
+            self.gridView.needsDisplay = true
+            self.updatePreview()
+            self.updateExport()
+            self.onModified?()
         }
         colorPicker.onDrawColorChanged = { [weak self] color in
             self?.gridView.drawColor = color
@@ -400,11 +441,10 @@ class SpriteEditorViewController: NSViewController, NSMenuItemValidation {
             view.addSubview(btn)
         }
 
-        let wrapBtn = NSButton(checkboxWithTitle: "Wrap", target: nil, action: nil)
+        wrapBtn = NSButton(checkboxWithTitle: "Wrap", target: nil, action: nil)
         wrapBtn.frame = NSRect(x: rightX + 150, y: shiftY + 4, width: 60, height: 18)
         wrapBtn.font = NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
         wrapBtn.contentTintColor = AppTheme.current.statusLabel
-        wrapBtn.tag = 999
         wrapBtn.autoresizingMask = [.minYMargin]
         view.addSubview(wrapBtn)
 
@@ -635,7 +675,8 @@ class SpriteEditorViewController: NSViewController, NSMenuItemValidation {
         stopAnimation()
         pushUndo("Toggle Multi-Color")
         let newMode = sender.state == .on
-        for frame in frames {
+        for frame in frames where frame.isMultiColor != newMode {
+            frame.convertPixels(toMultiColor: newMode)
             frame.isMultiColor = newMode
         }
         switchToFrame(currentFrame)
@@ -696,7 +737,7 @@ class SpriteEditorViewController: NSViewController, NSMenuItemValidation {
         let encoded = sender.tag
         let dx = (encoded / 10) - 2
         let dy = (encoded % 10) - 2
-        let wrap = view.subviews.compactMap({ $0 as? NSButton }).first(where: { $0.tag == 999 })?.state == .on
+        let wrap = wrapBtn.state == .on
         spriteData.shiftPixels(dx: dx, dy: dy, wrap: wrap)
         gridView.needsDisplay = true
         updatePreview()
@@ -744,6 +785,17 @@ class SpriteEditorViewController: NSViewController, NSMenuItemValidation {
     }
 
     // MARK: - Updates
+
+    /// $D025, $D026 and the screen background are VIC-wide registers, not per-sprite,
+    /// so keep every animation frame in step with the current frame's values.
+    private func syncSharedColors() {
+        let src = spriteData
+        for frame in frames where frame !== src {
+            frame.multiColor1 = src.multiColor1
+            frame.multiColor2 = src.multiColor2
+            frame.backgroundColor = src.backgroundColor
+        }
+    }
 
     private func updatePreview() {
         preview1?.needsDisplay = true
@@ -871,10 +923,14 @@ class SpriteEditorViewController: NSViewController, NSMenuItemValidation {
     }
 
     private func stopAnimation() {
+        let wasPlaying = isPlaying
         animTimer?.invalidate()
         animTimer = nil
         isPlaying = false
         playBtn?.title = "▶ Play"
+        // Playback advances `currentFrame` without rebinding the grid/colour picker,
+        // so resync them or the next edit lands on whichever frame was showing at Play.
+        if wasPlaying { switchToFrame(currentFrame) }
     }
 
     @objc private func animTick() {
@@ -906,9 +962,33 @@ class SpriteEditorViewController: NSViewController, NSMenuItemValidation {
 
     // MARK: - Export Formats
 
+    private func colorName(_ index: Int) -> String {
+        guard index >= 0, index < C64Reference.colorPalette.count else { return "?" }
+        return C64Reference.colorPalette[index].name
+    }
+
+    /// Describes the VIC-II colour registers the exported bytes expect. Multi-color sprite
+    /// data is unusable without them: bit-pair 01 -> $D025, 10 -> $D027+n, 11 -> $D026,
+    /// and 00 is transparent — three visible colours per sprite, two of them shared.
+    private func colorRegisterNotes(_ prefix: String) -> [String] {
+        let s = spriteData
+        var lines = ["\(prefix) \(s.isMultiColor ? "MULTI-COLOR" : "HI-RES") sprite, 24x21"]
+        lines.append("\(prefix) $D027+n sprite color  = \(s.spriteColor) (\(colorName(s.spriteColor)))")
+        if s.isMultiColor {
+            lines.append("\(prefix) $D025 multi-color 1 = \(s.multiColor1) (\(colorName(s.multiColor1))) [bit-pair 01]")
+            lines.append("\(prefix) $D026 multi-color 2 = \(s.multiColor2) (\(colorName(s.multiColor2))) [bit-pair 11]")
+            lines.append("\(prefix) set this sprite's bit in $D01C (53276) to enable multi-color")
+        }
+        return lines
+    }
+
     private func exportAsBasicData(_ allBytes: [[UInt8]]) -> String {
         var lines: [String] = []
         var lineNum = 1000
+        for note in colorRegisterNotes("REM") {
+            lines.append("\(lineNum) \(note)")
+            lineNum += 10
+        }
         for (fi, bytes) in allBytes.enumerated() {
             lines.append("\(lineNum) REM FRAME \(fi + 1)")
             lineNum += 10
@@ -922,7 +1002,8 @@ class SpriteEditorViewController: NSViewController, NSMenuItemValidation {
     }
 
     private func exportAsAssembly(_ allBytes: [[UInt8]]) -> String {
-        var lines: [String] = []
+        var lines: [String] = colorRegisterNotes(";")
+        lines.append("")
         if allBytes.count > 1 {
             lines.append("; \(allBytes.count) animation frames")
             lines.append("sprite_frame_lo:")
@@ -953,7 +1034,8 @@ class SpriteEditorViewController: NSViewController, NSMenuItemValidation {
 
     private func exportAsCArray(_ allBytes: [[UInt8]]) -> String {
         let n = allBytes.count
-        var lines = ["const unsigned char sprite_data[\(n)][63] = {"]
+        var lines = colorRegisterNotes("//")
+        lines.append("const unsigned char sprite_data[\(n)][63] = {")
         for (fi, bytes) in allBytes.enumerated() {
             lines.append("    {  /* frame \(fi + 1) */")
             for row in 0..<21 {
@@ -969,9 +1051,11 @@ class SpriteEditorViewController: NSViewController, NSMenuItemValidation {
     }
 
     private func exportAsHex(_ allBytes: [[UInt8]]) -> String {
-        return allBytes.enumerated().map { fi, bytes in
+        let header = colorRegisterNotes(";").joined(separator: "\n")
+        let body = allBytes.enumerated().map { fi, bytes in
             "; frame \(fi + 1)\n" + bytes.map { String(format: "%02X", $0) }.joined(separator: " ")
         }.joined(separator: "\n")
+        return header + "\n" + body
     }
 
     // MARK: - Import: SPD File
@@ -1018,23 +1102,32 @@ class SpriteEditorViewController: NSViewController, NSMenuItemValidation {
         let bytes = Array(data)
         var spriteFrames: [SpriteData] = []
 
-        if bytes.count >= 3 && bytes[0] == 0x53 && bytes[1] == 0x50 {
-            let version = bytes[2]
+        // SpritePad header: "SPD" magic, version, sprite/animation counts, shared colours.
+        if bytes.count >= 3 && bytes[0] == 0x53 && bytes[1] == 0x50 && bytes[2] == 0x44 {
             guard bytes.count >= 9 else {
-                throw ImportError.invalidFormat("SPD file too short for v2 header")
+                throw ImportError.invalidFormat("SPD file too short for its header")
             }
+            // The version lives at offset 3. Offset 2 is the 'D' of the "SPD" magic, so
+            // reading it here made every file look like version 68 and pick the wrong
+            // header size, shifting all sprite data by 4 bytes.
+            let version = bytes[3]
 
             let numSprites = Int(bytes[4]) + 1
-            let bgColor = Int(bytes[6])
-            let mc1 = Int(bytes[7])
-            let mc2 = Int(bytes[8])
+            // Colour fields carry flags in the upper nibble; mask to a 0-15 palette index
+            // or an out-of-range value reaches the palette lookups.
+            let bgColor = Int(bytes[6]) & 0x0F
+            let mc1 = Int(bytes[7]) & 0x0F
+            let mc2 = Int(bytes[8]) & 0x0F
 
-            let headerSize = version >= 4 ? 13 : 9
-            let dataStart = min(headerSize, bytes.count)
+            // Prefer the size implied by the version, but fall back to whichever candidate
+            // leaves a whole number of 64-byte sprite blocks.
+            let candidates = version >= 4 ? [13, 9] : [9, 13]
+            let dataStart = candidates.first { $0 <= bytes.count && (bytes.count - $0) % 64 == 0 }
+                ?? min(candidates[0], bytes.count)
 
             for i in 0..<numSprites {
                 let offset = dataStart + i * 64
-                guard offset + 63 < bytes.count || offset + 63 == bytes.count else { break }
+                guard offset + 63 <= bytes.count else { break }
 
                 let frame = SpriteData()
                 let spriteBytes = Array(bytes[offset..<min(offset + 64, bytes.count)])
@@ -1087,12 +1180,15 @@ class SpriteEditorViewController: NSViewController, NSMenuItemValidation {
         for i in 0..<numSprites {
             let offset = i * bytesPerSprite
             let frame = SpriteData()
-            frame.fromBytes(Array(bytes[offset..<offset + min(63, bytesPerSprite)]))
-            frame.spriteColor = spriteData.spriteColor
+            // isMultiColor must be set BEFORE fromBytes(): the decoder unpacks 1-bit or
+            // 2-bit pixels depending on the mode, so decoding first then flipping the
+            // flag left multi-color imports full of garbage.
             frame.isMultiColor = spriteData.isMultiColor
+            frame.spriteColor = spriteData.spriteColor
             frame.multiColor1 = spriteData.multiColor1
             frame.multiColor2 = spriteData.multiColor2
             frame.backgroundColor = spriteData.backgroundColor
+            frame.fromBytes(Array(bytes[offset..<offset + min(63, bytesPerSprite)]))
             spriteFrames.append(frame)
         }
 
@@ -1287,16 +1383,16 @@ class SpriteEditorViewController: NSViewController, NSMenuItemValidation {
             guard offset < bytes.count else { break }
 
             let frame = SpriteData()
-            let chunk = Array(bytes[offset..<end])
-            var padded = chunk
-            while padded.count < 63 { padded.append(0) }
-            frame.fromBytes(padded)
-
-            frame.spriteColor = spriteData.spriteColor
+            // Mode first — fromBytes() decodes 1-bit or 2-bit pixels based on it.
             frame.isMultiColor = spriteData.isMultiColor
+            frame.spriteColor = spriteData.spriteColor
             frame.multiColor1 = spriteData.multiColor1
             frame.multiColor2 = spriteData.multiColor2
             frame.backgroundColor = spriteData.backgroundColor
+
+            var padded = Array(bytes[offset..<end])
+            while padded.count < 63 { padded.append(0) }
+            frame.fromBytes(padded)
             spriteFrames.append(frame)
         }
 
@@ -1391,7 +1487,6 @@ class SpriteGridView: NSView {
     /// Negative opacity = next frame (bluish tint), use abs() for actual alpha
     var onionSkinFrames: [(SpriteData, CGFloat)] = []
 
-    private var gridBg:   NSColor { AppTheme.current.panelDetailBackground }
     private var gridLine: NSColor { NSColor(white: AppTheme.current.isDark ? 0.20 : 0.65, alpha: 1.0) }
 
     init(spriteData: SpriteData) {
@@ -1411,7 +1506,9 @@ class SpriteGridView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        gridBg.setFill()
+        // Transparent pixels show the screen background, so paint it once here rather
+        // than filling all 504 cells individually.
+        c64Color(spriteData.backgroundColor).setFill()
         bounds.fill()
 
         let cols = spriteData.isMultiColor ? 12 : 24
@@ -1443,7 +1540,7 @@ class SpriteGridView: NSView {
         for row in 0..<21 {
             for col in 0..<cols {
                 let value = spriteData.pixels[row][col]
-                guard value != 0 || onionSkinFrames.isEmpty else { continue }
+                guard value != 0 else { continue }
                 let color = colorForValue(value)
                 color.setFill()
                 let rect = NSRect(x: CGFloat(col) * cell.width, y: CGFloat(row) * cell.height,
@@ -1519,15 +1616,24 @@ class SpriteGridView: NSView {
 
     private func handleMouse(_ event: NSEvent, erase: Bool = false) {
         let point = convert(event.locationInWindow, from: nil)
-        let cols = spriteData.isMultiColor ? 12 : 24
         let cell = cellSize
+        guard cell.width > 0, cell.height > 0 else { return }
+        // Int() truncates toward zero, so a negative coordinate would otherwise land on
+        // row/col 0 and paint the edge when dragging off the top or left of the grid.
+        guard point.x >= 0, point.y >= 0 else { return }
 
+        let cols = spriteData.isMultiColor ? 12 : 24
         let col = Int(point.x / cell.width)
         let row = Int(point.y / cell.height)
 
         guard row >= 0, row < 21, col >= 0, col < cols else { return }
 
-        spriteData.pixels[row][col] = erase ? 0 : drawColor
+        // Dragging fires many events per cell; skip the redraw + export rebuild when
+        // the pixel already holds the value we are about to write.
+        let newValue: UInt8 = erase ? 0 : drawColor
+        guard spriteData.pixels[row][col] != newValue else { return }
+
+        spriteData.pixels[row][col] = newValue
         needsDisplay = true
         onPixelChanged?()
     }
@@ -1606,17 +1712,40 @@ class SpritePreviewView: NSView {
 /// Manages sprite color role selection (Sprite, MC1, MC2, BG) and palette interaction.
 class SpriteColorPickerView: NSView {
 
+    /// The colour slots a sprite can reference. Hi-res mode only exposes `.sprite` and
+    /// `.background`, so a visible ROW INDEX is not the same thing as a role — always map
+    /// through `visibleRoles` before touching `spriteData`.
+    private enum ColorRole {
+        case sprite, multi1, multi2, background
+
+        var label: String {
+            switch self {
+            case .sprite:     return "Sprite Color"
+            case .multi1:     return "Multi-Color 1"
+            case .multi2:     return "Multi-Color 2"
+            case .background: return "Background"
+            }
+        }
+    }
+
     var spriteData: SpriteData
+
+    /// Fired *before* a colour is written, so the owner can snapshot state for undo.
+    var onColorWillChange: (() -> Void)?
     var onColorChanged: (() -> Void)?
     var onDrawColorChanged: ((UInt8) -> Void)?
 
-    private var selectedRole: Int = 0  // 0=sprite, 1=multi1, 2=multi2, 3=background
-
-    private let roles = ["Sprite Color", "Multi-Color 1", "Multi-Color 2", "Background"]
+    private var selectedRow: Int = 0
     private var roleButtons: [NSButton] = []
     private var roleSwatches: [NSButton] = []
     private var paletteButtons: [ColorSwatchButton] = []
     private var lastBuiltMultiColor: Bool? = nil
+
+    private var visibleRoles: [ColorRole] {
+        spriteData.isMultiColor
+            ? [.sprite, .multi1, .multi2, .background]
+            : [.sprite, .background]
+    }
 
     init(spriteData: SpriteData) {
         self.spriteData = spriteData
@@ -1628,7 +1757,40 @@ class SpriteColorPickerView: NSView {
 
     override var isFlipped: Bool { true }
 
-    /// Builds the role buttons, swatches, and palette once. Called on init and mode change.
+    // MARK: - Role <-> sprite data mapping
+
+    private func colorIndex(for role: ColorRole) -> Int {
+        switch role {
+        case .sprite:     return spriteData.spriteColor
+        case .multi1:     return spriteData.multiColor1
+        case .multi2:     return spriteData.multiColor2
+        case .background: return spriteData.backgroundColor
+        }
+    }
+
+    private func setColorIndex(_ index: Int, for role: ColorRole) {
+        switch role {
+        case .sprite:     spriteData.spriteColor = index
+        case .multi1:     spriteData.multiColor1 = index
+        case .multi2:     spriteData.multiColor2 = index
+        case .background: spriteData.backgroundColor = index
+        }
+    }
+
+    /// The pixel value the pen paints while this role is active.
+    private func drawValue(for role: ColorRole) -> UInt8 {
+        switch role {
+        case .sprite:     return spriteData.isMultiColor ? 2 : 1
+        case .multi1:     return 1
+        case .multi2:     return 3
+        case .background: return 0  // transparent
+        }
+    }
+
+    // MARK: - Layout
+
+    /// Builds the role rows, swatches, and palette. Must re-run whenever the colour mode
+    /// changes, since hi-res exposes two roles and multi-color exposes four.
     private func setup() {
         let currentMode = spriteData.isMultiColor
         guard lastBuiltMultiColor != currentMode else { return }
@@ -1643,18 +1805,11 @@ class SpriteColorPickerView: NSView {
         let spacing: CGFloat = 4
         let startY: CGFloat = 0
 
-        let activeRoles = spriteData.isMultiColor ? 4 : 2
-        for i in 0..<activeRoles {
-            let label: String
-            if !spriteData.isMultiColor {
-                label = i == 0 ? "Sprite Color" : "Background"
-            } else {
-                label = roles[i]
-            }
-
+        let rows = visibleRoles
+        for (i, role) in rows.enumerated() {
             let y = startY + CGFloat(i) * 28
 
-            let btn = NSButton(title: label, target: self, action: #selector(roleSelected(_:)))
+            let btn = NSButton(title: role.label, target: self, action: #selector(roleSelected(_:)))
             btn.tag = i
             btn.isBordered = false
             btn.frame = NSRect(x: 30, y: y, width: 140, height: 20)
@@ -1673,7 +1828,7 @@ class SpriteColorPickerView: NSView {
             roleSwatches.append(swatch)
         }
 
-        let paletteY = startY + CGFloat(activeRoles) * 28 + 10
+        let paletteY = startY + CGFloat(rows.count) * 28 + 10
 
         let palLabel = NSTextField(labelWithString: "PALETTE")
         palLabel.font = NSFont.monospacedSystemFont(ofSize: 9, weight: .bold)
@@ -1694,71 +1849,68 @@ class SpriteColorPickerView: NSView {
             addSubview(btn)
             paletteButtons.append(btn)
         }
+
+        if selectedRow >= rows.count { selectedRow = 0 }
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        // Update visual state of existing views
-        let colorIndices = [spriteData.spriteColor, spriteData.multiColor1,
-                            spriteData.multiColor2, spriteData.backgroundColor]
+        let rows = visibleRoles
 
         for (i, btn) in roleButtons.enumerated() {
-            let isSelected = i == selectedRole
+            let isSelected = i == selectedRow
             btn.font = NSFont.monospacedSystemFont(ofSize: 10, weight: isSelected ? .bold : .regular)
-            btn.contentTintColor = isSelected ? .cyan : .gray
+            btn.contentTintColor = isSelected
+                ? AppTheme.current.editorSelectionHighlight
+                : AppTheme.current.statusLabel
         }
 
-        for (i, swatch) in roleSwatches.enumerated() {
-            let colorIndex: Int
-            if !spriteData.isMultiColor {
-                colorIndex = i == 0 ? spriteData.spriteColor : spriteData.backgroundColor
-            } else {
-                colorIndex = colorIndices[i]
-            }
-            let isSelected = i == selectedRole
-            let c = NSColor(hex: C64Reference.colorPalette[colorIndex].hex) ?? .black
-            swatch.layer?.backgroundColor = c.cgColor
-            swatch.layer?.borderColor = (isSelected ? AppTheme.current.editorSelectionHighlight : AppTheme.current.statusLabel).cgColor
+        for (i, swatch) in roleSwatches.enumerated() where i < rows.count {
+            let isSelected = i == selectedRow
+            swatch.layer?.backgroundColor = SpriteColorPickerView.c64Color(colorIndex(for: rows[i])).cgColor
+            swatch.layer?.borderColor = (isSelected
+                ? AppTheme.current.editorSelectionHighlight
+                : AppTheme.current.statusLabel).cgColor
             swatch.layer?.borderWidth = isSelected ? 2 : 1
         }
     }
 
+    /// Rebuilds the role rows for the sprite's current colour mode. Called after the
+    /// mode toggle and on every frame switch (frames may differ after an SPD import).
     func updateForMode() {
-        selectedRole = 0
-        lastBuiltMultiColor = nil  // force rebuild on next draw
+        let modeChanged = lastBuiltMultiColor != spriteData.isMultiColor
+        setup()
+        if modeChanged {
+            // The old pen value may not exist in the new mode, so reset to the sprite colour.
+            selectedRow = 0
+            onDrawColorChanged?(drawValue(for: .sprite))
+        }
         needsDisplay = true
-        let defaultDrawColor: UInt8 = spriteData.isMultiColor ? 2 : 1
-        onDrawColorChanged?(defaultDrawColor)
     }
+
+    // MARK: - Actions
 
     @objc private func roleSelected(_ sender: NSButton) {
-        selectedRole = sender.tag
+        let rows = visibleRoles
+        guard sender.tag >= 0, sender.tag < rows.count else { return }
+        selectedRow = sender.tag
         needsDisplay = true
-        let drawValue: UInt8
-        switch sender.tag {
-        case 0: drawValue = spriteData.isMultiColor ? 2 : 1
-        case 1: drawValue = spriteData.isMultiColor ? 1 : 0
-        case 2: drawValue = 3
-        case 3: drawValue = 0
-        default: return
-        }
-        onDrawColorChanged?(drawValue)
-    }
-
-    @objc private func setDrawColor(_ sender: NSButton) {
-        onDrawColorChanged?(UInt8(sender.tag))
+        onDrawColorChanged?(drawValue(for: rows[sender.tag]))
     }
 
     @objc private func paletteColorClicked(_ sender: ColorSwatchButton) {
-        let colorIndex = sender.colorIndex
-        switch selectedRole {
-        case 0: spriteData.spriteColor = colorIndex
-        case 1: spriteData.multiColor1 = colorIndex
-        case 2: spriteData.multiColor2 = colorIndex
-        case 3: spriteData.backgroundColor = colorIndex
-        default: break
-        }
+        let rows = visibleRoles
+        guard selectedRow >= 0, selectedRow < rows.count else { return }
+        onColorWillChange?()
+        setColorIndex(sender.colorIndex, for: rows[selectedRow])
         needsDisplay = true
         onColorChanged?()
+    }
+
+    /// Palette lookup that tolerates an out-of-range index (e.g. from a malformed import)
+    /// instead of trapping on the array subscript.
+    static func c64Color(_ index: Int) -> NSColor {
+        guard index >= 0, index < C64Reference.colorPalette.count else { return .black }
+        return NSColor(hex: C64Reference.colorPalette[index].hex) ?? .black
     }
 }
 
