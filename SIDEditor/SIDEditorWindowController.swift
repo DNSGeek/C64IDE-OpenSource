@@ -9,14 +9,17 @@ class SIDEditorWindowController: NSWindowController, NSWindowDelegate {
 
     convenience init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 820, height: 870),
+            contentRect: NSRect(x: 0, y: 0, width: 840, height: 870),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
         window.title = "SID Editor"
         window.center()
-        window.minSize = NSSize(width: 700, height: 700)
+        // Wide enough for the fixed-position controls (the Save As button ends
+        // at x=805) and tall enough to leave the tracker a usable number of
+        // rows below the ~260pt instrument section.
+        window.minSize = NSSize(width: 830, height: 600)
         window.titlebarAppearsTransparent = true
         window.backgroundColor = AppTheme.current.panelBackground
 
@@ -61,8 +64,6 @@ class SIDEditorViewController: NSViewController, NSMenuItemValidation {
     private var song = SIDSong()
     private var currentInstrument: Int = 0
     private var currentPattern: Int = 0
-    private var cursorRow: Int = 0
-    private var cursorVoice: Int = 0
 
     var onModified: (() -> Void)?
     var onSaved: (() -> Void)?
@@ -79,9 +80,16 @@ class SIDEditorViewController: NSViewController, NSMenuItemValidation {
     @objc func redo(_ sender: Any?) { performRedo() }
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-        if menuItem.action == #selector(undo(_:)) { return !undoStack.isEmpty }
-        if menuItem.action == #selector(redo(_:)) { return !redoStack.isEmpty }
-        return true
+        switch menuItem.action {
+        case #selector(undo(_:)): return !undoStack.isEmpty
+        case #selector(redo(_:)): return !redoStack.isEmpty
+        case #selector(saveDocument(_:)), #selector(saveDocumentAs(_:)), #selector(openDocument(_:)):
+            return true
+        default:
+            // Don't enable menu items this editor doesn't implement just
+            // because it happens to sit in the responder chain.
+            return responds(to: menuItem.action)
+        }
     }
 
     // Undo system
@@ -97,6 +105,12 @@ class SIDEditorViewController: NSViewController, NSMenuItemValidation {
     private var sectionLabels: [NSTextField] = []
     private var dimLabels:     [NSTextField] = []
 
+    /// Undo-stack depth at the last save. Undo and redo only ever move along
+    /// one linear history, so the depth identifies the document state — when
+    /// it matches again, the song on screen is the song on disk. -1 means the
+    /// saved state is no longer reachable.
+    private var savedUndoDepth: Int = 0
+
     private func pushUndo(_ label: String) {
         let snapshot = UndoSnapshot(
             song: song.deepCopy(),
@@ -105,7 +119,15 @@ class SIDEditorViewController: NSViewController, NSMenuItemValidation {
             label: label
         )
         undoStack.append(snapshot)
-        if undoStack.count > maxUndoLevels { undoStack.removeFirst() }
+        if undoStack.count > maxUndoLevels {
+            undoStack.removeFirst()
+            // The whole stack shifted down; the save point shifts with it,
+            // and once it falls off the end it can never be reached again.
+            if savedUndoDepth >= 0 { savedUndoDepth -= 1 }
+        }
+        // Editing after an undo throws away the redo branch, so a save point
+        // further along that branch is gone for good.
+        if !redoStack.isEmpty { savedUndoDepth = -1 }
         redoStack.removeAll()
         // Reset slider coalescing unless this IS a slider push
         if label != lastSliderUndoLabel { lastSliderUndoLabel = nil }
@@ -138,7 +160,9 @@ class SIDEditorViewController: NSViewController, NSMenuItemValidation {
         currentInstrument = min(snapshot.currentInstrument, song.instruments.count - 1)
         currentPattern = min(snapshot.currentPattern, song.patterns.count - 1)
         refreshAllUI()
-        markModified()
+        // Not markModified(): undoing back to the save point leaves the
+        // document clean again.
+        updateModifiedState()
     }
 
     /// Refreshes all UI elements from current song state.
@@ -171,26 +195,27 @@ class SIDEditorViewController: NSViewController, NSMenuItemValidation {
 
     /// Resizes tracker document view to fit the current pattern's row count.
     private func updateTrackerContentSize() {
-        guard let tv = trackerView, currentPattern < song.patterns.count else { return }
+        guard let tv = trackerView, song.patterns.indices.contains(currentPattern) else { return }
         let rows = song.patterns[currentPattern].length
         let contentHeight = CGFloat(rows + 1) * 16
-        tv.frame = NSRect(x: 0, y: 0, width: tv.frame.width, height: contentHeight)
+        let width = trackerScrollView?.contentSize.width ?? tv.frame.width
+        tv.frame = NSRect(x: 0, y: 0, width: width, height: contentHeight)
     }
 
     // Instrument UI
     private var instrNameField: NSTextField!
     private var waveButtons: [NSButton] = []
-    private var adsrSliders: [NSSlider] = []
+    private var adsrSliders: [GestureSlider] = []
     private var adsrLabels: [NSTextField] = []
-    private var pwSlider: NSSlider!
+    private var pwSlider: GestureSlider!
     private var pwLabel: NSTextField!
     private var envelopeView: ADSREnvelopeView!
     private var instrSelector: NSPopUpButton!
 
     // Filter UI
-    private var cutoffSlider: NSSlider!
-    private var resonanceSlider: NSSlider!
-    private var volumeSlider: NSSlider!
+    private var cutoffSlider: GestureSlider!
+    private var resonanceSlider: GestureSlider!
+    private var volumeSlider: GestureSlider!
     private var filterButtons: [NSButton] = []
     private var filterVoiceButtons: [NSButton] = []
 
@@ -204,18 +229,19 @@ class SIDEditorViewController: NSViewController, NSMenuItemValidation {
     private var exportTextView: NSTextView!
 
     // Layout
-    private var trackerTopY: CGFloat = 0
+
+    /// Distance from the top of the view down to the top of the tracker grid.
+    /// Stored as an inset rather than an absolute y so the tracker follows the
+    /// top section when the window is resized.
+    private var trackerTopInset: CGFloat = 0
 
     // Audio
     private var audioEngine = SIDAudioEngine()
-    private var playButton: NSButton!
-    private var stopButton: NSButton!
-    private var previewButton: NSButton!
 
     private var bgColor: NSColor { AppTheme.current.panelBackground }
 
     override func loadView() {
-        self.view = NSView(frame: NSRect(x: 0, y: 0, width: 820, height: 870))
+        self.view = NSView(frame: NSRect(x: 0, y: 0, width: 840, height: 870))
         view.wantsLayer = true
         view.layer?.backgroundColor = bgColor.cgColor
     }
@@ -259,8 +285,9 @@ class SIDEditorViewController: NSViewController, NSMenuItemValidation {
         super.viewDidLayout()
         guard trackerScrollView != nil else { return }
         let msgBarTop: CGFloat = 80  // y=12 + height=60 + 8pt gap
-        let trackerHeight = trackerTopY - msgBarTop
-        trackerScrollView.frame = NSRect(x: 12, y: msgBarTop, width: view.bounds.width - 24, height: max(trackerHeight, 32))
+        let trackerTop = view.bounds.height - trackerTopInset
+        trackerScrollView.frame = NSRect(x: 12, y: msgBarTop, width: view.bounds.width - 24,
+                                         height: max(trackerTop - msgBarTop, 32))
     }
 
     // MARK: - Build UI
@@ -295,7 +322,7 @@ class SIDEditorViewController: NSViewController, NSMenuItemValidation {
         instrNameField.action = #selector(instrNameChanged(_:))
         view.addSubview(instrNameField)
 
-        previewButton = NSButton(title: "♪ Preview", target: self, action: #selector(previewInstrument(_:)))
+        let previewButton = NSButton(title: "♪ Preview", target: self, action: #selector(previewInstrument(_:)))
         previewButton.frame = NSRect(x: 460, y: y - 2, width: 85, height: 20)
         previewButton.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .medium)
         view.addSubview(previewButton)
@@ -340,7 +367,8 @@ class SIDEditorViewController: NSViewController, NSMenuItemValidation {
         pwl.frame = NSRect(x: 370, y: y, width: 30, height: 16)
         view.addSubview(pwl)
 
-        pwSlider = NSSlider(value: 2048, minValue: 0, maxValue: 4095, target: self, action: #selector(pwChanged(_:)))
+        pwSlider = GestureSlider(value: 2048, minValue: 0, maxValue: 4095, target: self, action: #selector(pwChanged(_:)))
+        pwSlider.onGestureEnded = { [weak self] in self?.endSliderCoalescing() }
         pwSlider.frame = NSRect(x: 400, y: y, width: 120, height: 18)
         view.addSubview(pwSlider)
 
@@ -362,7 +390,8 @@ class SIDEditorViewController: NSViewController, NSMenuItemValidation {
             lbl.frame = NSRect(x: 12, y: y - CGFloat(i) * 24, width: 20, height: 16)
             view.addSubview(lbl)
 
-            let slider = NSSlider(value: adsrDefaults[i], minValue: 0, maxValue: 15, target: self, action: #selector(adsrChanged(_:)))
+            let slider = GestureSlider(value: adsrDefaults[i], minValue: 0, maxValue: 15, target: self, action: #selector(adsrChanged(_:)))
+            slider.onGestureEnded = { [weak self] in self?.endSliderCoalescing() }
             slider.tag = i
             slider.numberOfTickMarks = 16
             slider.allowsTickMarkValuesOnly = true
@@ -434,21 +463,24 @@ class SIDEditorViewController: NSViewController, NSMenuItemValidation {
         let cutLabel = makeLabel("Cut:", bold: false, color: AppTheme.current.statusLabel)
         cutLabel.frame = NSRect(x: filterX, y: y - 24, width: 30, height: 16)
         view.addSubview(cutLabel)
-        cutoffSlider = NSSlider(value: 1024, minValue: 0, maxValue: 2047, target: self, action: #selector(filterChanged(_:)))
+        cutoffSlider = GestureSlider(value: 1024, minValue: 0, maxValue: 2047, target: self, action: #selector(filterChanged(_:)))
+        cutoffSlider.onGestureEnded = { [weak self] in self?.endSliderCoalescing() }
         cutoffSlider.frame = NSRect(x: filterX + 32, y: y - 24, width: 150, height: 18)
         view.addSubview(cutoffSlider)
 
         let resLabel = makeLabel("Res:", bold: false, color: AppTheme.current.statusLabel)
         resLabel.frame = NSRect(x: filterX, y: y - 48, width: 30, height: 16)
         view.addSubview(resLabel)
-        resonanceSlider = NSSlider(value: 0, minValue: 0, maxValue: 15, target: self, action: #selector(filterChanged(_:)))
+        resonanceSlider = GestureSlider(value: 0, minValue: 0, maxValue: 15, target: self, action: #selector(filterChanged(_:)))
+        resonanceSlider.onGestureEnded = { [weak self] in self?.endSliderCoalescing() }
         resonanceSlider.frame = NSRect(x: filterX + 32, y: y - 48, width: 150, height: 18)
         view.addSubview(resonanceSlider)
 
         let volLabel = makeLabel("Vol:", bold: false, color: AppTheme.current.statusLabel)
         volLabel.frame = NSRect(x: filterX, y: y - 72, width: 30, height: 16)
         view.addSubview(volLabel)
-        volumeSlider = NSSlider(value: 15, minValue: 0, maxValue: 15, target: self, action: #selector(volumeChanged(_:)))
+        volumeSlider = GestureSlider(value: 15, minValue: 0, maxValue: 15, target: self, action: #selector(volumeChanged(_:)))
+        volumeSlider.onGestureEnded = { [weak self] in self?.endSliderCoalescing() }
         volumeSlider.frame = NSRect(x: filterX + 32, y: y - 72, width: 150, height: 18)
         view.addSubview(volumeSlider)
 
@@ -523,9 +555,16 @@ class SIDEditorViewController: NSViewController, NSMenuItemValidation {
             ebx += 90
         }
 
+        // Every control built so far is laid out top-down from the view's
+        // height at build time. Without a flexible bottom margin they keep
+        // their distance from the *bottom* edge instead, so the whole section
+        // slides down on resize and is clipped as soon as the window is
+        // shorter than the height it was built at.
+        for subview in view.subviews { subview.autoresizingMask = [.minYMargin] }
+
         // Tracker grid (wrapped in scroll view)
         let trackerGridY = trackerY - 26
-        trackerTopY = CGFloat(trackerGridY)
+        trackerTopInset = view.bounds.height - CGFloat(trackerGridY)
         let scrollFrame = NSRect(x: 12, y: 80, width: view.bounds.width - 24, height: CGFloat(trackerGridY - 80))
 
         trackerView = TrackerView(song: song, patternIndex: 0)
@@ -533,10 +572,16 @@ class SIDEditorViewController: NSViewController, NSMenuItemValidation {
         trackerView.frame = NSRect(x: 0, y: 0, width: scrollFrame.width, height: contentHeight)
         trackerView.autoresizingMask = [.width]
         trackerView.onNoteEntered = { [weak self] voice, row, note in
-            self?.pushUndo("Note Entry")
-            self?.song.patterns[self?.currentPattern ?? 0].notes[voice][row] = note
-            self?.trackerView.needsDisplay = true
-            self?.markModified()
+            // Patterns can differ in length, so validate against the pattern
+            // actually being edited rather than trusting the cursor.
+            guard let self, self.song.patterns.indices.contains(self.currentPattern) else { return }
+            let pattern = self.song.patterns[self.currentPattern]
+            guard (0..<3).contains(voice), (0..<pattern.length).contains(row) else { return }
+
+            self.pushUndo("Note Entry")
+            pattern.notes[voice][row] = note
+            self.trackerView.needsDisplay = true
+            self.markModified()
         }
         trackerView.onNotePreview = { [weak self] noteNum in
             guard let self = self, self.currentInstrument < self.song.instruments.count else { return }
@@ -547,7 +592,8 @@ class SIDEditorViewController: NSViewController, NSMenuItemValidation {
                                       filterCutoff: self.song.filterCutoff,
                                       filterResonance: self.song.filterResonance,
                                       filterType: self.song.filterType,
-                                      filterVoices: self.song.filterVoices)
+                                      filterVoices: self.song.filterVoices,
+                                      volume: self.song.globalVolume)
         }
         // Undo/Redo — callbacks ready for future SID undo implementation
         trackerView.onUndo = { [weak self] in self?.performUndo() }
@@ -556,7 +602,9 @@ class SIDEditorViewController: NSViewController, NSMenuItemValidation {
         trackerScrollView = NSScrollView(frame: scrollFrame)
         trackerScrollView.documentView = trackerView
         trackerScrollView.hasVerticalScroller = true
-        trackerScrollView.autoresizingMask = [.width, .height]
+        // Frame is driven entirely by viewDidLayout(), which has to account
+        // for the fixed-height top section and the export strip below.
+        trackerScrollView.autoresizingMask = []
         trackerScrollView.drawsBackground = false
         view.addSubview(trackerScrollView)
 
@@ -653,6 +701,7 @@ class SIDEditorViewController: NSViewController, NSMenuItemValidation {
 
     @objc private func instrNameChanged(_ sender: NSTextField) {
         guard currentInstrument < song.instruments.count else { return }
+        guard sender.stringValue != song.instruments[currentInstrument].name else { return }
         pushUndo("Rename Instrument")
         song.instruments[currentInstrument].name = sender.stringValue
         refreshInstrumentSelector()
@@ -675,6 +724,14 @@ class SIDEditorViewController: NSViewController, NSMenuItemValidation {
 
     // Track last slider undo label to coalesce continuous slider drags
     private var lastSliderUndoLabel: String?
+
+    /// Ends slider coalescing so each drag gesture becomes its own undo step.
+    /// Without this the key only clears when a *different* action pushes an
+    /// undo entry, and two consecutive drags of the same slider collapse into
+    /// a single entry.
+    private func endSliderCoalescing() {
+        lastSliderUndoLabel = nil
+    }
 
     @objc private func adsrChanged(_ sender: NSSlider) {
         guard currentInstrument < song.instruments.count else { return }
@@ -770,9 +827,14 @@ class SIDEditorViewController: NSViewController, NSMenuItemValidation {
     }
 
     @objc private func speedChanged(_ sender: NSTextField) {
+        let newSpeed = max(1, min(20, sender.integerValue))
+        // Show the clamped value rather than leaving an out-of-range number
+        // in the field that the song didn't actually take.
+        sender.integerValue = newSpeed
+        guard newSpeed != song.speed else { return }
         pushUndo("Change Speed")
         lastSliderUndoLabel = nil
-        song.speed = max(1, min(20, sender.integerValue))
+        song.speed = newSpeed
         markModified()
     }
 
@@ -800,17 +862,25 @@ class SIDEditorViewController: NSViewController, NSMenuItemValidation {
     @objc func saveDocumentAs(_ sender: Any?) { saveSong(forcePrompt: true) }
     @objc func openDocument(_ sender: Any?) { openSong() }
 
-    /// Marks the song as having unsaved changes.
+    /// Marks the song as having unsaved changes. Call after an edit that has
+    /// already pushed an undo entry.
     private func markModified() {
-        view.window?.isDocumentEdited = true
-        onModified?()
+        updateModifiedState()
     }
 
     /// Marks the song as clean (just saved or just loaded).
     private func markSaved() {
-        view.window?.isDocumentEdited = false
-        onSaved?()
+        savedUndoDepth = undoStack.count
+        updateModifiedState()
         updateWindowTitle()
+    }
+
+    /// Syncs the window's edited indicator with the undo history's distance
+    /// from the last save.
+    private func updateModifiedState() {
+        let dirty = undoStack.count != savedUndoDepth
+        view.window?.isDocumentEdited = dirty
+        if dirty { onModified?() } else { onSaved?() }
     }
 
     /// Reflects the current file (if any) in the window title and proxy icon.
@@ -929,6 +999,7 @@ class SIDEditorViewController: NSViewController, NSMenuItemValidation {
 
         undoStack.removeAll()
         redoStack.removeAll()
+        savedUndoDepth = 0
         lastSliderUndoLabel = nil
 
         refreshAllUI()
@@ -955,7 +1026,8 @@ class SIDEditorViewController: NSViewController, NSMenuItemValidation {
                              filterCutoff: song.filterCutoff,
                              filterResonance: song.filterResonance,
                              filterType: song.filterType,
-                             filterVoices: song.filterVoices)
+                             filterVoices: song.filterVoices,
+                             volume: song.globalVolume)
     }
 
     @objc private func playPattern(_ sender: Any?) {
@@ -976,6 +1048,23 @@ class SIDEditorViewController: NSViewController, NSMenuItemValidation {
         audioEngine.stop()
         trackerView.cursorRow = 0
         trackerView.needsDisplay = true
+    }
+}
+
+// MARK: - Gesture Slider
+
+/// NSSlider that reports when a drag gesture finishes.
+/// A continuous slider sends its action repeatedly *during* tracking but not
+/// again on mouse-up, so there is no other signal for "the user let go" — and
+/// without one, undo coalescing cannot tell two successive drags of the same
+/// slider apart. `NSControl.mouseDown` runs the tracking loop and only returns
+/// once tracking ends, which makes it the reliable place to hook.
+final class GestureSlider: NSSlider {
+    var onGestureEnded: (() -> Void)?
+
+    override func mouseDown(with event: NSEvent) {
+        super.mouseDown(with: event)
+        onGestureEnded?()
     }
 }
 
@@ -1195,15 +1284,20 @@ class ADSREnvelopeView: NSView {
 
     // MARK: - Drag logic
 
-    /// Returns the handle index (0/1/2) whose hit area contains `pt`, or nil.
+    /// Returns the handle index (0-3) closest to `pt` within the hit radius,
+    /// or nil. Handles overlap when the sustain segment is short, so this has
+    /// to compare all four rather than take the first one in range.
     private func nearestHandle(to pt: CGPoint) -> Int? {
         let handles = handlePoints()
         let pts = [handles.attackPeak, handles.decayKnee, handles.sustainMid, handles.releaseMid]
+        var best: Int?
+        var bestDist = hitRadius
         for (i, hp) in pts.enumerated() {
             let dx = pt.x - hp.x, dy = pt.y - hp.y
-            if sqrt(dx*dx + dy*dy) <= hitRadius { return i }
+            let dist = sqrt(dx*dx + dy*dy)
+            if dist <= bestDist { bestDist = dist; best = i }
         }
-        return nil
+        return best
     }
 
     /// Converts a drag position into updated ADSR values and fires the callback.
@@ -1287,10 +1381,20 @@ class ADSREnvelopeView: NSView {
 class TrackerView: NSView {
 
     private let song: SIDSong
-    var patternIndex: Int
+
+    /// Patterns can differ in length, so the cursor is re-clamped whenever the
+    /// displayed pattern changes — otherwise a cursor left past the end of a
+    /// long pattern would address a row the new one doesn't have.
+    var patternIndex: Int { didSet { clampCursor() } }
+
     var cursorRow: Int = 0
     var cursorVoice: Int = 0
     var currentInstrument: Int = 0
+
+    /// Base octave for piano-key note entry; the key layout is relative to it,
+    /// so the whole SID range is reachable and not just C-3 to E-5.
+    var baseOctave: Int = 3 { didSet { needsDisplay = true } }
+
     var onNoteEntered: ((Int, Int, PatternNote) -> Void)?
 
     /// Called when a note is typed — for audio preview.
@@ -1304,6 +1408,20 @@ class TrackerView: NSView {
     private let rowHeight: CGFloat = 16
     private let voiceWidth: CGFloat = 120
     private let rowNumWidth: CGFloat = 30
+
+    /// Piano-key layout as semitone offsets from the base octave:
+    /// Lower row: Z=C, S=C#, X=D, D=D#, C=E, V=F, G=F#, B=G, H=G#, N=A, J=A#, M=B
+    /// Upper row: Q, 2, W, 3, E, R, 5, T, 6, Y, 7, U continue an octave higher,
+    /// then I, 9, O, 0, P reach into the one above that.
+    private static let pianoOffsets: [Character: Int] = [
+        "z": 0, "s": 1, "x": 2, "d": 3, "c": 4, "v": 5, "g": 6, "b": 7, "h": 8, "n": 9, "j": 10, "m": 11,
+        "q": 12, "2": 13, "w": 14, "3": 15, "e": 16, "r": 17, "5": 18, "t": 19, "6": 20, "y": 21, "7": 22, "u": 23,
+        "i": 24, "9": 25, "o": 26, "0": 27, "p": 28,
+    ]
+
+    /// Highest base octave worth selecting — above this the whole key layout
+    /// sits past SID_NOTE_MAX.
+    private static let maxBaseOctave = 7
 
     private var bgColor:     NSColor { AppTheme.current.panelDetailBackground }
     private var cursorColor: NSColor { AppTheme.current.selectionBackground }
@@ -1324,6 +1442,17 @@ class TrackerView: NSView {
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
 
+    /// Keeps the cursor inside the pattern currently on screen.
+    private func clampCursor() {
+        guard song.patterns.indices.contains(patternIndex) else {
+            cursorRow = 0
+            return
+        }
+        cursorRow = min(max(0, cursorRow), song.patterns[patternIndex].length - 1)
+        cursorVoice = min(max(0, cursorVoice), 2)
+        needsDisplay = true
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         bgColor.setFill()
         bounds.fill()
@@ -1343,6 +1472,11 @@ class TrackerView: NSView {
                 .font: boldFont, .foregroundColor: headerColor
             ])
         }
+
+        // Current note-entry octave, and the keys that change it
+        "OCT \(baseOctave)  (- / +)".draw(
+            at: NSPoint(x: rowNumWidth + 3 * voiceWidth + 12, y: headerY + 1),
+            withAttributes: [.font: font, .foregroundColor: AppTheme.current.statusLabel])
 
         // Separator
         NSColor(white: AppTheme.current.isDark ? 0.2 : 0.6, alpha: 1).setStroke()
@@ -1434,6 +1568,10 @@ class TrackerView: NSView {
         guard patternIndex < song.patterns.count else { return }
         let pattern = song.patterns[patternIndex]
 
+        // A pattern's length can change under the cursor (undo, file load), so
+        // clamp before anything uses cursorRow as an index.
+        clampCursor()
+
         let chars = event.charactersIgnoringModifiers ?? ""
 
         // Arrow keys
@@ -1473,16 +1611,20 @@ class TrackerView: NSView {
             return
         }
 
-        // Piano keyboard mapping (2 octaves):
-        // Lower row: Z=C-3, S=C#3, X=D-3, D=D#3, C=E-3, V=F-3, G=F#3, B=G-3, H=G#3, N=A-3, J=A#3, M=B-3
-        // Upper row: Q=C-4, 2=C#4, W=D-4, 3=D#4, E=E-4, R=F-4, 5=F#4, T=G-4, 6=G#4, Y=A-4, 7=A#4, U=B-4
-        let pianoMap: [Character: Int] = [
-            "z": 36, "s": 37, "x": 38, "d": 39, "c": 40, "v": 41, "g": 42, "b": 43, "h": 44, "n": 45, "j": 46, "m": 47,
-            "q": 48, "2": 49, "w": 50, "3": 51, "e": 52, "r": 53, "5": 54, "t": 55, "6": 56, "y": 57, "7": 58, "u": 59,
-            "i": 60, "9": 61, "o": 62, "0": 63, "p": 64,
-        ]
+        // Octave shift — moves the whole piano layout so notes outside the
+        // two-and-a-bit octaves under the keys are still reachable.
+        if chars == "-" || chars == "_" {
+            baseOctave = max(0, baseOctave - 1)
+            return
+        }
+        if chars == "+" || chars == "=" {
+            baseOctave = min(TrackerView.maxBaseOctave, baseOctave + 1)
+            return
+        }
 
-        if let ch = chars.lowercased().first, let noteNum = pianoMap[ch] {
+        if let ch = chars.lowercased().first, let offset = TrackerView.pianoOffsets[ch] {
+            let noteNum = baseOctave * 12 + offset
+            guard noteNum >= 0, noteNum <= SID_NOTE_MAX else { return }
             let note = PatternNote(note: noteNum, instrument: currentInstrument)
             onNoteEntered?(cursorVoice, cursorRow, note)
             onNotePreview?(noteNum)
