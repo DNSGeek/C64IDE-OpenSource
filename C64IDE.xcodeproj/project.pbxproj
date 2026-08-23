@@ -9,6 +9,8 @@
 /* Begin PBXBuildFile section */
 		133513F12F844A5500A98A29 /* ReferencePanelDialectTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 133513F02F844A5500A98A29 /* ReferencePanelDialectTests.swift */; };
 		13AA10022F900002 /* OpcodeReferenceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13AA10012F900001 /* OpcodeReferenceTests.swift */; };
+		13AA20022FD00002 /* MemoryMapParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13AA20012FD00001 /* MemoryMapParserTests.swift */; };
+		13AA20042FD00004 /* MemoryMapColumnViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13AA20032FD00003 /* MemoryMapColumnViewTests.swift */; };
 		13AA10042F900004 /* ROMSymbolReferenceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13AA10032F900003 /* ROMSymbolReferenceTests.swift */; };
 		133513E02F844A5500A98A29 /* BasicAutoArrangeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 133513D02F844A5500A98A29 /* BasicAutoArrangeTests.swift */; };
 		133513E12F844A5500A98A29 /* BasicCodeGenTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 133513D12F844A5500A98A29 /* BasicCodeGenTests.swift */; };
@@ -113,6 +115,8 @@
 /* Begin PBXFileReference section */
 		133513F02F844A5500A98A29 /* ReferencePanelDialectTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReferencePanelDialectTests.swift; sourceTree = "<group>"; };
 		13AA10012F900001 /* OpcodeReferenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpcodeReferenceTests.swift; sourceTree = "<group>"; };
+		13AA20012FD00001 /* MemoryMapParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryMapParserTests.swift; sourceTree = "<group>"; };
+		13AA20032FD00003 /* MemoryMapColumnViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryMapColumnViewTests.swift; sourceTree = "<group>"; };
 		13AA10032F900003 /* ROMSymbolReferenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ROMSymbolReferenceTests.swift; sourceTree = "<group>"; };
 		133513D02F844A5500A98A29 /* BasicAutoArrangeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BasicAutoArrangeTests.swift; sourceTree = "<group>"; };
 		133513D12F844A5500A98A29 /* BasicCodeGenTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BasicCodeGenTests.swift; sourceTree = "<group>"; };
@@ -381,6 +385,7 @@
 				1347C3732FAEFB6F00FC1CBB /* CfgFileEditor.swift */,
 				1347C3742FAEFB6F00FC1CBB /* CfgFileParser.swift */,
 				1347C3752FAEFB6F00FC1CBB /* MapFileParser.swift */,
+				13AA20012FD00001 /* MemoryMapParserTests.swift */,
 					13C3E3B22F70E8C700111DDE /* BuildConfiguration.swift */,
 				13C3E3B32F70E8C700111DDE /* BuildErrorParser.swift */,
 				13C3E3B42F70E8C700111DDE /* BuildManager.swift */,
@@ -455,6 +460,7 @@
 				131C45982F75812100835980 /* PETSCIIMapWindowController.swift */,
 				13651BE52F7217DC001749B5 /* CharEditorWindowController.swift */,
 				13C0DE022FB0000100C64ADE /* CharsetMapEditorTests.swift */,
+				13AA20032FD00003 /* MemoryMapColumnViewTests.swift */,
 				137E71282F710266008BFE9A /* BottomPanel */,
 				137E71252F710253008BFE9A /* ReferencePanel */,
 				AB000002 /* EditorViewController.swift */,
@@ -616,6 +622,8 @@
 				133513E02F844A5500A98A29 /* BasicAutoArrangeTests.swift in Sources */,
 				133513F12F844A5500A98A29 /* ReferencePanelDialectTests.swift in Sources */,
 				13AA10022F900002 /* OpcodeReferenceTests.swift in Sources */,
+				13AA20022FD00002 /* MemoryMapParserTests.swift in Sources */,
+				13AA20042FD00004 /* MemoryMapColumnViewTests.swift in Sources */,
 				13AA10042F900004 /* ROMSymbolReferenceTests.swift in Sources */,
 				133513E12F844A5500A98A29 /* BasicCodeGenTests.swift in Sources */,
 				133513E22F844A5500A98A29 /* BasicFixRegressionTests.swift in Sources */,

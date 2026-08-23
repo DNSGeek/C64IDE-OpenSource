@@ -100,6 +100,10 @@ enum CfgFileEditor {
         newSize: UInt32?  = nil
     ) throws -> String {
         let chars = Array(source)
+        // `chars[n]` and `indices[n]` describe the same character, so value
+        // spans can be converted to `String.Index` in O(1) instead of walking
+        // the string from the start for every attribute.
+        let indices = Array(source.indices)
 
         // 1. Find the MEMORY { … } block
         guard let memoryRange = findBlock(named: "MEMORY", in: chars) else {
@@ -124,7 +128,8 @@ enum CfgFileEditor {
                 attribute: attr,
                 in: chars,
                 within: entryRange,
-                source: source
+                indices: indices,
+                endIndex: source.endIndex
             )
             let currentRaw = String(source[valueRange]).trimmingCharacters(in: .whitespaces)
             guard isPlainNumericLiteral(currentRaw) else {
@@ -204,7 +209,9 @@ enum CfgFileEditor {
                 }
                 let name = String(chars[nameStart..<i])
 
-                while i < blockRange.upperBound && chars[i] == " " { i += 1 }
+                // Any whitespace may separate the entry name from its colon,
+                // including a line break in a wrapped config.
+                while i < blockRange.upperBound && chars[i].isWhitespace { i += 1 }
                 guard i < blockRange.upperBound && chars[i] == ":" else { continue }
                 i += 1
 
@@ -212,7 +219,8 @@ enum CfgFileEditor {
                     guard let semiOffset = chars[i..<blockRange.upperBound].firstIndex(of: ";") else {
                         return nil
                     }
-                    return nameStart..<(semiOffset + 2)
+                    // Range is half-open, so `+ 1` includes the semicolon itself.
+                    return nameStart..<(semiOffset + 1)
                 } else {
                     if let semiOffset = chars[i..<blockRange.upperBound].firstIndex(of: ";") {
                         i = semiOffset + 1
@@ -233,8 +241,14 @@ enum CfgFileEditor {
         attribute: String,
         in chars: [Character],
         within entryRange: Range<Int>,
-        source: String
+        indices: [String.Index],
+        endIndex: String.Index
     ) throws -> Range<String.Index> {
+        /// `indices` has one entry per character; `chars.count` maps to the end.
+        func stringIndex(_ offset: Int) -> String.Index {
+            offset < indices.count ? indices[offset] : endIndex
+        }
+
         let attrLower = attribute.lowercased()
         var i = entryRange.lowerBound
 
@@ -253,11 +267,12 @@ enum CfgFileEditor {
                 }
                 let token = String(chars[tokStart..<i]).lowercased()
 
-                while i < entryRange.upperBound && chars[i] == " " { i += 1 }
+                // Whitespace (including line breaks) may surround the `=`.
+                while i < entryRange.upperBound && chars[i].isWhitespace { i += 1 }
                 guard i < entryRange.upperBound && chars[i] == "=" else { continue }
                 i += 1
 
-                while i < entryRange.upperBound && chars[i] == " " { i += 1 }
+                while i < entryRange.upperBound && chars[i].isWhitespace { i += 1 }
 
                 if token == attrLower {
                     let valueStart = i
@@ -273,14 +288,11 @@ enum CfgFileEditor {
                         }
                         i += 1
                     }
-                    let startIdx = source.index(source.startIndex, offsetBy: valueStart)
-                    let endIdx   = source.index(source.startIndex, offsetBy: i)
-                    var trimEnd = endIdx
-                    while trimEnd > startIdx {
-                        let prev = source.index(before: trimEnd)
-                        if source[prev].isWhitespace { trimEnd = prev } else { break }
+                    var valueEnd = i
+                    while valueEnd > valueStart && chars[valueEnd - 1].isWhitespace {
+                        valueEnd -= 1
                     }
-                    return startIdx..<trimEnd
+                    return stringIndex(valueStart)..<stringIndex(valueEnd)
                 } else {
                     var depth = 0
                     var inQuotes = false

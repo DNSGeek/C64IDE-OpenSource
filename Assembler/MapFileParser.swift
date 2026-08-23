@@ -86,7 +86,12 @@ enum MapFileParser {
             // see their declared placement, but skip ones we obviously can't plot.
             if size == 0 && start == 0 { continue }
 
-            result.append(MapFileSegment(name: name, start: start, end: end, size: size))
+            // ld65 prints `End = Start + Size - 1`, so a zero-size segment has
+            // End one *below* Start. Normalise so `end >= start` always holds —
+            // downstream code does unsigned `end - start` arithmetic, which
+            // traps on underflow.
+            result.append(MapFileSegment(name: name, start: start,
+                                         end: max(end, start), size: size))
         }
 
         return result

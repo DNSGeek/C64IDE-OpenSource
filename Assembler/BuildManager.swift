@@ -337,11 +337,16 @@ class BuildManager {
             }
         }
 
-        // Parse memory map artifacts for the Memory Map window
-        lastMapFile = FileManager.default.fileExists(atPath: mapFile.path) ? mapFile : nil
-        lastLinkerConfigPath = URL(fileURLWithPath: configPath)
-        lastSourceFile = sourceFile
+        // Parse memory map artifacts for the Memory Map window.
+        // Published on the main queue together with the notification: the
+        // Memory Map window reads these from the main thread, and this method
+        // runs on the build's background queue.
+        let producedMap = FileManager.default.fileExists(atPath: mapFile.path) ? mapFile : nil
+        let usedConfig = URL(fileURLWithPath: configPath)
         DispatchQueue.main.async {
+            self.lastMapFile = producedMap
+            self.lastLinkerConfigPath = usedConfig
+            self.lastSourceFile = sourceFile
             NotificationCenter.default.post(name: .buildDidProduceMemoryMap, object: self)
         }
 
@@ -359,13 +364,27 @@ class BuildManager {
     private(set) var lastDebugInfo: DebugInfoParser?
 
     /// Last `.map` file emitted by ld65. Picked up by the Memory Map window.
+    /// Published on the main queue; read from the main thread only.
     private(set) var lastMapFile: URL?
 
     /// Linker config (.cfg) used by the most recent build. Used to render the planned memory layout.
+    /// Published on the main queue; read from the main thread only.
     private(set) var lastLinkerConfigPath: URL?
 
     /// Source file the most recent build was for. Used for the Memory Map window title.
+    /// Published on the main queue; read from the main thread only.
     private(set) var lastSourceFile: URL?
+
+    /// True when `lastLinkerConfigPath` points at the throwaway config written
+    /// to the temp directory rather than one belonging to the project. Edits to
+    /// a temporary config are overwritten by the next build, so the Memory Map
+    /// offers "save to project" instead of an in-place write.
+    var lastLinkerConfigIsTemporary: Bool {
+        guard let path = lastLinkerConfigPath?.standardizedFileURL.path else { return false }
+        let tempRoot = FileManager.default.temporaryDirectory
+            .standardizedFileURL.path
+        return path.hasPrefix(tempRoot)
+    }
 
     /// Cancels the currently running build process.
     func cancelBuild() {
