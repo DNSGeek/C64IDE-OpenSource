@@ -1142,6 +1142,8 @@ class KernalListViewController: NSViewController, NSTableViewDataSource, NSTable
         case .stringHandling:  color = AppTheme.current.syntaxString
         case .kernalIO:        color = AppTheme.current.syntaxOperator
         case .kernalIRQ:       color = AppTheme.current.syntaxPoke
+        case .kernalEditor:    color = AppTheme.current.syntaxFunction
+        case .romTable:        color = AppTheme.current.syntaxComment
         default:               color = AppTheme.current.panelText
         }
         cell?.textField?.textColor = color
@@ -1155,33 +1157,91 @@ class KernalListViewController: NSViewController, NSTableViewDataSource, NSTable
         showDetail(for: row)
     }
 
+    /// Wraps `text` to `width` columns and indents every line by two spaces,
+    /// so long notes stay readable in the narrow detail pane.
+    private func wrapped(_ text: String, width: Int = 46) -> String {
+        var out: [String] = []
+        for paragraph in text.components(separatedBy: "\n") {
+            var line = ""
+            for word in paragraph.split(separator: " ", omittingEmptySubsequences: true) {
+                if line.isEmpty {
+                    line = String(word)
+                } else if line.count + 1 + word.count <= width {
+                    line += " " + word
+                } else {
+                    out.append("  " + line)
+                    line = String(word)
+                }
+            }
+            out.append("  " + line)
+        }
+        return out.joined(separator: "\n")
+    }
+
     private func showDetail(for row: Int) {
         let item = filteredItems[row]
         var lines: [String] = []
 
         lines.append("━━━ \(item.name) ━━━")
-        lines.append(String(format: "Address: $%04X (%d)", item.address, item.address))
+        lines.append(String(format: "Address:  $%04X (%d)", item.address, item.address))
         lines.append("Category: \(item.category.rawValue)")
 
-        // If we have a KERNAL jump table entry with extended detail, show it
-        if let kr = item.kernalRoutine {
-            if let real = kr.realAddress {
-                lines.append(String(format: "Real address: $%04X", real))
-            }
-            lines.append("")
-            lines.append(kr.description)
-            if let inp = kr.input { lines.append("\nINPUT:\n  \(inp)") }
-            if let out = kr.output { lines.append("\nOUTPUT:\n  \(out)") }
-            if let regs = kr.usedRegisters { lines.append("\nREGISTERS USED: \(regs)") }
-        } else if let sym = item.romSymbol {
-            lines.append("")
-            lines.append(sym.description)
+        let sym = item.romSymbol
+
+        // The jump table entries carry the real implementation address.
+        if let real = item.kernalRoutine?.realAddress {
+            lines.append(String(format: "Behind:   $%04X", real))
         }
 
-        // Show usage hint for disassembler
+        // Description — prefer the curated KERNAL text, fall back to the symbol.
+        let description = item.kernalRoutine?.description ?? sym?.description
+        if let description {
+            lines.append("")
+            lines.append(wrapped(description))
+        }
+
+        // Signature. The KERNAL routine table and the ROM symbol table both
+        // carry these; the KERNAL one wins where both exist.
+        let input  = item.kernalRoutine?.input  ?? sym?.input
+        let output = item.kernalRoutine?.output ?? sym?.output
+        let regs   = item.kernalRoutine?.usedRegisters ?? sym?.registers
+        if input != nil || output != nil || regs != nil {
+            lines.append("")
+            lines.append("─── Signature ───")
+            if let input  { lines.append("INPUT:"); lines.append(wrapped(input)) }
+            if let output { lines.append("OUTPUT:"); lines.append(wrapped(output)) }
+            if let regs   { lines.append("REGISTERS USED:"); lines.append(wrapped(regs)) }
+        }
+
+        // Call syntax, plus the banking the call depends on.
         lines.append("")
-        lines.append("─── Usage ───")
-        lines.append(String(format: "JSR $%04X  ; %@", item.address, item.name))
+        let isData = item.category == .romTable || item.category == .hardwareVector
+        lines.append(isData ? "─── Access ───" : "─── Call syntax ───")
+        lines.append("  " + (sym?.callSyntax
+                             ?? String(format: "jsr $%04X        ; %@", item.address, item.name)))
+        if item.category == .kernalJumpTable {
+            lines.append("  ; from BASIC: SYS \(item.address)")
+        }
+        if let banking = sym?.bankingRequirement {
+            lines.append("")
+            lines.append("BANKING:")
+            lines.append(wrapped(banking))
+        }
+
+        if let notes = sym?.notes {
+            lines.append("")
+            lines.append("─── Notes ───")
+            lines.append(wrapped(notes))
+        }
+
+        if let example = sym?.example {
+            lines.append("")
+            lines.append("─── Example ───")
+            lines.append(example
+                .components(separatedBy: "\n")
+                .map { "  " + $0 }
+                .joined(separator: "\n"))
+        }
 
         detailView.string = lines.joined(separator: "\n")
     }
@@ -1223,6 +1283,9 @@ class KernalListViewController: NSViewController, NSTableViewDataSource, NSTable
             filteredItems = base.filter {
                 $0.name.uppercased().contains(q) ||
                 $0.romSymbol?.description.uppercased().contains(q) == true ||
+                $0.romSymbol?.notes?.uppercased().contains(q) == true ||
+                $0.romSymbol?.input?.uppercased().contains(q) == true ||
+                $0.romSymbol?.output?.uppercased().contains(q) == true ||
                 $0.kernalRoutine?.description.uppercased().contains(q) == true ||
                 String(format: "$%04X", $0.address).contains(q)
             }

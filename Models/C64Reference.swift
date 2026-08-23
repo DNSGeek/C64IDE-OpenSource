@@ -600,8 +600,8 @@ public struct C64Reference {
         KernalRoutine(address: 0xFF90, name: "SETMSG", description: "Set system error display switch at $009D.", input: "A=Switch value", output: nil, usedRegisters: "None", realAddress: 0xFE18),
         KernalRoutine(address: 0xFF93, name: "LSTNSA", description: "Send LISTEN secondary address to serial bus. Must call LISTEN first.", input: "A=Secondary address", output: nil, usedRegisters: "A", realAddress: 0xEDB9),
         KernalRoutine(address: 0xFF96, name: "TALKSA", description: "Send TALK secondary address to serial bus. Must call TALK first.", input: "A=Secondary address", output: nil, usedRegisters: "A", realAddress: 0xEDC7),
-        KernalRoutine(address: 0xFF99, name: "MEMBOT", description: "Save or restore start address of BASIC work area.", input: "Carry: 0=Restore from X/Y, 1=Save to X/Y", output: "X/Y=Address (if Carry=1)", usedRegisters: "X, Y", realAddress: 0xFE25),
-        KernalRoutine(address: 0xFF9C, name: "MEMTOP", description: "Save or restore end address of BASIC work area.", input: "Carry: 0=Restore from X/Y, 1=Save to X/Y", output: "X/Y=Address (if Carry=1)", usedRegisters: "X, Y", realAddress: 0xFE34),
+        KernalRoutine(address: 0xFF99, name: "MEMTOP", description: "Read or set the top of BASIC/system memory ($0283-$0284). Lower it to reserve space for machine code above BASIC.", input: "Carry: 1=Read into X/Y, 0=Set from X/Y", output: "X=Low byte, Y=High byte (if Carry=1)", usedRegisters: "X, Y", realAddress: 0xFE25),
+        KernalRoutine(address: 0xFF9C, name: "MEMBOT", description: "Read or set the bottom of BASIC/system memory ($0281-$0282). Defaults to $0800; BASIC only re-reads it at cold start.", input: "Carry: 1=Read into X/Y, 0=Set from X/Y", output: "X=Low byte, Y=High byte (if Carry=1)", usedRegisters: "X, Y", realAddress: 0xFE34),
         KernalRoutine(address: 0xFF9F, name: "SCNKEY", description: "Query keyboard; put current matrix code into $00CB, shift key status into $028D, PETSCII code into keyboard buffer.", input: nil, output: nil, usedRegisters: "A, X, Y", realAddress: 0xEA87),
         KernalRoutine(address: 0xFFA2, name: "SETTMO", description: "Set serial bus timeout.", input: "A=Timeout value", output: nil, usedRegisters: "None", realAddress: 0xFE21),
         KernalRoutine(address: 0xFFA5, name: "IECIN", description: "Read byte from serial bus. Must call TALK and TALKSA first.", input: nil, output: "A=Byte read", usedRegisters: "A", realAddress: 0xEE13),
@@ -622,147 +622,16 @@ public struct C64Reference {
         KernalRoutine(address: 0xFFD2, name: "CHROUT", description: "Write byte to default output. Must call OPEN+CHKOUT first for non-screen.", input: "A=Byte to write", output: nil, usedRegisters: "None", realAddress: 0xF1CA),
         KernalRoutine(address: 0xFFD5, name: "LOAD", description: "Load or verify file. Must call SETLFS and SETNAM first.", input: "A: 0=Load, 1-255=Verify; X/Y=Load address (if secondary=0)", output: "Carry: 0=OK, 1=Error; A=Error code; X/Y=End address", usedRegisters: "A, X, Y", realAddress: 0xF49E),
         KernalRoutine(address: 0xFFD8, name: "SAVE", description: "Save memory to file. Must call SETLFS and SETNAM first.", input: "A=ZP ptr to start address; X/Y=End address+1", output: "Carry: 0=OK, 1=Error; A=Error code", usedRegisters: "A, X, Y", realAddress: 0xF5DD),
-        KernalRoutine(address: 0xFFDB, name: "SETTIM", description: "Set Time of Day clock at $00A0-$00A2.", input: "A/X/Y=New TOD value", output: nil, usedRegisters: "None", realAddress: 0xF6E4),
-        KernalRoutine(address: 0xFFDE, name: "RDTIM", description: "Read Time of Day clock at $00A0-$00A2.", input: nil, output: "A/X/Y=Current TOD value", usedRegisters: "A, X, Y", realAddress: 0xF6DD),
+        KernalRoutine(address: 0xFFDB, name: "SETTIM", description: "Set the software jiffy clock at $00A0-$00A2 (BASIC's TI/TI$). Not the CIA Time of Day clock.", input: "A/X/Y=New TOD value", output: nil, usedRegisters: "None", realAddress: 0xF6E4),
+        KernalRoutine(address: 0xFFDE, name: "RDTIM", description: "Read the software jiffy clock at $00A0-$00A2 (BASIC's TI/TI$). Counts 1/60s ticks on NTSC, 1/50s on PAL, and wraps after 24 hours.", input: nil, output: "A/X/Y=Current TOD value", usedRegisters: "A, X, Y", realAddress: 0xF6DD),
         KernalRoutine(address: 0xFFE1, name: "STOP", description: "Query Stop key indicator at $0091; if pressed, call CLRCHN and clear keyboard buffer.", input: nil, output: "Zero: 0=Not pressed, 1=Pressed; Carry: 1=Pressed", usedRegisters: "A, X", realAddress: 0xF6ED),
         KernalRoutine(address: 0xFFE4, name: "GETIN", description: "Read byte from default input (non-blocking for keyboard). Must call OPEN+CHKIN for non-keyboard.", input: nil, output: "A=Byte read (0 if keyboard buffer empty)", usedRegisters: "A, X, Y", realAddress: 0xF13E),
         KernalRoutine(address: 0xFFE7, name: "CLALL", description: "Clear file table; call CLRCHN.", input: nil, output: nil, usedRegisters: "A, X", realAddress: 0xF32F),
-        KernalRoutine(address: 0xFFEA, name: "UDTIM", description: "Update Time of Day ($00A0-$00A2) and Stop key indicator ($0091).", input: nil, output: nil, usedRegisters: "A, X", realAddress: 0xF69B),
+        KernalRoutine(address: 0xFFEA, name: "UDTIM", description: "Advance the jiffy clock ($00A0-$00A2) by one tick and update the Stop key indicator ($0091). The 60Hz IRQ calls this; a custom IRQ that bypasses $EA31 must call it or TI and STOP both freeze.", input: nil, output: nil, usedRegisters: "A, X", realAddress: 0xF69B),
         KernalRoutine(address: 0xFFED, name: "SCREEN", description: "Fetch number of screen rows and columns.", input: nil, output: "X=Columns (40), Y=Rows (25)", usedRegisters: "X, Y", realAddress: 0xE505),
         KernalRoutine(address: 0xFFF0, name: "PLOT", description: "Save or restore cursor position.", input: "Carry: 0=Set from X/Y, 1=Read to X/Y; X=Column, Y=Row", output: "X=Column, Y=Row (if Carry=1)", usedRegisters: "X, Y", realAddress: 0xE50A),
         KernalRoutine(address: 0xFFF3, name: "IOBASE", description: "Fetch CIA #1 base address.", input: nil, output: "X/Y=CIA #1 base ($DC00)", usedRegisters: "X, Y", realAddress: 0xE500),
     ]
-
-    // ══════════════════════════════════════════════════════════
-    // MARK: - BASIC ROM Utility Routines ($A000-$BFFF)
-    // Fixed entry points in the BASIC ROM callable from ML.
-    // All addresses verified byte-for-byte against ROM 901226-01.
-    //
-    // FAC1 layout ($61-$66): $61=exponent, $62-$65=mantissa, $66=sign
-    // ARG  layout ($69-$6E): $69=exponent, $6A-$6D=mantissa, $6E=sign
-    // Sign byte stores bit 7 of the mantissa (the CBM float format
-    // keeps the sign separate and forces bit 7 of the mantissa to 1).
-    //
-    // CRITICAL: BASIC ROM must be banked in before calling any of
-    // these routines ($0001 bits 0-1 must both be 1).
-    //
-    // ARITHMETIC CALLING CONVENTION (confirmed from ROM):
-    // FADD/FSUB/FMULT all take Y:A = pointer to the SECOND operand
-    // as a 5-byte float in memory. They load that operand into ARG
-    // internally via a shared helper at $BA8C. FAC1 holds the first
-    // operand on entry.
-    // ══════════════════════════════════════════════════════════
-
-    public static let basicRomRoutines: [KernalRoutine] = [
-
-        // ── Integer <-> Float conversion ──────────────────────
-        KernalRoutine(
-            address: 0xB391, name: "GIVAYF",
-            description: "Convert a signed 16-bit integer to a floating-point value in FAC1. ROM-confirmed: STA $62 (hi byte -> FAC1 mantissa MSB), STY $63 (lo byte -> mantissa next byte). Entry point address stored at $0005-$0006.",
-            input: "A=high byte, Y=low byte of the integer",
-            output: "FAC1 = float representation of the integer",
-            usedRegisters: "A, X, Y", realAddress: nil),
-
-        KernalRoutine(
-            address: 0xB1AA, name: "AYINT",
-            description: "Convert FAC1 floating-point value to a signed 16-bit integer, truncating toward zero. ROM-confirmed output order: $64=high byte, $65=low byte (verified from usage at $B7F7 which then uses $65 as lo-ptr and $64 as hi-ptr for indirect addressing). Raises ?ILLEGAL QUANTITY if out of -32768..32767 range. Entry address stored at $0003-$0004.",
-            input: "FAC1 = float to convert",
-            output: "A=high byte ($64), Y=low byte ($65); result also at $64-$65",
-            usedRegisters: "A, X, Y", realAddress: nil),
-
-        KernalRoutine(
-            address: 0xB7F7, name: "FLTTOI",
-            description: "Convert FAC1 to an unsigned 16-bit address integer for use as a BASIC line number or POKE/PEEK/SYS address. Validates that FAC1 is non-negative and fits in 16 bits (exponent < $91). Calls $BC9B (QINT) to truncate, then stores the result. ROM-confirmed: called by the GOTO/GOSUB evaluator and the POKE/PEEK address resolver.",
-            input: "FAC1 = float to convert (must be 0..65535)",
-            output: "A=low byte of result, Y=high byte; also stored at $15 (lo) / $14 (hi) for subsequent indirect addressing. Jumps to error on out-of-range.",
-            usedRegisters: "A, X, Y", realAddress: nil),
-
-        // ── Load float from memory ─────────────────────────────
-        KernalRoutine(
-            address: 0xBBA2, name: "MOVFM",
-            description: "Load a 5-byte float from memory (pointed to by Y:A) into FAC1. ROM-confirmed: stores all 5 bytes into $61 (exponent) through $66 (sign), restoring the implicit mantissa bit 7 via ORA #$80. This is the actual general-purpose FAC1 load-from-pointer routine. (Note: $BDAE is a different routine that reads from the BASIC program text via CHRGET, not from an arbitrary pointer.)",
-            input: "Y=high byte, A=low byte of pointer to 5-byte packed float in memory",
-            output: "FAC1 ($61-$66) = float loaded from memory",
-            usedRegisters: "A, X, Y", realAddress: nil),
-
-        KernalRoutine(
-            address: 0xBDAE, name: "FLTRDP",
-            description: "Read and unpack an inline 5-byte floating-point constant from the BASIC program text stream (via CHRGET at $0073) into FAC1. This is the routine the BASIC interpreter calls when it encounters a numeric literal during tokenized execution. It is NOT a general-purpose load-from-pointer routine -- it advances the BASIC text pointer (TXTPTR at $7A-$7B) as a side effect.",
-            input: "TXTPTR ($7A-$7B) must point to the 5-byte float constant in BASIC program text",
-            output: "FAC1 = float; TXTPTR advanced past the constant",
-            usedRegisters: "A, X, Y", realAddress: nil),
-
-        // ── Arithmetic ─────────────────────────────────────────
-        // All three entry points (FADD/FSUB/FMULT) share the same
-        // calling convention: Y:A = pointer to the second 5-byte float
-        // operand in memory. Internally they call $BA8C to load that
-        // operand into ARG, then perform the operation.
-
-        KernalRoutine(
-            address: 0xB867, name: "FADD",
-            description: "Add the float at (Y:A) to FAC1. Internally calls $BA8C to load the second operand from memory into ARG, then adds FAC1 + ARG. ROM-confirmed: first instruction is JSR $BA8C.",
-            input: "FAC1 = first addend; Y=high byte, A=low byte of pointer to second 5-byte float",
-            output: "FAC1 = FAC1 + *ptr",
-            usedRegisters: "A, X, Y", realAddress: nil),
-
-        KernalRoutine(
-            address: 0xB850, name: "FSUB",
-            description: "Subtract FAC1 from the float at (Y:A). Internally calls $BA8C to load the memory value into ARG, then negates the FAC1 sign byte and adds. Result = *ptr - FAC1. ROM-confirmed: JSR $BA8C, then EOR $66 / #$FF to flip FAC1 sign. Note the operand order: the subtrahend is in FAC1, the minuend is at the memory pointer.",
-            input: "FAC1 = subtrahend; Y=high byte, A=low byte of pointer to 5-byte minuend float",
-            output: "FAC1 = *ptr - FAC1",
-            usedRegisters: "A, X, Y", realAddress: nil),
-
-        KernalRoutine(
-            address: 0xBA8C, name: "FMULT",
-            description: "Multiply FAC1 by the float at (Y:A). Loads the second operand from memory into ARG via (Y:A) pointer -- same helper shared by FADD and FSUB -- then multiplies. ROM-confirmed: STA $22 / STY $23 / LDY #$04 / loop copying 5 bytes into ARG ($69-$6E), computing sign XOR into $6F, then multiplies.",
-            input: "FAC1 = first factor; Y=high byte, A=low byte of pointer to second 5-byte float",
-            output: "FAC1 = FAC1 * *ptr",
-            usedRegisters: "A, X, Y", realAddress: nil),
-
-        KernalRoutine(
-            address: 0xBB12, name: "FDIVT",
-            description: "Divide ARG by FAC1. FAC1 = ARG / FAC1. The dividend must already be in ARG; the divisor is in FAC1. Use $BA8C (FMULT entry) to pre-load the dividend into ARG if needed. Checks for division by zero (FAC1 exponent = 0) and raises ?DIVISION BY ZERO. ROM-confirmed: BEQ error-branch as first instruction.",
-            input: "ARG ($69-$6E) = dividend; FAC1 ($61-$66) = divisor",
-            output: "FAC1 = ARG / FAC1",
-            usedRegisters: "A, X, Y", realAddress: nil),
-
-        // ── Comparison ─────────────────────────────────────────
-        KernalRoutine(
-            address: 0xBC0C, name: "FCOMP",
-            description: "Compare FAC1 with a 5-byte float in memory. ROM-confirmed at this address; internally uses $BC2B which returns A based on FAC1 sign after the comparison arithmetic. Calling convention (Y:A pointer) is consistent with the pattern used by FADD/FSUB/FMULT but the internal path through $BC1B is complex.",
-            input: "FAC1 = value to compare; Y=high byte, A=low byte of pointer to second 5-byte float",
-            output: "A=0 if equal, A=1 if FAC1 > memory value, A=$FF (-1) if FAC1 < memory value",
-            usedRegisters: "A, X, Y", realAddress: nil),
-
-        // ── Output ─────────────────────────────────────────────
-        KernalRoutine(
-            address: 0xBDDD, name: "FOUT",
-            description: "Convert FAC1 to a null-terminated ASCII decimal string. ROM-confirmed: LDY #$01, then writes sign char and digits to $00FF+Y (= $0100 onwards, using the hardware stack page as a temp buffer). Positive numbers get a leading space.",
-            input: "FAC1 = float to format",
-            output: "Result string written at $0100; Y=index of last char written (string starts at $0100+1)",
-            usedRegisters: "A, X, Y", realAddress: nil),
-
-        KernalRoutine(
-            address: 0xAAB8, name: "LINPRT",
-            description: "BASIC PRINT statement numeric-value handler. ROM-confirmed: checks $0D (expression type flag); if numeric ($0D=0), calls FOUT ($BDDD) to format FAC1 as ASCII, then outputs the result string. Not a standalone integer-to-decimal printer -- it prints whatever is currently in FAC1.",
-            input: "FAC1 = numeric value to print; $0D = expression type (0=numeric)",
-            output: "Formatted float printed to current output device",
-            usedRegisters: "A, X, Y", realAddress: nil),
-
-        KernalRoutine(
-            address: 0xAB1E, name: "STROUT",
-            description: "Print a null-terminated PETSCII string to the current output device. ROM-confirmed: JSR $B487 (get string metadata), then character loop via $LAB47 until CR ($0D) or end. Handles cursor control chars inline.",
-            input: "Y=high byte, A=low byte of pointer to null-terminated string",
-            output: "String printed to current output",
-            usedRegisters: "A, X, Y", realAddress: nil),
-    ]
-
-    /// Finds a BASIC ROM utility routine by its address.
-    public static func lookupBasicRom(address: UInt16) -> KernalRoutine? {
-        return basicRomRoutines.first { $0.address == address }
-    }
-
-
 
     public static let colorPalette: [C64Color] = [
         C64Color(index: 0,  name: "Black",       hex: "#000000"),
