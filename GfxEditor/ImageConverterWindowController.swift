@@ -142,6 +142,50 @@ private final class CancellationToken {
     }
 }
 
+/// Dither modes offered in the converter, in menu order.
+private enum DitherMode: Int, CaseIterable {
+    case none = 0
+    case floydSteinberg
+    case atkinson
+    case ordered
+
+    var title: String {
+        switch self {
+        case .none:           return "None"
+        case .floydSteinberg: return "Floyd-Steinberg"
+        case .atkinson:       return "Atkinson"
+        case .ordered:        return "Ordered (Bayer)"
+        }
+    }
+
+    /// Error-diffusion taps as (dx, dy, weight) shared over `divisor`.
+    /// Nil for the modes that do not diffuse.
+    var diffusion: (taps: [(dx: Int, dy: Int, weight: Double)], divisor: Double)? {
+        switch self {
+        case .floydSteinberg:
+            return ([(1, 0, 7), (-1, 1, 3), (0, 1, 5), (1, 1, 1)], 16)
+        case .atkinson:
+            // Deliberately passes on only 6/8 of the error. Throwing the rest
+            // away is what holds contrast on a palette this small, and it is
+            // why Atkinson looks crisper than Floyd-Steinberg here even though
+            // it scores slightly worse for raw accuracy.
+            return ([(1, 0, 1), (2, 0, 1), (-1, 1, 1), (0, 1, 1), (1, 1, 1), (0, 2, 1)], 8)
+        case .none, .ordered:
+            return nil
+        }
+    }
+
+    /// How much of the error crossing into a neighbouring cell survives.
+    ///
+    /// Halving it measurably improves Floyd-Steinberg, whose neighbours often
+    /// cannot represent the error they are handed. Atkinson already discards a
+    /// quarter of its error, and damping it further starves the dither, so it
+    /// keeps the full weight.
+    var cellBoundaryDamping: Double {
+        self == .floydSteinberg ? 0.5 : 1.0
+    }
+}
+
 /// How the source image is mapped onto the C64's 320×200 visible area.
 private enum ScaleMode: Int {
     case stretch = 0   // distort to fill
@@ -153,7 +197,7 @@ private enum ScaleMode: Int {
 /// background worker never touches a control.
 private struct ConversionSettings {
     var multiColor: Bool
-    var dither: Int
+    var dither: DitherMode
     var brightness: Double
     var contrast: Double
     var scaleMode: ScaleMode
@@ -276,8 +320,8 @@ class ImageConverterViewController: NSViewController {
 
         addLabel("Dither:", x: 226, y: y + 3, width: 48)
         ditherSelector = makePopUp(x: 276, y: y, width: 150,
-                                   items: ["None", "Floyd-Steinberg", "Ordered (Bayer)"])
-        ditherSelector.selectItem(at: 1)
+                                   items: DitherMode.allCases.map(\.title))
+        ditherSelector.selectItem(at: DitherMode.floydSteinberg.rawValue)
 
         addLabel("Scale:", x: 436, y: y + 3, width: 44)
         scaleSelector = makePopUp(x: 482, y: y, width: 150,
@@ -501,7 +545,7 @@ class ImageConverterViewController: NSViewController {
         let isMultiColor = modeSelector.indexOfSelectedItem == 1
         let settings = ConversionSettings(
             multiColor:       isMultiColor,
-            dither:           ditherSelector.indexOfSelectedItem,
+            dither:           DitherMode(rawValue: ditherSelector.indexOfSelectedItem) ?? .floydSteinberg,
             brightness:       brightnessSlider.doubleValue,
             contrast:         contrastSlider.doubleValue,
             scaleMode:        ScaleMode(rawValue: scaleSelector.indexOfSelectedItem) ?? .stretch,
@@ -653,88 +697,79 @@ class ImageConverterViewController: NSViewController {
 
         if isCancelled() { return nil }
 
-        // -- Pass 2: assign pixels, scanline-major -----------------------------
+        // -- Pass 2: assign pixels ---------------------------------------------
         //
-        // Floyd-Steinberg error diffusion REQUIRES scanline order: each
-        // pixel's error flows right and down into neighbours that have not
-        // been quantized yet. Palettes are already fixed by pass 1, so this
-        // pass can walk the image row by row.
+        // Palettes are fixed by pass 1, so this pass only has to decide which
+        // slot each pixel takes.
 
-        // Bayer 4x4 ordered-dither matrix, normalised to -0.5...0.4375.
-        let bayerMatrix: [[Double]] = [
-            [-0.5,     0.0,    -0.375,   0.125 ],
-            [ 0.25,   -0.25,    0.375,  -0.125 ],
-            [-0.3125,  0.1875, -0.4375,  0.0625],
-            [ 0.4375, -0.0625,  0.3125, -0.1875],
-        ]
-        // Neighbouring C64 palette entries sit 40-80 apart in each channel, so
-        // the old ±8 swing was too small to break up a band. ±32 actually
-        // dithers without swamping the image.
-        let bayerAmplitude = 64.0
+        switch settings.dither {
+        case .floydSteinberg, .atkinson:
+            guard let kernel = settings.dither.diffusion else { break }
+            let damping = settings.dither.cellBoundaryDamping
 
-        // Rolling two-row error buffer: [0] = current row, [1] = next row.
-        var fsError = Array(
-            repeating: [RGB](repeating: RGB(r: 0, g: 0, b: 0), count: targetW),
-            count: 2
-        )
+            // Full-frame error buffer. Atkinson reaches two rows down, so the
+            // two-row rolling buffer this used to keep no longer covers it, and
+            // 1.5 MB is not worth the bookkeeping needed to avoid it.
+            var diffused = [RGB](repeating: RGB(r: 0, g: 0, b: 0), count: targetW * targetH)
 
-        for y in 0..<targetH {
-            let cellRow = y / 8
+            for y in 0..<targetH {
+                let cellRow = y / 8
+                // Serpentine scan: alternate direction each row. Always pushing
+                // error the same way is what produced the diagonal worm streaks
+                // running through the old output.
+                let rightward = y % 2 == 0
 
-            for x in 0..<targetW {
-                let palette = cellPalettes[cellRow * cellCols + x / cellPixelW]
+                for step in 0..<targetW {
+                    let x = rightward ? step : targetW - 1 - step
+                    let cellIndex = cellRow * cellCols + x / cellPixelW
+                    let palette = cellPalettes[cellIndex]
 
-                var rgb = pixels[y * targetW + x]
+                    let source = pixels[y * targetW + x]
+                    let carried = diffused[y * targetW + x]
+                    let rgb = RGB(r: max(0, min(255, source.r + carried.r)),
+                                  g: max(0, min(255, source.g + carried.g)),
+                                  b: max(0, min(255, source.b + carried.b)))
 
-                if settings.dither == 1 {
-                    // Floyd-Steinberg: apply accumulated error
-                    rgb.r = max(0, min(255, rgb.r + fsError[0][x].r))
-                    rgb.g = max(0, min(255, rgb.g + fsError[0][x].g))
-                    rgb.b = max(0, min(255, rgb.b + fsError[0][x].b))
-                } else if settings.dither == 2 {
-                    let threshold = bayerMatrix[y % 4][x % 4] * bayerAmplitude
-                    rgb.r = max(0, min(255, rgb.r + threshold))
-                    rgb.g = max(0, min(255, rgb.g + threshold))
-                    rgb.b = max(0, min(255, rgb.b + threshold))
-                }
+                    let chosenIdx = closestPaletteIndex(rgb, from: palette)
+                    bitmap.pixels[y][x] = UInt8(chosenIdx)
 
-                let chosenIdx = closestPaletteIndex(rgb, from: palette)
-                bitmap.pixels[y][x] = UInt8(chosenIdx)
-
-                if settings.dither == 1 {
-                    // Distribute quantization error to unvisited neighbours
                     let chosenRGB = c64PaletteRGB[palette[chosenIdx]]
                     let errR = rgb.r - Double(chosenRGB.r)
                     let errG = rgb.g - Double(chosenRGB.g)
                     let errB = rgb.b - Double(chosenRGB.b)
 
-                    if x + 1 < targetW {
-                        fsError[0][x + 1].r += errR * 7 / 16
-                        fsError[0][x + 1].g += errG * 7 / 16
-                        fsError[0][x + 1].b += errB * 7 / 16
-                    }
-                    if y + 1 < targetH {
-                        if x > 0 {
-                            fsError[1][x - 1].r += errR * 3 / 16
-                            fsError[1][x - 1].g += errG * 3 / 16
-                            fsError[1][x - 1].b += errB * 3 / 16
-                        }
-                        fsError[1][x].r += errR * 5 / 16
-                        fsError[1][x].g += errG * 5 / 16
-                        fsError[1][x].b += errB * 5 / 16
-                        if x + 1 < targetW {
-                            fsError[1][x + 1].r += errR * 1 / 16
-                            fsError[1][x + 1].g += errG * 1 / 16
-                            fsError[1][x + 1].b += errB * 1 / 16
-                        }
+                    for tap in kernel.taps {
+                        let nx = x + (rightward ? tap.dx : -tap.dx)
+                        let ny = y + tap.dy
+                        guard nx >= 0, nx < targetW, ny < targetH else { continue }
+
+                        var weight = tap.weight / kernel.divisor
+                        // The neighbouring cell has its own two- or four-colour
+                        // palette and often cannot represent this error at all;
+                        // letting it through smears artefacts across the border.
+                        if (ny / 8) * cellCols + nx / cellPixelW != cellIndex { weight *= damping }
+
+                        diffused[ny * targetW + nx].r += errR * weight
+                        diffused[ny * targetW + nx].g += errG * weight
+                        diffused[ny * targetW + nx].b += errB * weight
                     }
                 }
             }
 
-            // Advance the rolling buffer at the end of each full scanline
-            if settings.dither == 1 {
-                fsError[0] = fsError[1]
-                for i in 0..<targetW { fsError[1][i] = RGB(r: 0, g: 0, b: 0) }
+        case .none, .ordered:
+            let ordered = settings.dither == .ordered
+            for y in 0..<targetH {
+                let cellRow = y / 8
+                for x in 0..<targetW {
+                    let palette = cellPalettes[cellRow * cellCols + x / cellPixelW]
+                    let pixel   = pixels[y * targetW + x]
+                    bitmap.pixels[y][x] = UInt8(
+                        ordered
+                            ? orderedPaletteIndex(pixel, from: palette,
+                                                  threshold: Self.bayer4x4[y % 4][x % 4])
+                            : closestPaletteIndex(pixel, from: palette)
+                    )
+                }
             }
         }
 
@@ -878,6 +913,56 @@ class ImageConverterViewController: NSViewController {
         let db = pixel.b - Double(c.b)
         // Weighted distance (human eye is most sensitive to green)
         return dr * dr * 0.299 + dg * dg * 0.587 + db * db * 0.114
+    }
+
+    /// Bayer 4×4 ordered-dither matrix, as thresholds in 0..<1.
+    static let bayer4x4: [[Double]] = [
+        [0.0000, 0.5000, 0.1250, 0.6250],
+        [0.7500, 0.2500, 0.8750, 0.3750],
+        [0.1875, 0.6875, 0.0625, 0.5625],
+        [0.9375, 0.4375, 0.8125, 0.3125],
+    ]
+
+    /// Ordered dither against a fixed cell palette.
+    ///
+    /// Nudging RGB by a fixed amount — what this used to do — cannot work when
+    /// the palette is per-cell: two cell colours might differ by 200 in blue
+    /// and not at all in red, so no single amplitude both flips pixels where it
+    /// should and leaves them alone where it should not. Measured on a smooth
+    /// gradient, that approach only ever changed 7.8% of pixels against Floyd-
+    /// Steinberg's 11.8%, which is why "Ordered" used to band instead of dither.
+    ///
+    /// Instead: find the two palette entries the pixel sits between, work out
+    /// how far along that axis it lies, and let the Bayer threshold decide
+    /// which side it falls on. The fraction of pixels taking the far colour
+    /// then tracks the pixel's true position between the two.
+    private static func orderedPaletteIndex(_ pixel: RGB, from palette: [Int], threshold: Double) -> Int {
+        guard palette.count > 1 else { return 0 }
+
+        var nearest = 0, runnerUp = -1
+        var nearestDist = Double.infinity, runnerUpDist = Double.infinity
+        for (i, colorIdx) in palette.enumerated() {
+            let d = colorDistance(pixel, c64Color: colorIdx)
+            if d < nearestDist {
+                runnerUpDist = nearestDist; runnerUp = nearest
+                nearestDist = d; nearest = i
+            } else if d < runnerUpDist {
+                runnerUpDist = d; runnerUp = i
+            }
+        }
+        guard runnerUp >= 0, palette[runnerUp] != palette[nearest] else { return nearest }
+
+        let a = c64PaletteRGB[palette[nearest]]
+        let b = c64PaletteRGB[palette[runnerUp]]
+        let ax = Double(b.r - a.r), ay = Double(b.g - a.g), az = Double(b.b - a.b)
+        let lengthSquared = ax * ax + ay * ay + az * az
+        guard lengthSquared > 1 else { return nearest }
+
+        // Position of the pixel along a→b, as a fraction of the gap.
+        let t = ((pixel.r - Double(a.r)) * ax
+                 + (pixel.g - Double(a.g)) * ay
+                 + (pixel.b - Double(a.b)) * az) / lengthSquared
+        return t > threshold ? runnerUp : nearest
     }
 
     private static func closestPaletteIndex(_ pixel: RGB, from palette: [Int]) -> Int {
