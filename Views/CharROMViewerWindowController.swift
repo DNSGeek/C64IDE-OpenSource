@@ -285,9 +285,11 @@ final class CharROMGridView: NSView {
         let pixScale = max(1, (min(cellW, cellH) / 8.0).rounded(.down))
         let charSide = 8 * pixScale
 
-        // Background
+        // Background. Clamp to bounds: dirtyRect is the invalid region, which
+        // AppKit may report larger than the view (clipsToBounds is false by
+        // default), and filling it would paint over the neighbouring views.
         AppTheme.current.panelDetailBackground.setFill()
-        dirtyRect.fill()
+        dirtyRect.intersection(bounds).fill()
 
         // Highlight selected
         let selRect = cellRect(selectedChar)
@@ -391,8 +393,9 @@ final class CharROMZoomedView: NSView {
     override var isFlipped: Bool { true }
 
     override func draw(_ dirtyRect: NSRect) {
+        // Clamp to bounds — see the note in CharROMGridView.draw(_:).
         AppTheme.current.panelDetailBackground.setFill()
-        dirtyRect.fill()
+        dirtyRect.intersection(bounds).fill()
 
         let cellSize = min(bounds.width, bounds.height) / 8.0
         let romData = C64CharROM.romData
