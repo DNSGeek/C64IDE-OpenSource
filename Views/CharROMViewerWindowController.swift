@@ -36,8 +36,19 @@ class CharROMViewerViewController: NSViewController {
     private var setToggle: NSSegmentedControl!
     private var zoomedView: CharROMZoomedView!
 
+    /// Currently displayed ROM half. Mirrors the toggle, which reports -1 when
+    /// it briefly has no selection.
+    private var currentSet: Int = 0
+
     private var bgColor: NSColor { AppTheme.current.panelBackground }
     private var titleLabel: NSTextField!
+
+    private enum Layout {
+        static let margin: CGFloat = 12
+        /// Square cells keep the 8×8 bitmaps from being stretched vertically.
+        static let gridCell: CGFloat = 19
+        static let zoomSide: CGFloat = 200
+    }
 
     override func loadView() {
         self.view = NSView(frame: NSRect(x: 0, y: 0, width: 640, height: 540))
@@ -51,6 +62,10 @@ class CharROMViewerViewController: NSViewController {
         NotificationCenter.default.addObserver(
             self, selector: #selector(themeDidChange(_:)),
             name: .appThemeDidChange, object: nil)
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
 
     @objc private func themeDidChange(_ note: Notification) {
@@ -80,15 +95,17 @@ class CharROMViewerViewController: NSViewController {
     /// Builds the frame-based UI for the viewer.
     private func buildUI() {
         let w = view.bounds.width
+        let h = view.bounds.height
+        let margin = Layout.margin
 
         // ── Title + set toggle ──────────────────────────
         titleLabel = NSTextField(labelWithString: "C64 CHARACTER ROM")
         titleLabel.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .bold)
         titleLabel.textColor = AppTheme.current.syntaxKeyword
-        titleLabel.frame = NSRect(x: 12, y: view.bounds.height - 28, width: 200, height: 18)
+        titleLabel.frame = NSRect(x: margin, y: h - 28, width: 220, height: 18)
         view.addSubview(titleLabel)
 
-        // Note: Indices are 0-based. Set 0 corresponds to C64 ROM Set 1 (Upper/Graphics).
+        // Note: Indices are 0-based and match the "Set N" labels used in the detail pane.
         setToggle = NSSegmentedControl(
             labels: ["Set 0: Upper/Graphics", "Set 1: Lower/Upper"],
             trackingMode: .selectOne,
@@ -96,67 +113,93 @@ class CharROMViewerViewController: NSViewController {
             action: #selector(setChanged(_:))
         )
         setToggle.selectedSegment = 0
-        setToggle.frame = NSRect(x: 220, y: view.bounds.height - 30, width: 300, height: 22)
         setToggle.font = NSFont.monospacedSystemFont(ofSize: 10, weight: .medium)
+        let toggleW: CGFloat = 300
+        setToggle.frame = NSRect(x: w - margin - toggleW, y: h - 30, width: toggleW, height: 22)
         view.addSubview(setToggle)
 
         // ── Character grid: 32 cols × 8 rows = 256 chars ─
-        let gridH: CGFloat = 320  // 8 rows × 40px each
-        charGridView = CharROMGridView(charSet: 0)
-        charGridView.frame = NSRect(x: 12, y: view.bounds.height - 36 - gridH, width: w - 24, height: gridH)
+        let gridW = Layout.gridCell * 32
+        let gridH = Layout.gridCell * 8
+        charGridView = CharROMGridView(charSet: currentSet)
+        charGridView.frame = NSRect(x: ((w - gridW) / 2).rounded(),
+                                    y: h - 38 - gridH, width: gridW, height: gridH)
         charGridView.onCharSelected = { [weak self] index in
             self?.showDetail(for: index)
         }
         view.addSubview(charGridView)
 
         // ── Bottom: zoomed char + detail text ───────────
-        let bottomY: CGFloat = 10
-        let bottomH = view.bounds.height - 36 - gridH - 14
+        let bottomTop = charGridView.frame.minY - 16
+        let bottomY = margin
+        let bottomH = bottomTop - bottomY
+        let zoomSide = min(Layout.zoomSide, bottomH)
 
         // Zoomed 8×8 pixel view
-        zoomedView = CharROMZoomedView(charSet: 0, charIndex: 0)
-        zoomedView.frame = NSRect(x: 12, y: bottomY, width: bottomH, height: bottomH)
+        zoomedView = CharROMZoomedView(charSet: currentSet, charIndex: 0)
+        zoomedView.frame = NSRect(x: margin, y: bottomTop - zoomSide, width: zoomSide, height: zoomSide)
         view.addSubview(zoomedView)
 
         // Detail text
-        detailView = NSTextView(frame: NSRect(x: 0, y: 0, width: w - bottomH - 40, height: bottomH))
+        let detailX = margin + zoomSide + margin
+        detailScroll = NSScrollView(frame: NSRect(x: detailX, y: bottomY,
+                                                  width: w - detailX - margin, height: bottomH))
+        detailScroll.hasVerticalScroller = true
+        detailScroll.autohidesScrollers = true
+        detailScroll.borderType = .noBorder
+        detailScroll.drawsBackground = true
+        detailScroll.backgroundColor = AppTheme.current.panelDetailBackground
+
+        let contentSize = detailScroll.contentSize
+        detailView = NSTextView(frame: NSRect(origin: .zero, size: contentSize))
         detailView.isEditable = false
         detailView.isSelectable = true
+        detailView.drawsBackground = true
         detailView.backgroundColor = AppTheme.current.panelDetailBackground
         detailView.textColor = AppTheme.current.defaultText
         detailView.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
         detailView.textContainerInset = NSSize(width: 8, height: 6)
-
-        detailScroll = NSScrollView(frame: NSRect(x: bottomH + 20, y: bottomY, width: w - bottomH - 34, height: bottomH))
+        // Without these the text view never grows past its initial frame, so the
+        // detail text is clipped and the scroller has nothing to scroll.
+        detailView.minSize = NSSize(width: 0, height: contentSize.height)
+        detailView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude,
+                                    height: CGFloat.greatestFiniteMagnitude)
+        detailView.isVerticallyResizable = true
+        detailView.isHorizontallyResizable = false
+        detailView.autoresizingMask = [.width]
+        detailView.textContainer?.containerSize = NSSize(width: contentSize.width,
+                                                         height: CGFloat.greatestFiniteMagnitude)
+        detailView.textContainer?.widthTracksTextView = true
         detailScroll.documentView = detailView
-        detailScroll.hasVerticalScroller = true
-        detailScroll.borderType = .noBorder
         view.addSubview(detailScroll)
 
         showDetail(for: 0)
     }
 
     @objc private func setChanged(_ sender: NSSegmentedControl) {
-        charGridView.charSet = sender.selectedSegment
-        zoomedView.charSet = sender.selectedSegment
-        charGridView.needsDisplay = true
-        zoomedView.needsDisplay = true
+        currentSet = max(0, sender.selectedSegment)
+        charGridView.charSet = currentSet
+        zoomedView.charSet = currentSet
+        // The detail pane describes the character in the active set, so it has
+        // to be rebuilt too — otherwise name/offset/pixels stay on the old set.
+        showDetail(for: charGridView.selectedChar)
     }
 
     /// Updates the detail view and zoomed preview for the given character index.
     private func showDetail(for index: Int) {
-        zoomedView.charIndex = index
-        zoomedView.needsDisplay = true
+        let screenCode = min(max(index, 0), 255)
+        zoomedView.charIndex = screenCode
 
-        let set = setToggle.selectedSegment
-        let screenCode = index
-        let petscii = C64CharROM.screenCodeToPETSCII(screenCode, reversed: false)
+        let set = currentSet
+        let petscii = C64CharROM.screenCodeToPETSCII(screenCode)
+        let romOffset = set * 2048 + screenCode * 8
 
         var lines: [String] = []
-        lines.append("━━━ Character \(index) ━━━")
+        lines.append("━━━ Character \(screenCode) ━━━")
         lines.append(String(format: "Screen Code:  $%02X (%d)", screenCode, screenCode))
         lines.append(String(format: "PETSCII Code: $%02X (%d)", petscii, petscii))
-        lines.append(String(format: "ROM Offset:   $%04X (Set %d)", set * 2048 + index * 8, set + 1))
+        lines.append(String(format: "ROM Offset:   $%04X (chargen $%04X)", romOffset, 0xD000 + romOffset))
+        lines.append("Set:          \(set) — \(set == 0 ? "Upper/Graphics" : "Lower/Upper")")
         lines.append("")
 
         let name = C64CharROM.characterName(screenCode: screenCode, set: set)
@@ -165,9 +208,8 @@ class CharROMViewerViewController: NSViewController {
         lines.append("")
         lines.append("Pixel Data:")
         let romData = C64CharROM.romData
-        let base = set * 2048 + index * 8
         for row in 0..<8 {
-            let byte = romData[base + row]
+            let byte = romData[romOffset + row]
             let bits = String(byte, radix: 2).leftPad(toLength: 8, withPad: "0")
                 .replacingOccurrences(of: "0", with: "·")
                 .replacingOccurrences(of: "1", with: "█")
@@ -179,22 +221,39 @@ class CharROMViewerViewController: NSViewController {
         lines.append("  POKE 1024,\(screenCode)")
         lines.append("  POKE 55296,1  (white)")
 
-        if screenCode < 128 {
-            lines.append("")
-            lines.append(String(format: "Reversed:     Screen code $%02X (%d)", screenCode + 128, screenCode + 128))
+        lines.append("")
+        if screenCode >= 128 {
+            lines.append(String(format: "Reverse video of screen code $%02X (%d).",
+                                screenCode - 128, screenCode - 128))
+            lines.append("PRINT it with RVS ON — CHR$(18).")
+        } else {
+            lines.append(String(format: "Reversed:     Screen code $%02X (%d)",
+                                screenCode + 128, screenCode + 128))
         }
 
         detailView.string = lines.joined(separator: "\n")
+        detailView.scrollRangeToVisible(NSRange(location: 0, length: 0))
     }
 }
 
 // MARK: - Character Grid View (256 chars in 32×8 grid)
 
 /// Renders the 256-character overview grid with pixel-level accuracy.
-class CharROMGridView: NSView {
+final class CharROMGridView: NSView {
 
-    var charSet: Int = 0
-    var selectedChar: Int = 0
+    var charSet: Int = 0 {
+        didSet { if charSet != oldValue { needsDisplay = true } }
+    }
+
+    var selectedChar: Int = 0 {
+        didSet {
+            guard selectedChar != oldValue else { return }
+            // Only the two affected cells changed; repainting all 256 is wasteful.
+            setNeedsDisplay(cellRect(oldValue).insetBy(dx: -2, dy: -2))
+            setNeedsDisplay(cellRect(selectedChar).insetBy(dx: -2, dy: -2))
+        }
+    }
+
     var onCharSelected: ((Int) -> Void)?
 
     private let cols = 32
@@ -208,93 +267,119 @@ class CharROMGridView: NSView {
     required init?(coder: NSCoder) { fatalError() }
     override var isFlipped: Bool { true }
 
+    private var clampedSet: Int { min(max(charSet, 0), 1) }
+
+    private func cellRect(_ index: Int) -> NSRect {
+        let cellW = bounds.width / CGFloat(cols)
+        let cellH = bounds.height / CGFloat(rows)
+        return NSRect(x: CGFloat(index % cols) * cellW,
+                      y: CGFloat(index / cols) * cellH,
+                      width: cellW, height: cellH)
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         let cellW = bounds.width / CGFloat(cols)
         let cellH = bounds.height / CGFloat(rows)
-        let pixScale = min(cellW, cellH) / 8.0
+        // A whole-number pixel size keeps the bitmaps crisp instead of smearing
+        // each C64 pixel across device pixels.
+        let pixScale = max(1, (min(cellW, cellH) / 8.0).rounded(.down))
+        let charSide = 8 * pixScale
 
         // Background
         AppTheme.current.panelDetailBackground.setFill()
-        bounds.fill()
+        dirtyRect.fill()
+
+        // Highlight selected
+        let selRect = cellRect(selectedChar)
+        if selRect.intersects(dirtyRect) {
+            AppTheme.current.selectionBackground.setFill()
+            selRect.fill()
+        }
 
         let romData = C64CharROM.romData
-        let base = charSet * 2048
-        let fgColor = AppTheme.current.syntaxKeyword
-        let selBg   = AppTheme.current.selectionBackground
+        let base = clampedSet * 2048
 
+        let ctx = NSGraphicsContext.current
+        let wasAntialiasing = ctx?.shouldAntialias ?? true
+        ctx?.shouldAntialias = false
+
+        // Collect every lit pixel run into a single path: one fill instead of
+        // several thousand individual NSRect.fill() calls per redraw.
+        let glyphs = NSBezierPath()
         for charIdx in 0..<256 {
-            let col = charIdx % cols
-            let row = charIdx / cols
-            let cellX = CGFloat(col) * cellW
-            let cellY = CGFloat(row) * cellH
-
-            // Highlight selected
-            if charIdx == selectedChar {
-                selBg.setFill()
-                NSRect(x: cellX, y: cellY, width: cellW, height: cellH).fill()
-            }
-
-            // Draw 8×8 character
-            fgColor.setFill()
+            let cell = cellRect(charIdx)
+            guard cell.intersects(dirtyRect) else { continue }
+            let originX = (cell.minX + (cellW - charSide) / 2).rounded()
+            let originY = (cell.minY + (cellH - charSide) / 2).rounded()
             let charBase = base + charIdx * 8
             for py in 0..<8 {
                 let byte = romData[charBase + py]
-                for px in 0..<8 {
-                    if byte & (0x80 >> px) != 0 {
-                        let x = cellX + CGFloat(px) * pixScale + (cellW - 8 * pixScale) / 2
-                        let y = cellY + CGFloat(py) * pixScale + (cellH - 8 * pixScale) / 2
-                        NSRect(x: x, y: y, width: pixScale, height: pixScale).fill()
-                    }
+                if byte == 0 { continue }
+                var px = 0
+                while px < 8 {
+                    guard byte & (0x80 >> px) != 0 else { px += 1; continue }
+                    var run = 1
+                    while px + run < 8, byte & (0x80 >> (px + run)) != 0 { run += 1 }
+                    glyphs.appendRect(NSRect(x: originX + CGFloat(px) * pixScale,
+                                             y: originY + CGFloat(py) * pixScale,
+                                             width: CGFloat(run) * pixScale,
+                                             height: pixScale))
+                    px += run
                 }
             }
         }
+        AppTheme.current.syntaxKeyword.setFill()
+        glyphs.fill()
+        ctx?.shouldAntialias = wasAntialiasing
 
-        // Grid lines
-        NSColor(white: AppTheme.current.isDark ? 0.2 : 0.6, alpha: 0.5).setStroke()
+        // Grid lines — a single path; NSBezierPath.line(to:) needs a current point.
+        let gridPath = NSBezierPath()
         for col in 0...cols {
             let x = CGFloat(col) * cellW
-            NSBezierPath().move(to: NSPoint(x: x, y: 0))
-            NSBezierPath().line(to: NSPoint(x: x, y: bounds.height))
-            NSBezierPath().stroke()
+            gridPath.move(to: NSPoint(x: x, y: 0))
+            gridPath.line(to: NSPoint(x: x, y: bounds.height))
         }
         for row in 0...rows {
             let y = CGFloat(row) * cellH
-            NSBezierPath().move(to: NSPoint(x: 0, y: y))
-            NSBezierPath().line(to: NSPoint(x: bounds.width, y: y))
-            NSBezierPath().stroke()
+            gridPath.move(to: NSPoint(x: 0, y: y))
+            gridPath.line(to: NSPoint(x: bounds.width, y: y))
         }
+        NSColor(white: AppTheme.current.isDark ? 0.2 : 0.6, alpha: 0.5).setStroke()
+        gridPath.lineWidth = 1
+        gridPath.stroke()
 
-        // Selection border
+        // Selection border — inset by the line width so it stays inside the cell.
         AppTheme.current.editorSelectionHighlight.setStroke()
-        let selRect = NSRect(x: CGFloat(selCol) * cellW, y: CGFloat(selRow) * cellH, width: cellW, height: cellH).insetBy(dx: 0.5, dy: 0.5)
-        let selPath = NSBezierPath(rect: selRect)
+        let selPath = NSBezierPath(rect: selRect.insetBy(dx: 1, dy: 1))
         selPath.lineWidth = 2
         selPath.stroke()
     }
 
-    private var selCol: Int { selectedChar % cols }
-    private var selRow: Int { selectedChar / cols }
-
     override func mouseDown(with event: NSEvent) {
         let pt = convert(event.locationInWindow, from: nil)
+        guard bounds.contains(pt) else { return }
         let cellW = bounds.width / CGFloat(cols)
         let cellH = bounds.height / CGFloat(rows)
-        let col = Int(pt.x / cellW)
-        let row = Int(pt.y / cellH)
-        guard col >= 0, col < cols, row >= 0, row < rows else { return }
-        selectedChar = row * cols + col
-        needsDisplay = true
-        onCharSelected?(selectedChar)
+        let col = min(cols - 1, max(0, Int((pt.x / cellW).rounded(.down))))
+        let row = min(rows - 1, max(0, Int((pt.y / cellH).rounded(.down))))
+        let index = row * cols + col
+        selectedChar = index
+        onCharSelected?(index)
     }
 }
 
 // MARK: - Zoomed Character View
 
 /// Renders a single character at 8× scale with grid overlay.
-class CharROMZoomedView: NSView {
+final class CharROMZoomedView: NSView {
 
-    var charSet: Int
-    var charIndex: Int
+    var charSet: Int {
+        didSet { if charSet != oldValue { needsDisplay = true } }
+    }
+
+    var charIndex: Int {
+        didSet { if charIndex != oldValue { needsDisplay = true } }
+    }
 
     init(charSet: Int, charIndex: Int) {
         self.charSet = charSet
@@ -307,39 +392,45 @@ class CharROMZoomedView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         AppTheme.current.panelDetailBackground.setFill()
-        bounds.fill()
+        dirtyRect.fill()
 
         let cellSize = min(bounds.width, bounds.height) / 8.0
         let romData = C64CharROM.romData
-        let base = charSet * 2048 + charIndex * 8
-        let fg = AppTheme.current.syntaxKeyword
+        let base = min(max(charSet, 0), 1) * 2048 + min(max(charIndex, 0), 255) * 8
 
-        fg.setFill()
+        AppTheme.current.syntaxKeyword.setFill()
+        let pixels = NSBezierPath()
         for row in 0..<8 {
             let byte = romData[base + row]
-            for col in 0..<8 {
-                if byte & (0x80 >> col) != 0 {
-                    NSRect(x: CGFloat(col) * cellSize, y: CGFloat(row) * cellSize, width: cellSize, height: cellSize).fill()
-                }
+            if byte == 0 { continue }
+            var col = 0
+            while col < 8 {
+                guard byte & (0x80 >> col) != 0 else { col += 1; continue }
+                var run = 1
+                while col + run < 8, byte & (0x80 >> (col + run)) != 0 { run += 1 }
+                pixels.appendRect(NSRect(x: CGFloat(col) * cellSize, y: CGFloat(row) * cellSize,
+                                         width: CGFloat(run) * cellSize, height: cellSize))
+                col += run
             }
         }
+        pixels.fill()
 
-        // Grid
-        NSColor(white: AppTheme.current.isDark ? 0.25 : 0.60, alpha: 0.5).setStroke()
+        // Grid — one path; a fresh NSBezierPath has no current point for line(to:).
+        let gridPath = NSBezierPath()
         for i in 0...8 {
             let pos = CGFloat(i) * cellSize
-            NSBezierPath().move(to: NSPoint(x: pos, y: 0))
-            NSBezierPath().line(to: NSPoint(x: pos, y: 8 * cellSize))
-            NSBezierPath().stroke()
-            
-            NSBezierPath().move(to: NSPoint(x: 0, y: pos))
-            NSBezierPath().line(to: NSPoint(x: 8 * cellSize, y: pos))
-            NSBezierPath().stroke()
+            gridPath.move(to: NSPoint(x: pos, y: 0))
+            gridPath.line(to: NSPoint(x: pos, y: 8 * cellSize))
+            gridPath.move(to: NSPoint(x: 0, y: pos))
+            gridPath.line(to: NSPoint(x: 8 * cellSize, y: pos))
         }
+        NSColor(white: AppTheme.current.isDark ? 0.25 : 0.60, alpha: 0.5).setStroke()
+        gridPath.lineWidth = 1
+        gridPath.stroke()
 
         // Border
         AppTheme.current.editorSelectionHighlight.withAlphaComponent(0.5).setStroke()
-        let border = NSBezierPath(rect: NSRect(x: 0, y: 0, width: 8 * cellSize, height: 8 * cellSize).insetBy(dx: 0.5, dy: 0.5))
+        let border = NSBezierPath(rect: NSRect(x: 0, y: 0, width: 8 * cellSize, height: 8 * cellSize).insetBy(dx: 1, dy: 1))
         border.lineWidth = 2
         border.stroke()
     }
@@ -485,43 +576,59 @@ struct C64CharROM {
     ]
 
     /// Converts a screen code to its corresponding PETSCII value.
-    static func screenCodeToPETSCII(_ screenCode: Int, reversed: Bool) -> Int {
+    ///
+    /// Reverse-video screen codes (128-255) have no PETSCII code of their own —
+    /// they are produced by printing the base character with RVS ON (CHR$(18)) —
+    /// so they map to the same value as their base character.
+    static func screenCodeToPETSCII(_ screenCode: Int) -> Int {
         let sc = screenCode & 0x7F
-        let rev = reversed ? 128 : 0
-        if sc < 32 { return sc + 64 + rev }       // Control chars -> @, A-Z, [, £, ], ↑, ←
-        if sc < 64 { return sc + rev }             // Space, punctuation
-        if sc < 96 { return sc + 64 + rev }        // Graphics characters
-        return sc + 64 + rev                        // Extended graphics
+        switch sc {
+        case 0..<32:  return sc + 64   // @, A-Z, [, £, ], ↑, ←
+        case 32..<64: return sc        // Space, punctuation, digits
+        case 64..<96: return sc + 32   // Graphics -> $60-$7F
+        default:      return sc + 64   // Graphics $60-$7F -> $A0-$BF
+        }
     }
 
-    /// Returns a human-readable name for the given screen code and ROM set.
-    static func characterName(screenCode: Int, set: Int) -> String {
-        let sc = screenCode & 0x7F
-        
-        // Set 0 maps to ROM Set 1 (Uppercase/Graphics)
-        // Set 1 maps to ROM Set 2 (Lowercase/Uppercase)
-        let upperNames: [Int: String] = [
-            0: "@", 1: "A", 2: "B", 3: "C", 4: "D", 5: "E", 6: "F", 7: "G",
-            8: "H", 9: "I", 10: "J", 11: "K", 12: "L", 13: "M", 14: "N", 15: "O",
-            16: "P", 17: "Q", 18: "R", 19: "S", 20: "T", 21: "U", 22: "V", 23: "W",
-            24: "X", 25: "Y", 26: "Z", 27: "[", 28: "£ (Pound)", 29: "]", 30: "↑ (Up Arrow)", 31: "← (Left Arrow)",
-            32: "SPACE", 33: "!", 34: "\"", 35: "#", 36: "$", 37: "%", 38: "&", 39: "'",
-            40: "(", 41: ")", 42: "*", 43: "+", 44: ",", 45: "-", 46: ".", 47: "/",
-            48: "0", 49: "1", 50: "2", 51: "3", 52: "4", 53: "5", 54: "6", 55: "7",
-            56: "8", 57: "9", 58: ":", 59: ";", 60: "<", 61: "=", 62: ">", 63: "?",
-        ]
-        let lowerNames: [Int: String] = [
-            0: "@", 1: "a", 2: "b", 3: "c", 4: "d", 5: "e", 6: "f", 7: "g",
-            8: "h", 9: "i", 10: "j", 11: "k", 12: "l", 13: "m", 14: "n", 15: "o",
-            16: "p", 17: "q", 18: "r", 19: "s", 20: "t", 21: "u", 22: "v", 23: "w",
-            24: "x", 25: "y", 26: "z",
-        ]
+    private static let upperNames: [Int: String] = [
+        0: "@", 1: "A", 2: "B", 3: "C", 4: "D", 5: "E", 6: "F", 7: "G",
+        8: "H", 9: "I", 10: "J", 11: "K", 12: "L", 13: "M", 14: "N", 15: "O",
+        16: "P", 17: "Q", 18: "R", 19: "S", 20: "T", 21: "U", 22: "V", 23: "W",
+        24: "X", 25: "Y", 26: "Z", 27: "[", 28: "£ (Pound)", 29: "]", 30: "↑ (Up Arrow)", 31: "← (Left Arrow)",
+        32: "SPACE", 33: "!", 34: "\"", 35: "#", 36: "$", 37: "%", 38: "&", 39: "'",
+        40: "(", 41: ")", 42: "*", 43: "+", 44: ",", 45: "-", 46: ".", 47: "/",
+        48: "0", 49: "1", 50: "2", 51: "3", 52: "4", 53: "5", 54: "6", 55: "7",
+        56: "8", 57: "9", 58: ":", 59: ";", 60: "<", 61: "=", 62: ">", 63: "?",
+    ]
 
+    private static let lowerNames: [Int: String] = [
+        0: "@", 1: "a", 2: "b", 3: "c", 4: "d", 5: "e", 6: "f", 7: "g",
+        8: "h", 9: "i", 10: "j", 11: "k", 12: "l", 13: "m", 14: "n", 15: "o",
+        16: "p", 17: "q", 18: "r", 19: "s", 20: "t", 21: "u", 22: "v", 23: "w",
+        24: "x", 25: "y", 26: "z",
+    ]
+
+    /// Returns a human-readable name for the given screen code and ROM set.
+    ///
+    /// Set 0 maps to ROM Set 1 (Uppercase/Graphics);
+    /// Set 1 maps to ROM Set 2 (Lowercase/Uppercase).
+    static func characterName(screenCode: Int, set: Int) -> String {
+        let code = screenCode & 0xFF
+        // Codes 128-255 are the reverse-video twins of 0-127, so resolve the
+        // base name first and label it — checking this last would leave every
+        // reversed character named after its non-reversed twin.
+        if code >= 128 {
+            return "\(baseCharacterName(code - 128, set: set)) (reversed)"
+        }
+        return baseCharacterName(code, set: set)
+    }
+
+    private static func baseCharacterName(_ sc: Int, set: Int) -> String {
         if sc < 64 {
             if set == 1, let name = lowerNames[sc] { return name }
             return upperNames[sc] ?? "Graphics \(sc)"
         }
-        if sc >= 64 && sc < 96 {
+        if sc < 96 {
             if set == 1 {
                 let letter = sc - 64
                 if letter >= 1 && letter <= 26 {
@@ -529,9 +636,6 @@ struct C64CharROM {
                 }
             }
             return "Graphics \(sc)"
-        }
-        if screenCode >= 128 {
-            return "Reversed \(screenCode - 128)"
         }
         return "Graphics \(sc)"
     }
