@@ -92,6 +92,31 @@ extension AppDelegate {
         show(&gfxEditorController) { GfxEditorWindowController() }
     }
 
+    /// Opens the Graphics Editor on an image produced elsewhere — currently the
+    /// Image Converter's "→ Editor" button. `imageData` is in Koala or Art
+    /// Studio layout, matching `multiColor`.
+    ///
+    /// Returns false if the editor holds unsaved work and the user declined to
+    /// replace it.
+    @discardableResult
+    func openGfxEditorWith(imageData: Data, multiColor: Bool) -> Bool {
+        if gfxEditorController?.isModified == true {
+            let alert = NSAlert()
+            alert.messageText = "Replace the image in the Graphics Editor?"
+            alert.informativeText = "The Graphics Editor has unsaved changes. Loading the converted image will discard them."
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "Replace")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { return false }
+        }
+
+        openGfxEditor(nil)
+        guard let editor = gfxEditorController?.window?.contentViewController as? GfxEditorViewController else {
+            return false
+        }
+        return editor.loadConvertedImage(imageData, multiColor: multiColor)
+    }
+
     /// Opens or focuses the Number Base Converter window.
     @objc func openNumberConverter(_ sender: Any?) {
         show(&numberConverterController) { NumberConverterWindowController() }

@@ -1,4 +1,5 @@
 import Cocoa
+import UniformTypeIdentifiers
 
 // ═══════════════════════════════════════════════════════════
 // MARK: - Image Converter Window Controller
@@ -7,13 +8,13 @@ import Cocoa
 class ImageConverterWindowController: NSWindowController {
     convenience init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 750, height: 560),
+            contentRect: NSRect(x: 0, y: 0, width: 900, height: 620),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered, defer: false
         )
         window.title = "Image Converter"
         window.center()
-        window.minSize = NSSize(width: 700, height: 500)
+        window.minSize = NSSize(width: 860, height: 520)
         window.titlebarAppearsTransparent = true
         window.backgroundColor = AppTheme.current.panelBackground
         self.init(window: window)
@@ -33,21 +34,157 @@ class ImageConverterWindowController: NSWindowController {
 let c64PaletteRGB: [(r: Int, g: Int, b: Int)] = C64Reference.colorPalette.map { $0.rgb }
 
 // ═══════════════════════════════════════════════════════════
+// MARK: - Preview View
+// ═══════════════════════════════════════════════════════════
+
+/// Image preview that scales without smoothing, so a 320×200 C64 result stays
+/// crisp when blown up. `NSImageView` always interpolates, which turned the
+/// result panel into a blur. Doubles as the drag-and-drop target for the
+/// source image.
+final class ImageConverterPreviewView: NSView {
+
+    /// Smooth the source photo (it is a real photo at real resolution) but
+    /// never the C64 result, whose whole point is visible pixels.
+    var smoothScaling = false
+
+    var image: NSImage? {
+        didSet { needsDisplay = true }
+    }
+
+    /// Set to accept file drops. Nil leaves the view inert.
+    var onDropURL: ((URL) -> Void)? {
+        didSet {
+            if onDropURL != nil { registerForDraggedTypes([.fileURL]) } else { unregisterDraggedTypes() }
+        }
+    }
+
+    private var isDropTarget = false {
+        didSet { if isDropTarget != oldValue { needsDisplay = true } }
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let rounded = NSBezierPath(roundedRect: bounds, xRadius: 4, yRadius: 4)
+        AppTheme.current.panelDetailBackground.setFill()
+        rounded.fill()
+
+        if let image, image.size.width > 0, image.size.height > 0 {
+            let scale = min(bounds.width / image.size.width, bounds.height / image.size.height)
+            let w = image.size.width * scale
+            let h = image.size.height * scale
+            let rect = NSRect(x: (bounds.width - w) / 2, y: (bounds.height - h) / 2, width: w, height: h)
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current?.imageInterpolation = smoothScaling ? .high : .none
+            image.draw(in: rect)
+            NSGraphicsContext.restoreGraphicsState()
+        }
+
+        if isDropTarget {
+            AppTheme.current.syntaxKeyword.setStroke()
+            rounded.lineWidth = 2
+            rounded.stroke()
+        }
+    }
+
+    // MARK: Drag and drop
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        guard droppedImageURL(from: sender) != nil else { return [] }
+        isDropTarget = true
+        return .copy
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        isDropTarget = false
+    }
+
+    override func draggingEnded(_ sender: NSDraggingInfo) {
+        isDropTarget = false
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        isDropTarget = false
+        guard let url = droppedImageURL(from: sender) else { return false }
+        onDropURL?(url)
+        return true
+    }
+
+    private func droppedImageURL(from sender: NSDraggingInfo) -> URL? {
+        let options: [NSPasteboard.ReadingOptionKey: Any] = [
+            .urlReadingFileURLsOnly: true,
+            .urlReadingContentsConformToTypes: [UTType.image.identifier, UTType.pdf.identifier],
+        ]
+        let urls = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: options) as? [URL]
+        return urls?.first
+    }
+}
+
+// ═══════════════════════════════════════════════════════════
+// MARK: - Conversion Settings
+// ═══════════════════════════════════════════════════════════
+
+/// One-shot cancellation flag shared between the main thread and a conversion
+/// worker. Locked rather than plain, because the worker polls it from a
+/// background queue while the main thread flips it.
+private final class CancellationToken {
+    private let lock = NSLock()
+    private var cancelled = false
+
+    var isCancelled: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return cancelled
+    }
+
+    func cancel() {
+        lock.lock()
+        cancelled = true
+        lock.unlock()
+    }
+}
+
+/// How the source image is mapped onto the C64's 320×200 visible area.
+private enum ScaleMode: Int {
+    case stretch = 0   // distort to fill
+    case fit     = 1   // preserve aspect, letterbox with the backdrop colour
+    case fill    = 2   // preserve aspect, crop the overflow
+}
+
+/// Everything `performConversion` needs, snapshotted on the main thread so the
+/// background worker never touches a control.
+private struct ConversionSettings {
+    var multiColor: Bool
+    var dither: Int
+    var brightness: Double
+    var contrast: Double
+    var scaleMode: ScaleMode
+    var backdrop: (r: Double, g: Double, b: Double)
+    /// Nil means "search all 16 for the best global background".
+    var forcedBackground: Int?
+}
+
+// ═══════════════════════════════════════════════════════════
 // MARK: - Image Converter View Controller
 // ═══════════════════════════════════════════════════════════
 
 class ImageConverterViewController: NSViewController {
 
-    private var sourceImageView: NSImageView!
-    private var resultImageView: NSImageView!
-    private var sourceImage: NSImage?
+    private var sourceImageView: ImageConverterPreviewView!
+    private var resultImageView: ImageConverterPreviewView!
+    /// Rasterised once at load time — re-deriving it per conversion re-rendered
+    /// vector sources every time and cost real milliseconds on large photos.
+    private var sourceCGImage: CGImage?
     private var resultBitmap: C64Bitmap?
 
     private var modeSelector: NSPopUpButton!
     private var ditherSelector: NSPopUpButton!
+    private var scaleSelector: NSPopUpButton!
+    private var backdropSelector: NSPopUpButton!
+    private var bgColorSelector: NSPopUpButton!
     private var brightnessSlider: NSSlider!
     private var contrastSlider: NSSlider!
     private var statusLabel: NSTextField!
+    private var spinner: NSProgressIndicator!
+    private var bgColorLabel: NSTextField!
 
     private var bgColor: NSColor { AppTheme.current.panelBackground }
     private var sectionLabels: [NSTextField] = []
@@ -55,8 +192,15 @@ class ImageConverterViewController: NSViewController {
 
     private var conversionWorkItem: DispatchWorkItem?
 
+    /// The token belonging to the newest conversion. Starting a conversion
+    /// cancels the previous token, so an older worker both bails out early and
+    /// has its result discarded on arrival — without it, a slow conversion
+    /// could land after a newer one and overwrite it.
+    private var conversionToken: CancellationToken?
+    private var activeConversions = 0
+
     override func loadView() {
-        self.view = NSView(frame: NSRect(x: 0, y: 0, width: 750, height: 560))
+        self.view = NSView(frame: NSRect(x: 0, y: 0, width: 900, height: 620))
         view.wantsLayer = true
         view.layer?.backgroundColor = bgColor.cgColor
     }
@@ -88,117 +232,148 @@ class ImageConverterViewController: NSViewController {
         sectionLabels.forEach { $0.textColor = AppTheme.current.syntaxKeyword }
         dimLabels.forEach     { $0.textColor = AppTheme.current.statusLabel }
         statusLabel?.textColor       = AppTheme.current.statusLabel
-        sourceImageView?.layer?.backgroundColor = AppTheme.current.panelDetailBackground.cgColor
-        resultImageView?.layer?.backgroundColor = AppTheme.current.panelDetailBackground.cgColor
+        sourceImageView?.needsDisplay = true
+        resultImageView?.needsDisplay = true
+        if bgColorSelector != nil { setBackgroundPickerEnabled(bgColorSelector.isEnabled) }
     }
+
+    // MARK: - UI
 
     private func buildUI() {
         let w = view.bounds.width
         var y = view.bounds.height - 15
 
-        // ── Controls bar ─────────────────────────────────
+        // ── Row 1: actions ───────────────────────────────
         y -= 22
-        let loadBtn = NSButton(title: "Load Image…", target: self, action: #selector(loadImage(_:)))
-        loadBtn.frame = NSRect(x: 12, y: y, width: 100, height: 24)
-        loadBtn.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .medium)
-        view.addSubview(loadBtn)
+        let loadBtn = makeButton("Load Image…", bold: false, action: #selector(loadImage(_:)))
+        loadBtn.frame = NSRect(x: 12, y: y, width: 105, height: 24)
 
-        let modeLabel = makeLabel("Mode:", bold: false, color: AppTheme.current.statusLabel)
-        modeLabel.frame = NSRect(x: 120, y: y + 3, width: 40, height: 16)
-        view.addSubview(modeLabel)
+        let convertBtn = makeButton("Convert", bold: true, action: #selector(convertImage(_:)))
+        convertBtn.frame = NSRect(x: 125, y: y, width: 75, height: 24)
 
-        modeSelector = NSPopUpButton(frame: NSRect(x: 163, y: y, width: 120, height: 24))
-        modeSelector.addItems(withTitles: ["Hi-Res (320×200)", "Multi-Color (160×200)"])
-        modeSelector.font = NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
-        modeSelector.target = self
-        modeSelector.action = #selector(settingsChanged(_:))
-        view.addSubview(modeSelector)
+        let exportBtn = makeButton("Export…", bold: false, action: #selector(exportResult(_:)))
+        exportBtn.frame = NSRect(x: 208, y: y, width: 72, height: 24)
 
-        let ditherLabel = makeLabel("Dither:", bold: false, color: AppTheme.current.statusLabel)
-        ditherLabel.frame = NSRect(x: 290, y: y + 3, width: 45, height: 16)
-        view.addSubview(ditherLabel)
+        let d64Btn = makeButton("→ D64", bold: false, action: #selector(saveToD64(_:)))
+        d64Btn.frame = NSRect(x: 288, y: y, width: 62, height: 24)
 
-        ditherSelector = NSPopUpButton(frame: NSRect(x: 340, y: y, width: 130, height: 24))
-        ditherSelector.addItems(withTitles: ["None", "Floyd-Steinberg", "Ordered (Bayer)"])
+        let editorBtn = makeButton("→ Editor", bold: false, action: #selector(sendToEditor(_:)))
+        editorBtn.frame = NSRect(x: 358, y: y, width: 78, height: 24)
+
+        spinner = NSProgressIndicator(frame: NSRect(x: 446, y: y + 4, width: 16, height: 16))
+        spinner.style = .spinning
+        spinner.controlSize = .small
+        spinner.isDisplayedWhenStopped = false
+        spinner.autoresizingMask = [.minYMargin]
+        view.addSubview(spinner)
+
+        // ── Row 2: format ────────────────────────────────
+        y -= 30
+        addLabel("Mode:", x: 12, y: y + 3, width: 42)
+        modeSelector = makePopUp(x: 56, y: y, width: 160,
+                                 items: ["Hi-Res (320×200)", "Multi-Color (160×200)"])
+        modeSelector.action = #selector(modeChanged(_:))
+
+        addLabel("Dither:", x: 226, y: y + 3, width: 48)
+        ditherSelector = makePopUp(x: 276, y: y, width: 150,
+                                   items: ["None", "Floyd-Steinberg", "Ordered (Bayer)"])
         ditherSelector.selectItem(at: 1)
-        ditherSelector.font = NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
-        ditherSelector.target = self
-        ditherSelector.action = #selector(settingsChanged(_:))
-        view.addSubview(ditherSelector)
 
-        let convertBtn = NSButton(title: "Convert", target: self, action: #selector(convertImage(_:)))
-        convertBtn.frame = NSRect(x: 480, y: y, width: 70, height: 24)
-        convertBtn.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .bold)
-        view.addSubview(convertBtn)
+        addLabel("Scale:", x: 436, y: y + 3, width: 44)
+        scaleSelector = makePopUp(x: 482, y: y, width: 150,
+                                  items: ["Stretch to Fill", "Fit (Letterbox)", "Fill (Crop)"])
 
-        let exportBtn = NSButton(title: "Export…", target: self, action: #selector(exportResult(_:)))
-        exportBtn.frame = NSRect(x: 555, y: y, width: 65, height: 24)
-        exportBtn.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .medium)
-        view.addSubview(exportBtn)
+        addLabel("Backdrop:", x: 642, y: y + 3, width: 66)
+        backdropSelector = makePopUp(x: 710, y: y, width: 90, items: ["White", "Black"])
 
-        let d64Btn = NSButton(title: "→ D64", target: self, action: #selector(saveToD64(_:)))
-        d64Btn.frame = NSRect(x: 625, y: y, width: 55, height: 24)
-        d64Btn.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .medium)
-        view.addSubview(d64Btn)
+        // ── Row 3: tone ──────────────────────────────────
+        y -= 30
+        addLabel("Brightness:", x: 12, y: y + 4, width: 78)
+        brightnessSlider = makeSlider(x: 92, y: y + 2, width: 120)
 
-        // ── Brightness/Contrast ──────────────────────────
-        y -= 28
-        let briLabel = makeLabel("Brightness:", bold: false, color: AppTheme.current.statusLabel)
-        briLabel.frame = NSRect(x: 12, y: y + 2, width: 80, height: 16)
-        view.addSubview(briLabel)
+        addLabel("Contrast:", x: 226, y: y + 4, width: 64)
+        contrastSlider = makeSlider(x: 292, y: y + 2, width: 120)
 
-        brightnessSlider = NSSlider(value: 0, minValue: -50, maxValue: 50, target: self, action: #selector(settingsChanged(_:)))
-        brightnessSlider.frame = NSRect(x: 95, y: y, width: 120, height: 20)
-        view.addSubview(brightnessSlider)
-
-        let conLabel = makeLabel("Contrast:", bold: false, color: AppTheme.current.statusLabel)
-        conLabel.frame = NSRect(x: 230, y: y + 2, width: 65, height: 16)
-        view.addSubview(conLabel)
-
-        contrastSlider = NSSlider(value: 0, minValue: -50, maxValue: 50, target: self, action: #selector(settingsChanged(_:)))
-        contrastSlider.frame = NSRect(x: 300, y: y, width: 120, height: 20)
-        view.addSubview(contrastSlider)
-
-        let resetBtn = NSButton(title: "Reset", target: self, action: #selector(resetSliders(_:)))
-        resetBtn.frame = NSRect(x: 430, y: y, width: 50, height: 20)
+        let resetBtn = makeButton("Reset", bold: false, action: #selector(resetSliders(_:)))
+        resetBtn.frame = NSRect(x: 422, y: y + 1, width: 54, height: 22)
         resetBtn.font = NSFont.monospacedSystemFont(ofSize: 10, weight: .medium)
-        view.addSubview(resetBtn)
+
+        bgColorLabel = addLabel("Background:", x: 496, y: y + 4, width: 80)
+        bgColorSelector = makePopUp(x: 578, y: y, width: 150,
+                                    items: ["Auto"] + C64Reference.colorPalette.map { "\($0.index). \($0.name)" })
+        // Only meaningful in multi-color mode, where $D021 is a real global slot.
+        setBackgroundPickerEnabled(false)
 
         // ── Image views ──────────────────────────────────
-        y -= 10
+        y -= 26
         let halfW = (w - 36) / 2
-        let imgH = y - 35
 
         let srcLabel = makeLabel("SOURCE", bold: true, color: AppTheme.current.syntaxKeyword)
-        srcLabel.frame = NSRect(x: 12, y: y - 2, width: 80, height: 16)
+        srcLabel.frame = NSRect(x: 12, y: y, width: 80, height: 16)
+        srcLabel.autoresizingMask = [.minYMargin]
         view.addSubview(srcLabel)
 
         let resLabel = makeLabel("C64 RESULT", bold: true, color: AppTheme.current.syntaxKeyword)
-        resLabel.frame = NSRect(x: halfW + 24, y: y - 2, width: 100, height: 16)
+        resLabel.frame = NSRect(x: halfW + 24, y: y, width: 100, height: 16)
+        resLabel.autoresizingMask = [.minYMargin]
         view.addSubview(resLabel)
 
-        y -= 18
+        y -= 8
+        let imgH = y - 28
 
-        sourceImageView = NSImageView(frame: NSRect(x: 12, y: 28, width: halfW, height: imgH))
-        sourceImageView.imageScaling = .scaleProportionallyUpOrDown
-        sourceImageView.wantsLayer = true
-        sourceImageView.layer?.backgroundColor = AppTheme.current.panelDetailBackground.cgColor
-        sourceImageView.layer?.cornerRadius = 4
+        sourceImageView = ImageConverterPreviewView(frame: NSRect(x: 12, y: 28, width: halfW, height: imgH))
+        sourceImageView.smoothScaling = true
         sourceImageView.autoresizingMask = [.width, .height]
+        sourceImageView.onDropURL = { [weak self] url in self?.load(url: url) }
         view.addSubview(sourceImageView)
 
-        resultImageView = NSImageView(frame: NSRect(x: halfW + 24, y: 28, width: halfW, height: imgH))
-        resultImageView.imageScaling = .scaleProportionallyUpOrDown
-        resultImageView.wantsLayer = true
-        resultImageView.layer?.backgroundColor = AppTheme.current.panelDetailBackground.cgColor
-        resultImageView.layer?.cornerRadius = 4
+        resultImageView = ImageConverterPreviewView(frame: NSRect(x: halfW + 24, y: 28, width: halfW, height: imgH))
         resultImageView.autoresizingMask = [.width, .height]
         view.addSubview(resultImageView)
 
         // ── Status ───────────────────────────────────────
-        statusLabel = makeLabel("Load an image to convert to C64 format.", bold: false, color: AppTheme.current.statusLabel)
+        statusLabel = makeLabel("Load an image — or drop one on the SOURCE panel — to convert it.",
+                                bold: false, color: AppTheme.current.statusLabel)
         statusLabel.frame = NSRect(x: 12, y: 6, width: w - 24, height: 16)
+        statusLabel.autoresizingMask = [.width, .maxYMargin]
         view.addSubview(statusLabel)
+    }
+
+    private func makeButton(_ title: String, bold: Bool, action: Selector) -> NSButton {
+        let btn = NSButton(title: title, target: self, action: action)
+        btn.font = NSFont.monospacedSystemFont(ofSize: 11, weight: bold ? .bold : .medium)
+        btn.autoresizingMask = [.minYMargin]
+        view.addSubview(btn)
+        return btn
+    }
+
+    private func makePopUp(x: CGFloat, y: CGFloat, width: CGFloat, items: [String]) -> NSPopUpButton {
+        let popUp = NSPopUpButton(frame: NSRect(x: x, y: y, width: width, height: 24))
+        popUp.addItems(withTitles: items)
+        popUp.font = NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
+        popUp.target = self
+        popUp.action = #selector(settingsChanged(_:))
+        popUp.autoresizingMask = [.minYMargin]
+        view.addSubview(popUp)
+        return popUp
+    }
+
+    private func makeSlider(x: CGFloat, y: CGFloat, width: CGFloat) -> NSSlider {
+        let slider = NSSlider(value: 0, minValue: -50, maxValue: 50,
+                              target: self, action: #selector(settingsChanged(_:)))
+        slider.frame = NSRect(x: x, y: y, width: width, height: 20)
+        slider.autoresizingMask = [.minYMargin]
+        view.addSubview(slider)
+        return slider
+    }
+
+    @discardableResult
+    private func addLabel(_ text: String, x: CGFloat, y: CGFloat, width: CGFloat) -> NSTextField {
+        let label = makeLabel(text, bold: false, color: AppTheme.current.statusLabel)
+        label.frame = NSRect(x: x, y: y, width: width, height: 16)
+        label.autoresizingMask = [.minYMargin]
+        view.addSubview(label)
+        return label
     }
 
     private func makeLabel(_ text: String, bold: Bool, color: NSColor) -> NSTextField {
@@ -207,6 +382,13 @@ class ImageConverterViewController: NSViewController {
         label.textColor = color
         if bold { sectionLabels.append(label) } else { dimLabels.append(label) }
         return label
+    }
+
+    private func setBackgroundPickerEnabled(_ enabled: Bool) {
+        bgColorSelector.isEnabled = enabled
+        bgColorLabel.textColor = enabled
+            ? AppTheme.current.statusLabel
+            : AppTheme.current.statusLabel.withAlphaComponent(0.4)
     }
 
     // MARK: - Load Image
@@ -224,25 +406,68 @@ class ImageConverterViewController: NSViewController {
         panel.title = "Load Image"
         panel.begin { [weak self] response in
             guard response == .OK, let url = panel.url else { return }
-            guard let image = NSImage(contentsOf: url) else {
-                self?.statusLabel.stringValue = "Failed to load image."
-                return
-            }
-            self?.sourceImage = image
-            self?.sourceImageView.image = image
-
-            if let cgImg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) {
-                self?.statusLabel.stringValue = "Loaded: \(url.lastPathComponent) (\(cgImg.width)×\(cgImg.height) px)"
-            } else {
-                self?.statusLabel.stringValue = "Loaded: \(url.lastPathComponent)"
-            }
+            self?.load(url: url)
         }
+    }
+
+    private func load(url: URL) {
+        guard let image = NSImage(contentsOf: url) else {
+            statusLabel.stringValue = "Failed to load \(url.lastPathComponent)."
+            return
+        }
+        guard let cgImage = rasterize(image) else {
+            statusLabel.stringValue = "Could not read pixel data from \(url.lastPathComponent)."
+            return
+        }
+
+        sourceCGImage = cgImage
+        sourceImageView.image = image
+        statusLabel.stringValue = "Loaded: \(url.lastPathComponent) (\(cgImage.width)×\(cgImage.height) px)"
+    }
+
+    /// Produce a CGImage to convert from.
+    ///
+    /// Bitmap sources hand back their own pixels. Vector sources (SVG, PDF)
+    /// report `pixelsWide == 0` and rasterise at their tiny intrinsic size, so
+    /// they are re-rendered large enough that downscaling to 320×200 still has
+    /// detail to work with.
+    private func rasterize(_ image: NSImage) -> CGImage? {
+        let pixelWidth = image.representations.map(\.pixelsWide).max() ?? 0
+        if pixelWidth > 0 {
+            return image.cgImage(forProposedRect: nil, context: nil, hints: nil)
+        }
+
+        let size = image.size
+        guard size.width > 0, size.height > 0 else { return nil }
+        // 4× the C64's visible area is plenty of detail without being wasteful.
+        let scale = max(1280 / size.width, 800 / size.height)
+        let pixelsWide = max(1, Int((size.width * scale).rounded()))
+        let pixelsHigh = max(1, Int((size.height * scale).rounded()))
+
+        guard let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: pixelsWide, pixelsHigh: pixelsHigh,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+        ) else { return nil }
+        rep.size = size
+
+        NSGraphicsContext.saveGraphicsState()
+        defer { NSGraphicsContext.restoreGraphicsState() }
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        image.draw(in: NSRect(origin: .zero, size: size), from: .zero,
+                   operation: .sourceOver, fraction: 1.0)
+        return rep.cgImage
     }
 
     // MARK: - Convert
 
+    @objc private func modeChanged(_ sender: Any?) {
+        setBackgroundPickerEnabled(modeSelector.indexOfSelectedItem == 1)
+        settingsChanged(sender)
+    }
+
     @objc private func settingsChanged(_ sender: Any?) {
-        guard sourceImage != nil else { return }
+        guard sourceCGImage != nil else { return }
         conversionWorkItem?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.runConversion() }
         conversionWorkItem = work
@@ -252,11 +477,11 @@ class ImageConverterViewController: NSViewController {
     @objc private func resetSliders(_ sender: Any?) {
         brightnessSlider.doubleValue = 0
         contrastSlider.doubleValue = 0
-        if sourceImage != nil { convertImage(sender) }
+        if sourceCGImage != nil { convertImage(sender) }
     }
 
     @objc private func convertImage(_ sender: Any?) {
-        guard sourceImage != nil else {
+        guard sourceCGImage != nil else {
             statusLabel.stringValue = "Load an image first."
             return
         }
@@ -266,84 +491,107 @@ class ImageConverterViewController: NSViewController {
         runConversion()
     }
 
-    // Shared conversion entry point called by both convertImage and the
-    // debounced settingsChanged path.  Always called on the main thread;
-    // pixel extraction and heavy lifting happen on a background thread.
+    /// Shared conversion entry point for both the Convert button and the
+    /// debounced settings path. Always called on the main thread; pixel
+    /// extraction and quantization happen on a background queue.
     private func runConversion() {
-        guard let source = sourceImage else { return }
+        guard let cgImage = sourceCGImage else { return }
 
+        let bgIndex = bgColorSelector.indexOfSelectedItem
         let isMultiColor = modeSelector.indexOfSelectedItem == 1
-        let ditherMode   = ditherSelector.indexOfSelectedItem
-        let brightness   = brightnessSlider.doubleValue
-        let contrast     = contrastSlider.doubleValue
+        let settings = ConversionSettings(
+            multiColor:       isMultiColor,
+            dither:           ditherSelector.indexOfSelectedItem,
+            brightness:       brightnessSlider.doubleValue,
+            contrast:         contrastSlider.doubleValue,
+            scaleMode:        ScaleMode(rawValue: scaleSelector.indexOfSelectedItem) ?? .stretch,
+            backdrop:         backdropSelector.indexOfSelectedItem == 1 ? (0, 0, 0) : (255, 255, 255),
+            forcedBackground: (isMultiColor && bgIndex > 0) ? bgIndex - 1 : nil
+        )
 
-        statusLabel.stringValue = "Converting..."
+        // Anything already running is now stale.
+        conversionToken?.cancel()
+        let token = CancellationToken()
+        conversionToken = token
+        activeConversions += 1
 
-        guard let cgImage = source.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
-            statusLabel.stringValue = "Failed to read image data."
-            return
-        }
+        statusLabel.stringValue = "Converting…"
+        spinner.startAnimation(nil)
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self else { return }
-            let bitmap = self.performConversion(
-                cgImage:    cgImage,
-                multiColor: isMultiColor,
-                dither:     ditherMode,
-                brightness: brightness,
-                contrast:   contrast
-            )
+            let bitmap = Self.performConversion(cgImage: cgImage, settings: settings,
+                                                isCancelled: { token.isCancelled })
 
             DispatchQueue.main.async {
+                guard let self else { return }
+                self.activeConversions -= 1
+                if self.activeConversions <= 0 { self.spinner.stopAnimation(nil) }
+                // A newer conversion started while this one ran — drop the result.
+                guard !token.isCancelled, let bitmap else { return }
+
                 self.resultBitmap = bitmap
-                self.resultImageView.image = self.bitmapToNSImage(bitmap)
-                let mode = isMultiColor ? "multi-color" : "hi-res"
-                self.statusLabel.stringValue = "Converted to C64 \(mode) format."
+                self.resultImageView.image = Self.bitmapToNSImage(bitmap)
+                let mode = settings.multiColor ? "multi-color" : "hi-res"
+                let bg = settings.multiColor
+                    ? " (background: \(C64Reference.colorPalette[Int(bitmap.backgroundColor)].name))"
+                    : ""
+                self.statusLabel.stringValue = "Converted to C64 \(mode) format\(bg)."
             }
         }
     }
 
     // MARK: - Conversion Engine
 
-    private func performConversion(cgImage: CGImage, multiColor: Bool, dither: Int, brightness: Double, contrast: Double) -> C64Bitmap {
-        let targetW = multiColor ? 160 : 320
+    /// Returns nil if the conversion was superseded before it finished.
+    private static func performConversion(
+        cgImage: CGImage,
+        settings: ConversionSettings,
+        isCancelled: () -> Bool
+    ) -> C64Bitmap? {
+
+        let targetW = settings.multiColor ? 160 : 320
         let targetH = 200
 
-        let pixels = getScaledPixels(from: cgImage, width: targetW, height: targetH, brightness: brightness, contrast: contrast)
+        let pixels = getScaledPixels(from: cgImage, width: targetW, height: targetH, settings: settings)
 
         let bitmap = C64Bitmap()
-        bitmap.isMultiColor = multiColor
+        bitmap.isMultiColor = settings.multiColor
 
-        let cellPixelW = multiColor ? 4 : 8
+        let cellPixelW = settings.multiColor ? 4 : 8
         let cellCols   = targetW / cellPixelW
         let cellRows   = targetH / 8
+        let cellCount  = cellPixelW * 8
 
-        // ── Multi-color global background pre-pass ────────────────────────────
+        // Gather each cell's pixels once. The previous version rebuilt these
+        // arrays inside the 16-candidate background search and again in pass 1
+        // — seventeen times over.
+        var cells = [[RGB]](repeating: [], count: cellRows * cellCols)
+        for cellRow in 0..<cellRows {
+            for cellCol in 0..<cellCols {
+                var cellPixels = [RGB]()
+                cellPixels.reserveCapacity(cellCount)
+                for py in 0..<8 {
+                    let y = cellRow * 8 + py
+                    for px in 0..<cellPixelW {
+                        cellPixels.append(pixels[y * targetW + cellCol * cellPixelW + px])
+                    }
+                }
+                cells[cellRow * cellCols + cellCol] = cellPixels
+            }
+        }
+
+        // ── Multi-color global background ─────────────────────────────────────
         var globalBg = 0
-        if multiColor {
-            var bestBgError = Double.infinity
-
-            for candidate in 0..<16 {
-                var totalError = 0.0
-
-                for cellRow in 0..<cellRows {
-                    for cellCol in 0..<cellCols {
-                        // Collect cell pixels
-                        var cellPixels: [(r: Double, g: Double, b: Double)] = []
-                        for py in 0..<8 {
-                            for px in 0..<cellPixelW {
-                                let x = cellCol * cellPixelW + px
-                                let y = cellRow * 8 + py
-                                if x < targetW && y < targetH {
-                                    cellPixels.append(pixels[y][x])
-                                }
-                            }
-                        }
-                        // Best 3 per-cell colours excluding the candidate background
-                        let cellColors = findBestColors(cellPixels, count: 3, excluding: candidate)
-                        let palette    = [candidate] + cellColors
-
-                        // Sum error for each pixel against this 4-entry palette
+        if settings.multiColor {
+            if let forced = settings.forcedBackground {
+                globalBg = forced
+            } else {
+                var bestBgError = Double.infinity
+                for candidate in 0..<16 {
+                    if isCancelled() { return nil }
+                    var totalError = 0.0
+                    for cellPixels in cells {
+                        let palette = [candidate] + findBestColors(cellPixels, count: 3, excluding: candidate)
                         for pixel in cellPixels {
                             var minDist = Double.infinity
                             for c in palette {
@@ -353,15 +601,16 @@ class ImageConverterViewController: NSViewController {
                             totalError += minDist
                         }
                     }
-                }
-
-                if totalError < bestBgError {
-                    bestBgError = totalError
-                    globalBg    = candidate
+                    if totalError < bestBgError {
+                        bestBgError = totalError
+                        globalBg    = candidate
+                    }
                 }
             }
             bitmap.backgroundColor = UInt8(globalBg)
         }
+
+        if isCancelled() { return nil }
 
         // -- Pass 1: choose per-cell palettes ----------------------------------
         //
@@ -371,66 +620,61 @@ class ImageConverterViewController: NSViewController {
         //   multi-color: palette[0] = global background ($D021, pixel 0)
         //                palette[1..3] = fg / cell bg / color RAM (pixels 1-3)
         // so closestPaletteIndex() returns the pixel value to store.
-        var cellPalettes = Array(
-            repeating: Array(repeating: [Int](), count: cellCols),
-            count: cellRows
-        )
+        var cellPalettes = [[Int]](repeating: [], count: cellRows * cellCols)
 
         for cellRow in 0..<cellRows {
             for cellCol in 0..<cellCols {
-                // Collect pixels for this cell
-                var cellPixels: [(r: Double, g: Double, b: Double)] = []
-                for py in 0..<8 {
-                    for px in 0..<cellPixelW {
-                        let x = cellCol * cellPixelW + px
-                        let y = cellRow * 8 + py
-                        if x < targetW && y < targetH {
-                            cellPixels.append(pixels[y][x])
-                        }
-                    }
-                }
+                let index = cellRow * cellCols + cellCol
+                let cellPixels = cells[index]
 
-                if multiColor {
-                    let cellColors = findBestColors(cellPixels, count: 3, excluding: globalBg)
-                    if cellColors.count > 0 { bitmap.cellForeground[cellRow][cellCol] = UInt8(cellColors[0]) }
-                    if cellColors.count > 1 { bitmap.cellBackground[cellRow][cellCol] = UInt8(cellColors[1]) }
-                    if cellColors.count > 2 { bitmap.cellColorRAM[cellRow][cellCol]   = UInt8(cellColors[2]) }
+                if settings.multiColor {
+                    var cellColors = findBestColors(cellPixels, count: 3, excluding: globalBg)
+                    // Pad short palettes with the background so slots 0-3 always
+                    // exist and the exported screen/colour RAM never carries a
+                    // leftover default for a slot the image does not use.
+                    while cellColors.count < 3 { cellColors.append(globalBg) }
 
-                    // Pad short palettes with the background so indices 0-3 always exist
-                    let padding = Array(repeating: globalBg, count: max(0, 3 - cellColors.count))
-                    cellPalettes[cellRow][cellCol] = [globalBg] + cellColors + padding
+                    bitmap.cellForeground[cellRow][cellCol] = UInt8(cellColors[0])
+                    bitmap.cellBackground[cellRow][cellCol] = UInt8(cellColors[1])
+                    bitmap.cellColorRAM[cellRow][cellCol]   = UInt8(cellColors[2])
+                    cellPalettes[index] = [globalBg] + cellColors
                 } else {
-                    let bestColors = findBestColors(cellPixels, count: 2)
-                    let bg = bestColors.count > 0 ? bestColors[0] : 0
-                    let fg = bestColors.count > 1 ? bestColors[1] : 1
+                    var bestColors = findBestColors(cellPixels, count: 2)
+                    // A cell that needs only one colour still has to fill both
+                    // slots; reuse the one colour rather than an arbitrary white.
+                    while bestColors.count < 2 { bestColors.append(bestColors.first ?? 0) }
 
-                    bitmap.cellBackground[cellRow][cellCol] = UInt8(bg)
-                    bitmap.cellForeground[cellRow][cellCol] = UInt8(fg)
-                    cellPalettes[cellRow][cellCol] = [bg, fg]
+                    bitmap.cellBackground[cellRow][cellCol] = UInt8(bestColors[0])
+                    bitmap.cellForeground[cellRow][cellCol] = UInt8(bestColors[1])
+                    cellPalettes[index] = bestColors
                 }
             }
         }
+
+        if isCancelled() { return nil }
 
         // -- Pass 2: assign pixels, scanline-major -----------------------------
         //
         // Floyd-Steinberg error diffusion REQUIRES scanline order: each
         // pixel's error flows right and down into neighbours that have not
-        // been quantized yet. The previous cell-major traversal rotated the
-        // full-width error rows once per 8-pixel cell slice, scrambling the
-        // diffusion across cell boundaries. Palettes are already fixed by
-        // pass 1, so this pass can walk the image row by row.
+        // been quantized yet. Palettes are already fixed by pass 1, so this
+        // pass can walk the image row by row.
 
-        // Bayer 4x4 ordered-dither matrix (values in -0.5...0.4375, scaled x16)
+        // Bayer 4x4 ordered-dither matrix, normalised to -0.5...0.4375.
         let bayerMatrix: [[Double]] = [
             [-0.5,     0.0,    -0.375,   0.125 ],
             [ 0.25,   -0.25,    0.375,  -0.125 ],
             [-0.3125,  0.1875, -0.4375,  0.0625],
             [ 0.4375, -0.0625,  0.3125, -0.1875],
         ]
+        // Neighbouring C64 palette entries sit 40-80 apart in each channel, so
+        // the old ±8 swing was too small to break up a band. ±32 actually
+        // dithers without swamping the image.
+        let bayerAmplitude = 64.0
 
         // Rolling two-row error buffer: [0] = current row, [1] = next row.
         var fsError = Array(
-            repeating: Array(repeating: (r: 0.0, g: 0.0, b: 0.0), count: targetW + 1),
+            repeating: [RGB](repeating: RGB(r: 0, g: 0, b: 0), count: targetW),
             count: 2
         )
 
@@ -438,18 +682,17 @@ class ImageConverterViewController: NSViewController {
             let cellRow = y / 8
 
             for x in 0..<targetW {
-                let cellCol = x / cellPixelW
-                let palette = cellPalettes[cellRow][cellCol]
+                let palette = cellPalettes[cellRow * cellCols + x / cellPixelW]
 
-                var rgb = pixels[y][x]
+                var rgb = pixels[y * targetW + x]
 
-                if dither == 1 {
+                if settings.dither == 1 {
                     // Floyd-Steinberg: apply accumulated error
                     rgb.r = max(0, min(255, rgb.r + fsError[0][x].r))
                     rgb.g = max(0, min(255, rgb.g + fsError[0][x].g))
                     rgb.b = max(0, min(255, rgb.b + fsError[0][x].b))
-                } else if dither == 2 {
-                    let threshold = bayerMatrix[y % 4][x % 4] * 16
+                } else if settings.dither == 2 {
+                    let threshold = bayerMatrix[y % 4][x % 4] * bayerAmplitude
                     rgb.r = max(0, min(255, rgb.r + threshold))
                     rgb.g = max(0, min(255, rgb.g + threshold))
                     rgb.b = max(0, min(255, rgb.b + threshold))
@@ -458,7 +701,7 @@ class ImageConverterViewController: NSViewController {
                 let chosenIdx = closestPaletteIndex(rgb, from: palette)
                 bitmap.pixels[y][x] = UInt8(chosenIdx)
 
-                if dither == 1 {
+                if settings.dither == 1 {
                     // Distribute quantization error to unvisited neighbours
                     let chosenRGB = c64PaletteRGB[palette[chosenIdx]]
                     let errR = rgb.r - Double(chosenRGB.r)
@@ -489,9 +732,9 @@ class ImageConverterViewController: NSViewController {
             }
 
             // Advance the rolling buffer at the end of each full scanline
-            if dither == 1 {
+            if settings.dither == 1 {
                 fsError[0] = fsError[1]
-                fsError[1] = Array(repeating: (r: 0.0, g: 0.0, b: 0.0), count: targetW + 1)
+                for i in 0..<targetW { fsError[1][i] = RGB(r: 0, g: 0, b: 0) }
             }
         }
 
@@ -500,67 +743,135 @@ class ImageConverterViewController: NSViewController {
 
     // MARK: - Pixel Extraction
 
-    // Renders `image` (a CGImage) into a CGContext at `width`×`height` pixels,
-    // then reads back raw RGBA bytes and applies brightness/contrast.
-    private func getScaledPixels(from cgImage: CGImage, width: Int, height: Int, brightness: Double, contrast: Double) -> [[(r: Double, g: Double, b: Double)]] {
+    /// A single pixel's colour. A struct rather than a tuple so the pixel grid
+    /// can live in one flat array instead of an array of arrays of tuples.
+    private struct RGB {
+        var r: Double
+        var g: Double
+        var b: Double
+    }
+
+    /// Renders `cgImage` into a `width`×`height` context, then reads back raw
+    /// RGBA bytes and applies brightness/contrast. Returns a flat row-major
+    /// grid of `width * height` pixels.
+    private static func getScaledPixels(
+        from cgImage: CGImage,
+        width: Int,
+        height: Int,
+        settings: ConversionSettings
+    ) -> [RGB] {
 
         let bytesPerPixel = 4
         let bytesPerRow   = width * bytesPerPixel
         var rawBytes      = [UInt8](repeating: 0, count: height * bytesPerRow)
+        var pixels        = [RGB](repeating: RGB(r: 0, g: 0, b: 0), count: width * height)
 
-        guard let ctx = CGContext(
-            data:             &rawBytes,
-            width:            width,
-            height:           height,
-            bitsPerComponent: 8,
-            bytesPerRow:      bytesPerRow,
-            space:            CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo:       CGImageAlphaInfo.premultipliedLast.rawValue
-        ) else {
-            // Return a black pixel grid rather than crashing if context creation fails.
-            return Array(repeating: Array(repeating: (0.0, 0.0, 0.0), count: width), count: height)
+        let drawn: Bool = rawBytes.withUnsafeMutableBytes { buffer -> Bool in
+            // The context must be created, drawn into, and finished inside this
+            // closure: passing `&rawBytes` straight to CGContext() would leave
+            // the context holding a pointer that is only valid for that one call.
+            guard let ctx = CGContext(
+                data:             buffer.baseAddress,
+                width:            width,
+                height:           height,
+                bitsPerComponent: 8,
+                bytesPerRow:      bytesPerRow,
+                space:            CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo:       CGImageAlphaInfo.premultipliedLast.rawValue
+            ) else { return false }
+
+            // Lay down the backdrop first so transparent pixels — and the bars
+            // left by "Fit" — come out as a real colour instead of the black
+            // that un-premultiplying zeroes would produce.
+            ctx.setFillColor(red:   settings.backdrop.r / 255,
+                             green: settings.backdrop.g / 255,
+                             blue:  settings.backdrop.b / 255,
+                             alpha: 1)
+            ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
+
+            ctx.interpolationQuality = .high
+            ctx.draw(cgImage, in: destinationRect(for: cgImage, width: width, height: height,
+                                                 scaleMode: settings.scaleMode))
+            return true
         }
 
-        ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+        // Context creation failed — hand back a flat backdrop rather than crash.
+        guard drawn else {
+            return [RGB](repeating: RGB(r: settings.backdrop.r, g: settings.backdrop.g, b: settings.backdrop.b),
+                         count: width * height)
+        }
 
-        let contrastFactor = (259.0 * (contrast + 255.0)) / (255.0 * (259.0 - contrast))
+        let contrastFactor = (259.0 * (settings.contrast + 255.0)) / (255.0 * (259.0 - settings.contrast))
 
-        var pixels = Array(repeating: Array(repeating: (r: 0.0, g: 0.0, b: 0.0), count: width), count: height)
+        for i in 0..<(width * height) {
+            let offset = i * bytesPerPixel
+            var r = Double(rawBytes[offset])
+            var g = Double(rawBytes[offset + 1])
+            var b = Double(rawBytes[offset + 2])
+            let a = Double(rawBytes[offset + 3])
 
-        for y in 0..<height {
-            for x in 0..<width {
-                let offset = (y * width + x) * bytesPerPixel
-                var r = Double(rawBytes[offset])
-                var g = Double(rawBytes[offset + 1])
-                var b = Double(rawBytes[offset + 2])
-                let a = Double(rawBytes[offset + 3])
-
-                // Un-premultiply alpha so brightness/contrast operate on
-                // the true colour values rather than pre-blended ones.
-                if a > 0 {
-                    let invA = 255.0 / a
-                    r *= invA; g *= invA; b *= invA
-                }
-
-                // Apply brightness
-                r += brightness; g += brightness; b += brightness
-
-                // Apply contrast (standard formula: C = (259*(K+255))/(255*(259-K)))
-                r = contrastFactor * (r - 128) + 128
-                g = contrastFactor * (g - 128) + 128
-                b = contrastFactor * (b - 128) + 128
-
-                pixels[y][x] = (max(0, min(255, r)), max(0, min(255, g)), max(0, min(255, b)))
+            // Un-premultiply alpha so brightness/contrast operate on the true
+            // colour values. The opaque backdrop makes this a no-op in practice,
+            // but it keeps the maths right if that ever changes.
+            if a > 0, a < 255 {
+                let invA = 255.0 / a
+                r *= invA; g *= invA; b *= invA
             }
+
+            // Apply brightness
+            r += settings.brightness; g += settings.brightness; b += settings.brightness
+
+            // Apply contrast (standard formula: C = (259*(K+255))/(255*(259-K)))
+            r = contrastFactor * (r - 128) + 128
+            g = contrastFactor * (g - 128) + 128
+            b = contrastFactor * (b - 128) + 128
+
+            pixels[i] = RGB(r: max(0, min(255, r)), g: max(0, min(255, g)), b: max(0, min(255, b)))
         }
 
         return pixels
     }
 
+    /// Where to draw the source inside the target bitmap.
+    ///
+    /// Aspect ratio is worked out against the C64's 320×200 *visible* area and
+    /// only then squashed into the target grid, because a multi-color pixel is
+    /// twice as wide as it is tall — computing the fit directly against 160×200
+    /// would letterbox to the wrong shape.
+    private static func destinationRect(for cgImage: CGImage, width: Int, height: Int, scaleMode: ScaleMode) -> CGRect {
+        let visualW = 320.0
+        let visualH = 200.0
+        let imageW  = Double(cgImage.width)
+        let imageH  = Double(cgImage.height)
+
+        var rect: CGRect
+        switch scaleMode {
+        case .stretch:
+            rect = CGRect(x: 0, y: 0, width: visualW, height: visualH)
+        case .fit, .fill:
+            guard imageW > 0, imageH > 0 else {
+                rect = CGRect(x: 0, y: 0, width: visualW, height: visualH)
+                break
+            }
+            let scale = scaleMode == .fit
+                ? min(visualW / imageW, visualH / imageH)
+                : max(visualW / imageW, visualH / imageH)
+            let w = imageW * scale
+            let h = imageH * scale
+            rect = CGRect(x: (visualW - w) / 2, y: (visualH - h) / 2, width: w, height: h)
+        }
+
+        // Squash horizontally into the target grid (a no-op in hi-res).
+        let sx = Double(width) / visualW
+        let sy = Double(height) / visualH
+        return CGRect(x: rect.minX * sx, y: rect.minY * sy,
+                      width: rect.width * sx, height: rect.height * sy)
+    }
+
     // MARK: - Color Matching
 
     /// Euclidean distance weighted by human perceptual sensitivity (ITU-R BT.601)
-    private func colorDistance(_ pixel: (r: Double, g: Double, b: Double), c64Color: Int) -> Double {
+    private static func colorDistance(_ pixel: RGB, c64Color: Int) -> Double {
         let c  = c64PaletteRGB[c64Color]
         let dr = pixel.r - Double(c.r)
         let dg = pixel.g - Double(c.g)
@@ -569,7 +880,7 @@ class ImageConverterViewController: NSViewController {
         return dr * dr * 0.299 + dg * dg * 0.587 + db * db * 0.114
     }
 
-    private func closestPaletteIndex(_ pixel: (r: Double, g: Double, b: Double), from palette: [Int]) -> Int {
+    private static func closestPaletteIndex(_ pixel: RGB, from palette: [Int]) -> Int {
         var bestIdx  = 0
         var bestDist = Double.infinity
         for (i, colorIdx) in palette.enumerated() {
@@ -579,63 +890,82 @@ class ImageConverterViewController: NSViewController {
         return bestIdx
     }
 
-    // Find the best N C64 palette entries to represent a set of pixels.
-    private func findBestColors(_ pixels: [(r: Double, g: Double, b: Double)], count: Int, excluding: Int? = nil) -> [Int] {
-        guard !pixels.isEmpty else { return Array(0..<min(count, 16)) }
+    /// Pick the `count` C64 palette entries that best represent a set of pixels,
+    /// optionally on top of an `excluding` colour that is already available for
+    /// free (the multi-color global background).
+    ///
+    /// Greedy residual-error minimisation: repeatedly take the colour that most
+    /// reduces the total error of the pixels *as they currently stand*, then
+    /// refine by swapping. The previous implementation seeded from the centroid
+    /// of the whole cell — which for a black-and-white cell is grey, matching
+    /// neither — and then discarded exactly the pixels its new colour served
+    /// while keeping the ones already covered. In hi-res that emptied the
+    /// working set after the first pick, so it always returned a single colour
+    /// and every cell fell back to "cell average plus white".
+    private static func findBestColors(_ pixels: [RGB], count: Int, excluding: Int? = nil) -> [Int] {
+        guard !pixels.isEmpty, count > 0 else { return [] }
 
         let candidates = (0..<16).filter { $0 != excluding }
         guard !candidates.isEmpty else { return [] }
 
-        var covered:   [Int]                                = excluding.map { [$0] } ?? []
-        var chosen:    [Int]                                = []
-        var remaining: [(r: Double, g: Double, b: Double)] = pixels
+        // dist[pixel * 16 + colour] — every step below is a table lookup.
+        var dist = [Double](repeating: 0, count: pixels.count * 16)
+        for (i, pixel) in pixels.enumerated() {
+            for c in 0..<16 { dist[i * 16 + c] = colorDistance(pixel, c64Color: c) }
+        }
 
-        while chosen.count < count {
-            guard !remaining.isEmpty else { break }
-
-            let nextC: Int
-
-            if chosen.isEmpty {
-                let n   = Double(remaining.count)
-                let avgR = remaining.reduce(0.0) { $0 + $1.r } / n
-                let avgG = remaining.reduce(0.0) { $0 + $1.g } / n
-                let avgB = remaining.reduce(0.0) { $0 + $1.b } / n
-                let centroid = (r: avgR, g: avgG, b: avgB)
-
-                var bestC    = candidates.first!
-                var bestDist = Double.infinity
-                for c in candidates where !chosen.contains(c) {
-                    let d = colorDistance(centroid, c64Color: c)
-                    if d < bestDist { bestDist = d; bestC = c }
+        /// Error of the whole cell under `set` (plus the free `excluding` colour).
+        func totalError(_ set: [Int]) -> Double {
+            var total = 0.0
+            for i in 0..<pixels.count {
+                var best = excluding.map { dist[i * 16 + $0] } ?? Double.infinity
+                for c in set {
+                    let d = dist[i * 16 + c]
+                    if d < best { best = d }
                 }
-                nextC = bestC
-            } else {
-                var votes = [Int: Int]()
-                for pixel in remaining {
-                    var bestC    = candidates.first!
-                    var bestDist = Double.infinity
-                    for c in candidates where !chosen.contains(c) {
-                        let d = colorDistance(pixel, c64Color: c)
-                        if d < bestDist { bestDist = d; bestC = c }
-                    }
-                    votes[bestC, default: 0] += 1
-                }
-                guard let winner = votes.max(by: { $0.value < $1.value })?.key else { break }
-                nextC = winner
+                total += best
             }
+            return total
+        }
 
-            chosen.append(nextC)
-            covered.append(nextC)
+        // Residual error per pixel under the colours chosen so far.
+        var residual = [Double](repeating: .infinity, count: pixels.count)
+        if let excluding {
+            for i in 0..<pixels.count { residual[i] = dist[i * 16 + excluding] }
+        }
 
-            // Remove pixels now well-served by the full covered set.
-            remaining = remaining.filter { pixel in
-                var nearestDist = Double.infinity
-                var nearestC    = nextC
-                for c in covered {
-                    let d = colorDistance(pixel, c64Color: c)
-                    if d < nearestDist { nearestDist = d; nearestC = c }
+        var chosen: [Int] = []
+        while chosen.count < count {
+            var bestColor = -1
+            var bestError = Double.infinity
+            for c in candidates where !chosen.contains(c) {
+                var error = 0.0
+                for i in 0..<pixels.count { error += min(residual[i], dist[i * 16 + c]) }
+                if error < bestError { bestError = error; bestColor = c }
+            }
+            guard bestColor >= 0 else { break }
+            chosen.append(bestColor)
+            for i in 0..<pixels.count { residual[i] = min(residual[i], dist[i * 16 + bestColor]) }
+        }
+
+        // Local search: greedy can settle for a set a single swap improves on.
+        var currentError = totalError(chosen)
+        var improved = true
+        var rounds = 0
+        while improved && rounds < 4 {
+            improved = false
+            rounds += 1
+            for slot in 0..<chosen.count {
+                for c in candidates where !chosen.contains(c) {
+                    var trial = chosen
+                    trial[slot] = c
+                    let error = totalError(trial)
+                    if error < currentError - 1e-9 {
+                        currentError = error
+                        chosen = trial
+                        improved = true
+                    }
                 }
-                return nearestC != nextC
             }
         }
 
@@ -644,11 +974,11 @@ class ImageConverterViewController: NSViewController {
 
     // MARK: - Bitmap → NSImage
 
-    private func bitmapToNSImage(_ bitmap: C64Bitmap) -> NSImage {
+    private static func bitmapToNSImage(_ bitmap: C64Bitmap) -> NSImage {
         let w = 320
         let h = 200
 
-        let rep = NSBitmapImageRep(
+        guard let rep = NSBitmapImageRep(
             bitmapDataPlanes: nil,
             pixelsWide: w,
             pixelsHigh: h,
@@ -659,16 +989,18 @@ class ImageConverterViewController: NSViewController {
             colorSpaceName: .deviceRGB,
             bytesPerRow: w * 3,
             bitsPerPixel: 24
-        )!
+        ), let data = rep.bitmapData else {
+            return NSImage(size: NSSize(width: w, height: h))
+        }
 
+        let rowBytes = rep.bytesPerRow
         for y in 0..<h {
             for x in 0..<w {
-                let colorIdx = Int(bitmap.displayColor(x: x, y: y))
-                let c        = c64PaletteRGB[min(colorIdx, 15)]
-                let offset   = (y * w + x) * 3
-                rep.bitmapData![offset]     = UInt8(c.r)
-                rep.bitmapData![offset + 1] = UInt8(c.g)
-                rep.bitmapData![offset + 2] = UInt8(c.b)
+                let c      = c64PaletteRGB[min(Int(bitmap.displayColor(x: x, y: y)), 15)]
+                let offset = y * rowBytes + x * 3
+                data[offset]     = UInt8(c.r)
+                data[offset + 1] = UInt8(c.g)
+                data[offset + 2] = UInt8(c.b)
             }
         }
 
@@ -679,39 +1011,99 @@ class ImageConverterViewController: NSViewController {
 
     // MARK: - Export
 
+    /// The formats offered in the Export sheet, in menu order.
+    private enum ExportFormat: Int, CaseIterable {
+        case native = 0   // Koala (multi-color) or Art Studio (hi-res)
+        case assembly
+        case basic
+        case prg
+
+        func title(multiColor: Bool) -> String {
+            switch self {
+            case .native:   return multiColor ? "Koala Painter (.kla)" : "Art Studio (.art)"
+            case .assembly: return "Assembly (.asm)"
+            case .basic:    return "BASIC DATA (.bas)"
+            case .prg:      return "PRG (.prg)"
+            }
+        }
+
+        func fileExtension(multiColor: Bool) -> String {
+            switch self {
+            case .native:   return multiColor ? "kla" : "art"
+            case .assembly: return "asm"
+            case .basic:    return "bas"
+            case .prg:      return "prg"
+            }
+        }
+    }
+
+    private var exportPanel: NSSavePanel?
+
     @objc private func exportResult(_ sender: Any?) {
         guard let bitmap = resultBitmap else {
             statusLabel.stringValue = "Convert an image first."
             return
         }
 
-        let panel    = NSSavePanel()
+        let panel = NSSavePanel()
         let accessory = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 250, height: 24))
-        if bitmap.isMultiColor {
-            accessory.addItems(withTitles: ["Koala Painter (.kla)", "Assembly (.asm)", "BASIC DATA (.bas)", "PRG (.prg)"])
-        } else {
-            accessory.addItems(withTitles: ["Art Studio (.art)", "Assembly (.asm)", "BASIC DATA (.bas)", "PRG (.prg)"])
-        }
-        panel.accessoryView          = accessory
-        panel.nameFieldStringValue   = bitmap.isMultiColor ? "converted.kla" : "converted.art"
+        accessory.addItems(withTitles: ExportFormat.allCases.map { $0.title(multiColor: bitmap.isMultiColor) })
+        // Keep the filename's extension in step with the chosen format —
+        // picking "PRG" used to still save a file named "converted.art".
+        accessory.target = self
+        accessory.action = #selector(exportFormatChanged(_:))
+        panel.accessoryView = accessory
+        panel.nameFieldStringValue = "converted." + ExportFormat.native.fileExtension(multiColor: bitmap.isMultiColor)
+        exportPanel = panel
 
         panel.begin { [weak self] response in
+            guard let self else { return }
+            self.exportPanel = nil
             guard response == .OK, let url = panel.url else { return }
-            switch accessory.indexOfSelectedItem {
-            case 0:
-                let data = bitmap.isMultiColor ? bitmap.exportKoala() : bitmap.exportArtStudio()
-                try? data.write(to: url)
-            case 1:
-                try? bitmap.exportAsAssembly().write(to: url, atomically: true, encoding: .utf8)
-            case 2:
-                try? bitmap.exportAsBASIC().write(to: url, atomically: true, encoding: .utf8)
-            case 3:
-                try? bitmap.exportAsPRG().write(to: url)
-            default: break
+
+            let format = ExportFormat(rawValue: accessory.indexOfSelectedItem) ?? .native
+            var basicListingSize = 0
+            do {
+                switch format {
+                case .native:
+                    let data = bitmap.isMultiColor ? bitmap.exportKoala() : bitmap.exportArtStudio()
+                    try data.write(to: url)
+                case .assembly:
+                    try bitmap.exportAsAssembly().write(to: url, atomically: true, encoding: .utf8)
+                case .basic:
+                    let listing = bitmap.exportAsBASIC()
+                    try listing.write(to: url, atomically: true, encoding: .utf8)
+                    basicListingSize = C64Bitmap.tokenizedProgramSize(of: listing)
+                case .prg:
+                    try bitmap.exportAsPRG().write(to: url)
+                }
+            } catch {
+                self.statusLabel.stringValue = "Export failed: \(error.localizedDescription)"
+                self.presentError(error, title: "Could not export the image.")
+                return
             }
-            self?.statusLabel.stringValue = "Exported to \(url.lastPathComponent)"
+
+            // A full-screen bitmap does not always fit in DATA statements. Say
+            // so rather than handing over a listing that will not load.
+            if format == .basic, basicListingSize > C64Bitmap.basicSizeBudget {
+                self.statusLabel.stringValue =
+                    "Exported \(url.lastPathComponent) — but at ~\(basicListingSize) bytes it will not leave "
+                    + "room to run in a C64's \(C64Bitmap.c64BasicRAM) bytes of BASIC RAM. Use the PRG export."
+                return
+            }
+            self.statusLabel.stringValue = "Exported to \(url.lastPathComponent)"
         }
     }
+
+    @objc private func exportFormatChanged(_ sender: NSPopUpButton) {
+        guard let panel = exportPanel, let bitmap = resultBitmap else { return }
+        let format = ExportFormat(rawValue: sender.indexOfSelectedItem) ?? .native
+        let base = (panel.nameFieldStringValue as NSString).deletingPathExtension
+        let name = base.isEmpty ? "converted" : base
+        panel.nameFieldStringValue = name + "." + format.fileExtension(multiColor: bitmap.isMultiColor)
+    }
+
+    // MARK: - Save to D64
 
     @objc private func saveToD64(_ sender: Any?) {
         guard let bitmap = resultBitmap else {
@@ -731,27 +1123,98 @@ class ImageConverterViewController: NSViewController {
         guard response != .alertThirdButtonReturn else { return }
 
         let filename = "CONVERTED"
+        guard let d64Type = UTType(filenameExtension: "d64") else {
+            statusLabel.stringValue = "Could not determine the .d64 file type."
+            return
+        }
 
         if response == .alertFirstButtonReturn {
             let panel = NSSavePanel()
-            panel.allowedContentTypes  = [.init(filenameExtension: "d64")!]
+            panel.allowedContentTypes  = [d64Type]
             panel.nameFieldStringValue = "converted.d64"
-            panel.begin { saveResponse in
-                guard saveResponse == .OK, let url = panel.url else { return }
+            panel.begin { [weak self] saveResponse in
+                guard let self, saveResponse == .OK, let url = panel.url else { return }
                 let disk = D64Image(diskName: "CONVERTED", diskID: "CV")
-                if disk.writeFile(name: filename, data: Array(data)) {
-                    try? disk.save(to: url)
+                guard disk.writeFile(name: filename, data: Array(data)) else {
+                    self.report(failure: "Could not write \(filename) to the new disk image.")
+                    return
+                }
+                do {
+                    try disk.save(to: url)
+                    self.statusLabel.stringValue = "Saved \(filename) to \(url.lastPathComponent)"
+                } catch {
+                    self.statusLabel.stringValue = "Save failed: \(error.localizedDescription)"
+                    self.presentError(error, title: "Could not save the disk image.")
                 }
             }
         } else {
             let panel = NSOpenPanel()
-            panel.allowedContentTypes = [.init(filenameExtension: "d64")!]
-            panel.begin { openResponse in
-                guard openResponse == .OK, let url = panel.url else { return }
-                if let disk = try? D64Image(contentsOf: url) {
-                    if disk.writeFile(name: filename, data: Array(data)) { try? disk.save() }
+            panel.allowedContentTypes = [d64Type]
+            panel.begin { [weak self] openResponse in
+                guard let self, openResponse == .OK, let url = panel.url else { return }
+                let disk: D64Image
+                do {
+                    disk = try D64Image(contentsOf: url)
+                } catch {
+                    self.statusLabel.stringValue = "Could not open \(url.lastPathComponent): \(error.localizedDescription)"
+                    self.presentError(error, title: "Could not open the disk image.")
+                    return
+                }
+                guard disk.writeFile(name: filename, data: Array(data)) else {
+                    self.report(failure: "Could not write \(filename) — the disk may be full.")
+                    return
+                }
+                do {
+                    try disk.save()
+                    self.statusLabel.stringValue = "Saved \(filename) to \(url.lastPathComponent)"
+                } catch {
+                    self.statusLabel.stringValue = "Save failed: \(error.localizedDescription)"
+                    self.presentError(error, title: "Could not save the disk image.")
                 }
             }
+        }
+    }
+
+    // MARK: - Send to Graphics Editor
+
+    @objc private func sendToEditor(_ sender: Any?) {
+        guard let bitmap = resultBitmap else {
+            statusLabel.stringValue = "Convert an image first."
+            return
+        }
+        guard let appDelegate = NSApp.delegate as? AppDelegate else { return }
+
+        let data = bitmap.isMultiColor ? bitmap.exportKoala() : bitmap.exportArtStudio()
+        if appDelegate.openGfxEditorWith(imageData: data, multiColor: bitmap.isMultiColor) {
+            statusLabel.stringValue = "Sent the converted image to the Graphics Editor."
+        }
+    }
+
+    // MARK: - Error Reporting
+
+    private func report(failure message: String) {
+        statusLabel.stringValue = message
+        let alert = NSAlert()
+        alert.messageText = message
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "OK")
+        if let window = view.window {
+            alert.beginSheetModal(for: window, completionHandler: nil)
+        } else {
+            alert.runModal()
+        }
+    }
+
+    private func presentError(_ error: Error, title: String) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = error.localizedDescription
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "OK")
+        if let window = view.window {
+            alert.beginSheetModal(for: window, completionHandler: nil)
+        } else {
+            alert.runModal()
         }
     }
 }

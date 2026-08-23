@@ -467,6 +467,26 @@ class GfxEditorViewController: NSViewController, NSMenuItemValidation {
         }
     }
 
+    /// Loads an image handed over from another tool — the Image Converter's
+    /// "→ Editor" button. `data` is in Koala (multi-color) or Art Studio
+    /// (hi-res) layout, which is what those exporters already produce, so this
+    /// reuses the same importers as the file path.
+    @discardableResult
+    func loadConvertedImage(_ data: Data, multiColor: Bool) -> Bool {
+        bitmap.saveUndo()
+        let imported = multiColor ? bitmap.importKoala(data) : bitmap.importArtStudio(data)
+        guard imported else {
+            showImportError("Could not load the converted image.")
+            return false
+        }
+        modeToggle.state = bitmap.isMultiColor ? .on : .off
+        canvasView.needsDisplay = true
+        updateCanvasSize()
+        updateInfo()
+        onModified?()
+        return true
+    }
+
     private func showImportError(_ message: String) {
         let alert = NSAlert()
         alert.messageText = "Import Failed"
