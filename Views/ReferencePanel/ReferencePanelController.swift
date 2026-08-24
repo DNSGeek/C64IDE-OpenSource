@@ -1511,6 +1511,19 @@ class MonitorReferenceViewController: NSViewController {
             name: .debuggerTargetDidChange,
             object: nil
         )
+
+        // With no session running the tab follows the emulator chosen in
+        // settings, so it also has to react to the preference itself changing —
+        // in Build Preferences, or through a project's override being edited,
+        // opened, or closed.
+        for name: Notification.Name in [.preferredEmulatorDidChange, .projectDidOpen, .projectDidClose] {
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(targetDidChange(_:)),
+                name: name,
+                object: nil
+            )
+        }
     }
 
     deinit {
@@ -1538,15 +1551,34 @@ class MonitorReferenceViewController: NSViewController {
         }
     }
 
-    /// Pick the command set from the active debuggable target. Defaults to
-    /// VICE when nothing is running, since the panel is most often consulted
-    /// while writing code before launch and VICE is the established default.
+    /// Pick the command set from the active debuggable target. A live session
+    /// wins: whatever the debugger is attached to right now is what the user
+    /// needs commands for. With nothing running, follow the emulator selected
+    /// in settings, so the panel shows the commands the next Run will accept.
     private func currentFlavor() -> Flavor {
         switch EmulatorCoordinator.shared.debuggable {
         case is VC64RunTarget:  return .vc64
         case is VICERunTarget:  return .vice
-        default:                return .vice
+        default:                return flavor(for: preferredEmulator())
         }
+    }
+
+    /// The C64 emulator the IDE would launch right now: the active project's
+    /// override takes precedence over the global build preference, matching the
+    /// order `RunTarget.preferred(...)` resolves them in.
+    private func preferredEmulator() -> RunTarget {
+        if let override = ProjectManager.shared.activeProject?.buildOptions.preferredC64Emulator {
+            return override
+        }
+        guard let wc = (NSApp.delegate as? AppDelegate)?.mainWindowController,
+              let config = wc.buildConfig else { return .vc64 }
+        return config.preferredC64Emulator
+    }
+
+    /// Every non-VirtualC64 target the debugger supports is a VICE variant
+    /// (x64sc, x128, xpet, xvic), and they all speak the same text monitor.
+    private func flavor(for target: RunTarget) -> Flavor {
+        target == .vc64 ? .vc64 : .vice
     }
 
     private func monitorReferenceText() -> NSAttributedString {

@@ -19,6 +19,11 @@ extension Notification.Name {
     /// Observers should read `EmulatorCoordinator.shared.debuggable` for the new state.
     static let debuggerTargetDidChange = Notification.Name("C64IDE.debuggerTargetDidChange")
 
+    /// Posted on the main queue when the preferred C64 emulator changes, either in
+    /// Build Preferences or via a project's per-project override. Observers should
+    /// re-read the preference chain (project override first, then `BuildConfiguration`).
+    static let preferredEmulatorDidChange = Notification.Name("C64IDE.preferredEmulatorDidChange")
+
     /// Posted on the main queue when an assemblyToData build completes (success or failure).
     /// The notification's `object` is the posting `BuildManager`.
     /// `userInfo["result"]` contains the `BuildResult`.

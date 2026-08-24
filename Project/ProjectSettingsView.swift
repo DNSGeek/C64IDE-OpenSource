@@ -314,6 +314,13 @@ final class ProjectSettingsViewModel: ObservableObject {
         }
         // Flush to disk immediately — user clicked Save, they expect it to stick
         try? ProjectManager.shared.saveProject()
+
+        // The override sits ahead of the global preference in the chain the
+        // Monitor reference tab reads, so changing it can flip the command set.
+        let newOverride = overrideC64Emulator ? projectC64Emulator : nil
+        if newOverride != originalProject.buildOptions.preferredC64Emulator {
+            NotificationCenter.default.post(name: .preferredEmulatorDidChange, object: nil)
+        }
     }
 }
 

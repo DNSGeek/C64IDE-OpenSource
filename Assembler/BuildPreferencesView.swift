@@ -412,8 +412,16 @@ class BuildPreferencesViewModel: ObservableObject {
         config.viceC64Model = c64Model
         config.viceSIDModel = sidModel
         config.viceVideoStandard = videoStandard
+        // Capture before overwriting: the Monitor reference tab shows the command
+        // set of whichever emulator is selected, so it has to be told when the
+        // selection moves between VirtualC64 and VICE.
+        let emulatorDidChange = config.preferredC64Emulator != preferredC64Emulator
         config.preferredC64Emulator = preferredC64Emulator
         config.save()
+
+        if emulatorDidChange {
+            NotificationCenter.default.post(name: .preferredEmulatorDidChange, object: nil)
+        }
     }
 
     /// Validates current paths and ROM locations, updating `validationMessages`.
