@@ -31,13 +31,21 @@ class DebugInfoParser {
     private(set) var fileLineToAddress: [SourceLocation: UInt16] = [:]  // (file, line) → memory address
     private(set) var addressToLocation: [UInt16: SourceLocation] = [:]  // memory address → (file, line)
 
+    /// Every mapped span as an inclusive address range, sorted by `start`.
+    /// Backs `location(forAddress:)`, which needs *containment* rather than
+    /// "nearest preceding address" — see that method for why.
+    private var sortedSpans: [MappedSpan] = []
+
+    /// Length of the widest entry in `sortedSpans`. Bounds how far back a
+    /// containment search has to walk from its binary-search landing point.
+    private var maxSpanLength: Int = 0
+
     /// The file assumed when no explicit file is given (editor breakpoints,
     /// highlight callbacks). Defaults to the file contributing the most line
     /// mappings, which in practice is the main source. Override with
     /// `setPrimaryFile(named:)`.
     private(set) var primaryFileId: Int?
     private(set) var symbolsByName: [String: DebugSymbol] = [:]
-    private(set) var symbolsByAddress: [UInt16: DebugSymbol] = [:]
 
     // MARK: - Parsing
 
@@ -137,21 +145,22 @@ class DebugInfoParser {
     }
 
     private func parseSegment(_ props: [String: String]) {
+        // `size` is deliberately not required: a segment missing it would
+        // otherwise be dropped, silently unmapping every line inside it.
         guard let id = intVal(props["id"]),
               let name = props["name"],
               let start = hexVal(props["start"]),
-              let size = hexVal(props["size"]),
               // Out-of-range start would trap UInt16(start); skip such segments
               (0...0xFFFF).contains(start) else { return }
-        segments[id] = DebugSegment(id: id, name: name, start: UInt16(start), size: size)
+        segments[id] = DebugSegment(id: id, name: name, start: UInt16(start))
     }
 
     private func parseSpan(_ props: [String: String]) {
         guard let id = intVal(props["id"]),
               let seg = intVal(props["seg"]),
-              let start = intVal(props["start"]),
-              let size = intVal(props["size"]) else { return }
-        spans[id] = DebugSpan(id: id, segmentId: seg, offset: start, size: size)
+              let start = intVal(props["start"]) else { return }
+        spans[id] = DebugSpan(id: id, segmentId: seg, offset: start,
+                              size: intVal(props["size"]) ?? 0)
     }
 
     private func parseLine(_ props: [String: String]) {
@@ -172,10 +181,8 @@ class DebugInfoParser {
         guard let name = props["name"],
               let val = hexVal(props["val"]),
               (0...0xFFFF).contains(val) else { return }
-        let segId = intVal(props["seg"])
-        let size = intVal(props["size"])
-        let sym = DebugSymbol(name: name, address: UInt16(val), segmentId: segId, size: size)
-        symbols.append(sym)
+        symbols.append(DebugSymbol(name: name, address: UInt16(val),
+                                   segmentId: intVal(props["seg"])))
     }
 
     // MARK: - Build Mappings
@@ -184,9 +191,10 @@ class DebugInfoParser {
         fileLineToAddress.removeAll()
         addressToLocation.removeAll()
         symbolsByName.removeAll()
-        symbolsByAddress.removeAll()
+        sortedSpans.removeAll()
+        maxSpanLength = 0
 
-        // Build (file, line) → address mapping
+        // ── Pass 1: (file, line) → address, and the span range table ──
         for line in lines {
             for spanId in line.spanIds {
                 guard let span = spans[spanId],
@@ -202,16 +210,23 @@ class DebugInfoParser {
 
                 // Only map if we don't have a mapping for this line yet,
                 // or if this address is lower (first instruction on the line)
-                if fileLineToAddress[loc] == nil || address < fileLineToAddress[loc]! {
+                if let existing = fileLineToAddress[loc] {
+                    if address < existing { fileLineToAddress[loc] = address }
+                } else {
                     fileLineToAddress[loc] = address
                 }
 
-                // Reverse mapping (prefer lower line numbers for the same address)
-                if addressToLocation[address] == nil || loc.line < addressToLocation[address]!.line {
-                    addressToLocation[address] = loc
-                }
+                // A zero/absent span size still covers at least the
+                // instruction that starts there; 3 is the widest 6502
+                // instruction, so a PC landing mid-instruction still resolves.
+                let length = span.size > 0 ? span.size : 3
+                let endInt = min(addrInt + length - 1, 0xFFFF)
+                sortedSpans.append(MappedSpan(start: address, end: UInt16(endInt), location: loc))
+                maxSpanLength = max(maxSpanLength, endInt - addrInt + 1)
             }
         }
+
+        sortedSpans.sort { $0.start < $1.start }
 
         // Default primary file: the one contributing the most line mappings.
         // (A user-set primary file survives re-parsing only if it still exists.)
@@ -221,14 +236,37 @@ class DebugInfoParser {
             primaryFileId = counts.max(by: { $0.value < $1.value })?.key
         }
 
+        // ── Pass 2: address → (file, line) ──
+        // Deferred until `primaryFileId` is known so the tie-break can prefer
+        // it. Comparing raw line numbers across different files (the previous
+        // rule) picked an arbitrary winner, since line 12 of an include has no
+        // ordering relationship to line 12 of the main source.
+        for span in sortedSpans {
+            guard let existing = addressToLocation[span.start] else {
+                addressToLocation[span.start] = span.location
+                continue
+            }
+            if preferredLocation(existing, span.location) == span.location {
+                addressToLocation[span.start] = span.location
+            }
+        }
+
         // Build symbol mappings
         for sym in symbols {
             symbolsByName[sym.name] = sym
-            // Only store non-local symbols (skip @ prefixed)
-            if !sym.name.hasPrefix("@") {
-                symbolsByAddress[sym.address] = sym
-            }
         }
+    }
+
+    /// Picks the better of two locations claiming the same address:
+    /// the primary file wins, then the lower line number within one file,
+    /// then the lower file ID so the result is at least deterministic.
+    private func preferredLocation(_ a: SourceLocation, _ b: SourceLocation) -> SourceLocation {
+        if a.fileId != b.fileId {
+            if a.fileId == primaryFileId { return a }
+            if b.fileId == primaryFileId { return b }
+            return a.fileId <= b.fileId ? a : b
+        }
+        return a.line <= b.line ? a : b
     }
 
     // MARK: - Queries
@@ -240,34 +278,47 @@ class DebugInfoParser {
         return fileLineToAddress[SourceLocation(fileId: fid, line: line)]
     }
 
-    /// Returns the source location (file + line) for a memory address.
+    /// Returns the source location (file + line) whose emitted code *contains*
+    /// `address`, or `nil` when the address isn't part of the built program.
     ///
-    /// Performs an exact match first. If none exists, finds the closest
-    /// address that is `≤` the given address, enabling approximate source
-    /// highlighting for ranges spanning multiple instructions.
+    /// Containment matters. The old rule — "nearest mapped address ≤ this one,
+    /// searched without bound" — meant a PC anywhere outside the program
+    /// (KERNAL ROM, an IRQ vector, a stray jump) resolved to the last line of
+    /// the source and highlighted it in the editor. Returning `nil` lets the
+    /// caller clear the highlight instead of pointing at innocent code.
+    ///
+    /// O(log n) via binary search over `sortedSpans`; the previous
+    /// implementation scanned the entire address map on every register update.
     func location(forAddress address: UInt16) -> SourceLocation? {
-        // Exact match first
+        // Exact match first — the common case while stepping.
         if let loc = addressToLocation[address] { return loc }
+        guard !sortedSpans.isEmpty else { return nil }
 
-        // Find the closest address that's ≤ the given address
-        var bestLoc: SourceLocation?
-        var bestAddr: UInt16 = 0
-        for (addr, loc) in addressToLocation {
-            if addr <= address && addr >= bestAddr {
-                bestAddr = addr
-                bestLoc = loc
+        // Largest index whose span starts at or before `address`.
+        var lo = 0
+        var hi = sortedSpans.count - 1
+        var candidate = -1
+        while lo <= hi {
+            let mid = (lo + hi) / 2
+            if sortedSpans[mid].start <= address {
+                candidate = mid
+                lo = mid + 1
+            } else {
+                hi = mid - 1
             }
         }
-        return bestLoc
-    }
+        guard candidate >= 0 else { return nil }
 
-    /// Returns the primary-file source line for a memory address, or `nil`
-    /// if the address maps into a different file (e.g. an include). Use
-    /// `location(forAddress:)` when the file matters.
-    func lineForAddress(_ address: UInt16) -> Int? {
-        guard let loc = location(forAddress: address),
-              loc.fileId == primaryFileId else { return nil }
-        return loc.line
+        // Spans can overlap (macros), so walk back looking for one that
+        // actually contains `address`. Anything containing it must start at
+        // or after `address - maxSpanLength + 1`, which bounds the walk.
+        let earliestPossibleStart = Int(address) - maxSpanLength + 1
+        var i = candidate
+        while i >= 0 && Int(sortedSpans[i].start) >= earliestPossibleStart {
+            if sortedSpans[i].end >= address { return sortedSpans[i].location }
+            i -= 1
+        }
+        return nil
     }
 
     /// Returns the source file name for a file ID.
@@ -277,64 +328,42 @@ class DebugInfoParser {
 
     /// Sets the primary file by name, matched on the last path component
     /// case-insensitively. Returns `true` if a matching file was found.
+    ///
+    /// Call this with the file the user is editing before resolving gutter
+    /// breakpoints: without it the primary file is whichever one happens to
+    /// contribute the most line mappings, which in a project with a large
+    /// `.include` is not the file the breakpoints came from.
     @discardableResult
     func setPrimaryFile(named name: String) -> Bool {
         let want = (name as NSString).lastPathComponent.lowercased()
         for file in files.values {
             if (file.name as NSString).lastPathComponent.lowercased() == want {
+                guard primaryFileId != file.id else { return true }
                 primaryFileId = file.id
+                // Pass 2's tie-break depends on the primary file, so redo it.
+                rebuildAddressMap()
                 return true
             }
         }
         return false
     }
 
+    private func rebuildAddressMap() {
+        addressToLocation.removeAll()
+        for span in sortedSpans {
+            guard let existing = addressToLocation[span.start] else {
+                addressToLocation[span.start] = span.location
+                continue
+            }
+            if preferredLocation(existing, span.location) == span.location {
+                addressToLocation[span.start] = span.location
+            }
+        }
+    }
+
     /// Returns the address for a named symbol.
     func addressForSymbol(_ name: String) -> UInt16? {
         return symbolsByName[name]?.address
-    }
-
-    /// Returns all symbols defined within a specific segment.
-    func symbolsInSegment(_ name: String) -> [DebugSymbol] {
-        guard let seg = segments.values.first(where: { $0.name == name }) else { return [] }
-        return symbols.filter { $0.segmentId == seg.id }
-    }
-
-    /// Converts editor breakpoint line numbers to memory addresses.
-    func breakpointAddresses(forLines editorLines: Set<Int>) -> [UInt16] {
-        var addresses: [UInt16] = []
-        for line in editorLines.sorted() {
-            if let addr = addressForLine(line) {
-                addresses.append(addr)
-            }
-        }
-        return addresses
-    }
-
-    /// Generates a VICE monitor commands file with breakpoints and labels.
-    func generateMonitorCommands(breakpointLines: Set<Int>, entryPoint: UInt16? = nil) -> String {
-        var cmds: [String] = ["; C64 IDE debug symbols"]
-
-        // Add labels for all non-local symbols
-        for sym in symbols where !sym.name.hasPrefix("@") {
-            cmds.append(String(format: "al C:%04X .%@", sym.address, sym.name))
-        }
-
-        cmds.append("")
-
-        // Entry point breakpoint
-        if let entry = entryPoint {
-            cmds.append(String(format: "break $%04x", entry))
-        }
-
-        // Editor breakpoints mapped to addresses
-        for line in breakpointLines.sorted() {
-            if let addr = addressForLine(line) {
-                cmds.append(String(format: "break $%04x  ; line %d", addr, line))
-            }
-        }
-
-        return cmds.joined(separator: "\n") + "\n"
     }
 
     /// Returns a summary string of the parsed debug information.
@@ -382,7 +411,6 @@ struct DebugSegment {
     let id: Int
     let name: String
     let start: UInt16
-    let size: Int
 }
 
 /// Represents a contiguous byte range within a segment.
@@ -406,11 +434,16 @@ struct SourceLocation: Hashable {
     let line: Int
 }
 
+/// A span resolved to an inclusive absolute address range.
+private struct MappedSpan {
+    let start: UInt16
+    let end: UInt16
+    let location: SourceLocation
+}
+
 /// Represents a symbol (variable, function, label) with its address.
 struct DebugSymbol {
     let name: String
     let address: UInt16
     let segmentId: Int?
-    let size: Int?
 }
-

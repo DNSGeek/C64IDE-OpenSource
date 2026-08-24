@@ -55,7 +55,14 @@ final class VICERunTarget: NSObject, @MainActor DebuggableTarget {
 
     // MARK: - State
 
-    nonisolated(unsafe) private(set) var cachedRegisters = RegisterState()
+    /// Written on `responseQueue` by `routeLine`, read on whichever thread
+    /// calls `registers`. Guarded so the read can't tear a half-updated value.
+    private nonisolated let registerLock = NSLock()
+    private nonisolated(unsafe) var _cachedRegisters = RegisterState()
+    private nonisolated var cachedRegisters: RegisterState {
+        get { registerLock.lock(); defer { registerLock.unlock() }; return _cachedRegisters }
+        set { registerLock.lock(); _cachedRegisters = newValue; registerLock.unlock() }
+    }
     private var breakpointMap: [UInt16: Int] = [:]     // addr → VICE BP number
     private var pendingDebugOptions: DebugOptions?
 
@@ -194,7 +201,10 @@ final class VICERunTarget: NSObject, @MainActor DebuggableTarget {
     func stepInto()  { sendRaw("z"); requestRegisters() }
     func stepOver()  { sendRaw("n"); requestRegisters() }
     func stepCycle() { sendRaw("z"); requestRegisters() }   // VICE: no single-cycle step
-    func finishLine() { sendRaw("n") }
+
+    /// Runs to the return from the current subroutine. `ret`, not `n` — `n`
+    /// is step-over, which made Step Out and Step Over the same button.
+    func finishLine() { sendRaw("ret"); requestRegisters() }
 
     /// Sets the program counter to `address` and resumes execution from
     /// there (VICE monitor `g`). The remote monitor accepts this whether
@@ -456,8 +466,10 @@ final class VICERunTarget: NSObject, @MainActor DebuggableTarget {
         log(String(format: "Breakpoints set. Waiting for $%04X…", dbg.entryPoint), .info)
     }
 
-    private func requestRegisters() {
-        // Fire-and-forget: the response router updates cachedRegisters.
+    /// Fire-and-forget register request. The response router parses the
+    /// reply into `cachedRegisters` and fires `onPause`, so callers on the
+    /// main thread get a refresh without blocking on a round trip.
+    func requestRegisters() {
         monitorClient?.send("r")
     }
 
@@ -497,6 +509,10 @@ final class VICERunTarget: NSObject, @MainActor DebuggableTarget {
 
         responseQueue.async { [weak self] in
             guard let self = self else { semaphore.signal(); return }
+            // A request already in flight would be orphaned by the assignment
+            // below and leave its caller waiting out the full timeout. Close
+            // it out with whatever it collected so that caller returns now.
+            if let stale = self.pendingRequest { stale.cont(stale.lines) }
             self.pendingRequest = VICEPendingRequest(kind: kind) { lines in
                 result = transform(lines)
                 semaphore.signal()
@@ -543,10 +559,12 @@ final class VICERunTarget: NSObject, @MainActor DebuggableTarget {
         }
     }
 
-    private func handleBreakpointLine(_ line: String) {
+    /// Called on the monitor client's read thread, like `routeLine`, so it
+    /// must not touch main-actor state — it parses and hops to main.
+    private nonisolated func handleBreakpointLine(_ line: String) {
         guard let pc = VICEResponseParser.parseBreakpointPC(line) else { return }
         DispatchQueue.main.async { [weak self] in
-            self?.onBreakpoint?(pc)
+            MainActor.assumeIsolated { self?.onBreakpoint?(pc) }
         }
     }
 
@@ -633,15 +651,30 @@ enum VICEResponseParser {
         return map
     }
 
+    /// Extracts the PC from either of VICE's two checkpoint renderings:
+    ///
+    ///   listing  `BREAK: 1  C:$0810  (Stop on exec)`
+    ///            (printf `"BREAK: "` + `"%d  %s:$%04x"` + `"  (Stop on"`)
+    ///   hit      `#1 (Stop on  exec 0810)  17/$011, 25/$19`
+    ///            (printf `"#%d (%s %5s %04x) "` + `" %3u/$%03x, %3u/$%02x"`)
+    ///
+    /// The hit form has no `C:$`, and its address is glued to the closing
+    /// paren — so the old "find a bare 4-character hex token" scan never
+    /// matched it, and breakpoint hits went unreported. Read the last field
+    /// inside the parentheses instead.
     static func parseBreakpointPC(_ line: String) -> UInt16? {
         if let r = line.range(of: "C:$") {
             let s = line[r.upperBound...]
             let e = s.firstIndex(where: { !$0.isHexDigit }) ?? s.endIndex
             if let pc = UInt16(String(s[..<e]), radix: 16) { return pc }
         }
-        if line.contains("(Stop") {
-            for part in line.split(separator: " ") {
-                if part.count == 4, let pc = UInt16(part, radix: 16) { return pc }
+        if let open = line.firstIndex(of: "("),
+           let close = line[open...].firstIndex(of: ")") {
+            let inside = line[line.index(after: open)..<close]
+            if let field = inside.split(separator: " ").last,
+               field.count == 4,
+               let pc = UInt16(field, radix: 16) {
+                return pc
             }
         }
         return nil

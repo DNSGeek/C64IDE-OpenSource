@@ -110,7 +110,16 @@ final class EmulatorCoordinator {
         // Notify UI components that adapt to the active emulator (e.g., Monitor reference tab).
         NotificationCenter.default.post(name: .debuggerTargetDidChange, object: nil)
 
-        try t.run(options: options)
+        do {
+            try t.run(options: options)
+        } catch {
+            // Launch failed (missing binary, bad config). Without this the
+            // target stayed `active`, so the debugger kept reporting a live
+            // session that never started and never would.
+            active = nil
+            NotificationCenter.default.post(name: .debuggerTargetDidChange, object: nil)
+            throw error
+        }
     }
 
     // MARK: - Stop

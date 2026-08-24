@@ -157,7 +157,18 @@ protocol DebuggableTarget: EmulatorTarget {
 
     // ── CPU state ──────────────────────────────────────────
     /// Current register state. Valid while paused; returns cached state while running.
+    ///
+    /// May block the caller for a full round trip to the target. Do not read
+    /// this from the main thread to refresh UI — use `requestRegisters()`.
     var registers: RegisterState { get }
+
+    /// Asks the target to publish its current register state through `onPause`.
+    ///
+    /// Non-blocking by contract: implementations must return immediately and
+    /// deliver the answer asynchronously. This is what UI code should call,
+    /// since `registers` waits on a round trip and callers are usually on the
+    /// main thread — the very thread some targets need in order to reply.
+    func requestRegisters()
 
     // ── Execution control ──────────────────────────────────
     func stepInto()

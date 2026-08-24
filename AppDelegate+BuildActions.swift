@@ -62,6 +62,11 @@ extension AppDelegate {
         // Breakpoints remain valid as long as the memory layout hasn't shifted.
         var bpAddresses: [UInt16] = []
         if let dbg = wc.buildManager.lastDebugInfo {
+            // Point the parser at the file these breakpoints actually came
+            // from. Without this it assumes whichever file contributed the
+            // most line mappings, so in a project with a large .include the
+            // gutter lines resolved against the wrong file's line numbers.
+            dbg.setPrimaryFile(named: sourceURL.lastPathComponent)
             bpAddresses = bpLines.compactMap { dbg.addressForLine($0) }
                                  .filter { $0 != entryPoint }
         } else if !bpLines.isEmpty {

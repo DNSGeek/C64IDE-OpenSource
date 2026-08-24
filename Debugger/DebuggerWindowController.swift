@@ -92,7 +92,23 @@ class DebuggerViewController: NSViewController {
     // Cycle counter
     private var cycleAccumulator: Int = 0
     private var cycleCountLabel: NSTextField!
-    private var lastSteppedPC: UInt16? = nil
+
+    /// PC of the stop we last reported. Used to (a) drop duplicate `onPause`
+    /// callbacks for one stop and (b) know which instruction just executed,
+    /// so the cycle counter charges for the instruction that *ran* rather
+    /// than the one we're about to run. `nil` means "no baseline" — set on
+    /// continue/goto/reset so a resumed run doesn't bill one stale opcode.
+    private var lastSteppedPC: UInt16?
+
+    /// True while a jam alert is on screen, so a CPU that keeps re-jamming
+    /// (or a duplicate message) can't stack a pile of modal sheets.
+    private var isShowingJamAlert = false
+
+    /// The console is append-only and a busy session produces thousands of
+    /// lines. Past this many, the oldest fifth is dropped: an unbounded
+    /// text storage makes every append re-lay-out the whole document.
+    private let maxConsoleLines = 5000
+    private var consoleLineCount = 0
 
     // Execution control buttons
     private var stepBtn: NSButton!
@@ -101,12 +117,8 @@ class DebuggerViewController: NSViewController {
     private var continueBtn: NSButton!
     private var pauseBtn: NSButton!
 
-    /// Breakpoints to set when connecting (address list)
-    private var pendingBreakpoints: [UInt16] = []
     private var regBg:    NSView!
     private var dimLabels: [NSTextField] = []
-    /// Entry point for the current program
-    var entryPoint: UInt16 = 0x0810
 
     /// Debug info from the last build (.dbg file).
     /// Set by `AppDelegate` after a build so we can map PC → source line.
@@ -116,7 +128,13 @@ class DebuggerViewController: NSViewController {
     /// Int = source line (1-indexed) to highlight, nil = clear highlight.
     var onDebugLineChanged: ((Int?) -> Void)?
 
-    private var consoleBg:    NSColor { AppTheme.current.panelDetailBackground }
+    /// Cycle/raster arithmetic depends on the PAL/NTSC choice in the build
+    /// configuration, which the user can change mid-session.
+    private var timing: C64Timing {
+        C64Timing.from(config: (NSApp.delegate as? AppDelegate)?
+            .mainWindowController?.buildConfig ?? BuildConfiguration())
+    }
+
     private var consoleGreen: NSColor { AppTheme.current.syntaxFunction }
     private var promptCyan:   NSColor { AppTheme.current.syntaxKeyword }
     private var warnYellow:   NSColor { AppTheme.current.syntaxOperator }
@@ -424,9 +442,13 @@ class DebuggerViewController: NSViewController {
         t.onBreakpoint = { [weak self, weak t] pc in
             guard let self, let t else { return }
             self.appendConsole(String(format: "⚑ BREAK at $%04X", pc), color: .yellow)
-            let regs = t.registers
-            self.updateRegisters(regs)
-            self.annotateStepCycles(at: pc, target: t)
+            // Ask, don't wait. `t.registers` blocks the caller on a monitor
+            // round trip, and for VICE the reply is delivered by way of this
+            // very thread — reading it here deadlocked until the 2s timeout
+            // and then displayed stale registers. The answer arrives via
+            // onPause, which refreshes the register view, the source
+            // highlight and the cycle counter.
+            t.requestRegisters()
         }
 
         t.onJam = { [weak self, weak t] pc in
@@ -436,7 +458,7 @@ class DebuggerViewController: NSViewController {
                 color: .red)
             // Reuse the exact breakpoint highlight path: show registers and
             // highlight the source line for the jammed PC.
-            self.updateRegisters(t.registers)
+            t.requestRegisters()
             self.presentJamAlert(pc: pc, target: t)
         }
 
@@ -498,63 +520,112 @@ class DebuggerViewController: NSViewController {
     @objc private func sendCommand(_ sender: NSTextField) {
         let cmd = sender.stringValue.trimmingCharacters(in: .whitespaces)
         guard !cmd.isEmpty else { return }
+        guard let t = requireTarget() else { return }
         appendConsole("(C:$) \(cmd)", color: promptCyan)
-        if let vice = debugTarget as? VICERunTarget {
-            vice.sendRawMonitorCommand(cmd)
-        } else if let vc64 = debugTarget as? VC64RunTarget {
-            vc64.retroShellExec(cmd)
-        }
+        sendMonitorCommand(cmd, to: t)
         sender.stringValue = ""
     }
 
     // MARK: - Execution Control
 
     @objc private func continueAction(_ sender: Any?) {
+        guard let t = requireTarget() else { return }
         appendConsole("▶ Continue", color: promptCyan)
         onDebugLineChanged?(nil)
-        debugTarget?.resume()
+        // The CPU is about to run an unknown number of instructions, so the
+        // PC we were stopped at is no longer "the instruction just executed".
+        lastSteppedPC = nil
+        t.resume()
     }
 
     @objc private func pauseAction(_ sender: Any?) {
-        // Sending any command while running causes VICE to break
-        appendConsole("⏸ Pause (requesting registers)", color: promptCyan)
-        let _ = debugTarget?.registers
+        guard let t = requireTarget() else { return }
+        appendConsole("⏸ Pause", color: promptCyan)
+        // Actually pause. Previously this only read the registers, which
+        // happens to drop VICE into its monitor but does nothing at all to
+        // VirtualC64 — the Pause button simply didn't pause it.
+        t.pause()
+        t.requestRegisters()
     }
 
     @objc private func stepAction(_ sender: Any?) {
-        debugTarget?.stepInto()
-        let _ = debugTarget?.registers
+        guard let t = requireTarget() else { return }
+        t.stepInto()
     }
 
     @objc private func stepOverAction(_ sender: Any?) {
-        debugTarget?.stepOver()
-        let _ = debugTarget?.registers
+        guard let t = requireTarget() else { return }
+        t.stepOver()
     }
 
     @objc private func stepOutAction(_ sender: Any?) {
-        debugTarget?.finishLine()
-        let _ = debugTarget?.registers
+        guard let t = requireTarget() else { return }
+        t.finishLine()
     }
 
     @objc private func regsAction(_ sender: Any?) {
-        let _ = debugTarget?.registers
+        guard let t = requireTarget() else { return }
+        t.requestRegisters()
     }
 
     // MARK: - Breakpoints & Memory
 
-    private func getAddress() -> UInt16 {
-        var s = addrField.stringValue.trimmingCharacters(in: .whitespaces)
+    /// Parses a hex address, accepting a leading `$` or `0x`.
+    private func parseHexAddress(_ raw: String) -> UInt16? {
+        var s = raw.trimmingCharacters(in: .whitespaces)
         if s.hasPrefix("$") { s.removeFirst() }
-        return UInt16(s, radix: 16) ?? 0x0800
+        if s.lowercased().hasPrefix("0x") { s.removeFirst(2) }
+        guard !s.isEmpty else { return nil }
+        return UInt16(s, radix: 16)
+    }
+
+    /// The address field's contents, or `nil` after complaining to the console.
+    ///
+    /// Deliberately not a silent fallback to `$0800`: `goAction` sets the PC
+    /// from this, so a typo used to quietly jump the CPU into the BASIC area
+    /// and destroy the session the user was trying to debug.
+    private func requireAddress() -> UInt16? {
+        guard let addr = parseHexAddress(addrField.stringValue) else {
+            appendConsole("Invalid address: '\(addrField.stringValue)' — expected hex, e.g. 0810",
+                          color: .red)
+            return nil
+        }
+        return addr
+    }
+
+    /// The attached target, or `nil` after saying so. Every button used to
+    /// no-op in silence when nothing was attached.
+    private func requireTarget() -> (any DebuggableTarget)? {
+        guard let t = debugTarget else {
+            appendConsole("No debug session attached — launch with Build & Debug (⌘R).",
+                          color: warnYellow)
+            return nil
+        }
+        return t
+    }
+
+    /// Routes a raw command to whichever console the target speaks: VICE's
+    /// text monitor or VirtualC64's RetroShell. Replies stream back into our
+    /// console through the target's normal log path.
+    private func sendMonitorCommand(_ cmd: String, to target: any DebuggableTarget) {
+        if let vice = target as? VICERunTarget {
+            vice.sendRawMonitorCommand(cmd)
+        } else if let vc64 = target as? VC64RunTarget {
+            vc64.retroShellExec(cmd)
+        } else {
+            appendConsole("\(target.runTarget.displayName) has no command console.",
+                          color: warnYellow)
+        }
     }
 
     @objc private func setBP(_ sender: Any?) {
-        let addr = getAddress()
-        debugTarget?.setBreakpoint(at: addr)
+        guard let t = requireTarget(), let addr = requireAddress() else { return }
+        t.setBreakpoint(at: addr)
         appendConsole(String(format: "Setting breakpoint at $%04X", addr), color: warnYellow)
     }
 
     @objc private func delBP(_ sender: Any?) {
+        guard let t = requireTarget() else { return }
         // Address-based to mirror setBP and DebuggableTarget.deleteBreakpoint(at:).
         let alert = NSAlert()
         alert.messageText = "Delete Breakpoint"
@@ -567,25 +638,31 @@ class DebuggerViewController: NSViewController {
         alert.window.initialFirstResponder = field
         guard alert.runModal() == .alertFirstButtonReturn else { return }
 
-        var s = field.stringValue.trimmingCharacters(in: .whitespaces)
-        if s.hasPrefix("$") { s.removeFirst() }
-        guard let addr = UInt16(s, radix: 16) else {
-            appendConsole("Invalid breakpoint address: \(field.stringValue)", color: .red)
+        guard let addr = parseHexAddress(field.stringValue) else {
+            appendConsole("Invalid breakpoint address: '\(field.stringValue)'", color: .red)
             return
         }
-        debugTarget?.deleteBreakpoint(at: addr)
+        t.deleteBreakpoint(at: addr)
         appendConsole(String(format: "Deleting breakpoint at $%04X", addr), color: warnYellow)
     }
 
     @objc private func listBP(_ sender: Any?) {
-        appendConsole("Breakpoints: (see editor gutter)", color: warnYellow)
+        guard let t = requireTarget() else { return }
+        appendConsole("Breakpoints:", color: warnYellow)
+        // Both monitors spell the listing the same way. This used to be a
+        // placeholder string that told the user to go look at the gutter.
+        sendMonitorCommand("break", to: t)
     }
 
     @objc private func memAction(_ sender: Any?) {
-        let addr = getAddress()
+        guard let t = requireTarget(), let addr = requireAddress() else { return }
         // Clamp the end so addr + 0x7F can't trap past $FFFF (e.g. user typed FFFF)
         let end = UInt16(min(Int(addr) + 0x7F, 0xFFFF))
-        guard let data = debugTarget?.readMemory(from: addr, to: end) else { return }
+        let data = t.readMemory(from: addr, to: end)
+        guard !data.isEmpty else {
+            appendConsole(String(format: "No response reading $%04X-$%04X.", addr, end), color: .red)
+            return
+        }
         let bytesPerRow = 16
         for rowStart in stride(from: 0, to: data.count, by: bytesPerRow) {
             let rowEnd = min(rowStart + bytesPerRow, data.count)
@@ -595,26 +672,79 @@ class DebuggerViewController: NSViewController {
     }
 
     @objc private func disasmAction(_ sender: Any?) {
-        let addr = getAddress()
-        guard let lines = debugTarget?.disassemble(count: 16, from: addr) else { return }
+        guard let t = requireTarget(), let addr = requireAddress() else { return }
+        let lines = t.disassemble(count: 16, from: addr)
+        guard !lines.isEmpty else {
+            appendConsole(String(format: "No response disassembling $%04X.", addr), color: .red)
+            return
+        }
         for line in lines {
             appendConsole(line, color: consoleGreen)
         }
     }
 
     @objc private func stackAction(_ sender: Any?) {
-        appendConsole("Stack trace not yet available in this target.", color: .gray)
+        guard let t = requireTarget() else { return }
+        guard let vice = t as? VICERunTarget else {
+            appendConsole("Stack trace isn't available for \(t.runTarget.displayName).", color: .gray)
+            return
+        }
+        appendConsole("Call stack:", color: warnYellow)
+        vice.sendRawMonitorCommand("bt")
     }
 
     // MARK: - Console
 
     func appendConsole(_ text: String, color: NSColor?) {
+        guard let storage = consoleTextView?.textStorage else { return }
         let attrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular),
             .foregroundColor: color ?? consoleGreen,
         ]
-        consoleTextView.textStorage?.append(NSAttributedString(string: text + "\n", attributes: attrs))
-        consoleTextView.scrollToEndOfDocument(nil)
+
+        // Only follow the tail if the user is already at the tail. Scrolling
+        // unconditionally yanked them back down mid-read every time a log
+        // line arrived.
+        let follow = isConsoleAtBottom()
+
+        storage.append(NSAttributedString(string: text + "\n", attributes: attrs))
+        consoleLineCount += 1
+        if consoleLineCount > maxConsoleLines { trimConsole() }
+
+        if follow { consoleTextView.scrollToEndOfDocument(nil) }
+    }
+
+    private func isConsoleAtBottom() -> Bool {
+        guard let clip = consoleScrollView?.contentView,
+              let doc  = consoleScrollView?.documentView else { return true }
+        // A document shorter than the viewport is trivially "at the bottom".
+        guard doc.frame.height > clip.bounds.height else { return true }
+        return clip.bounds.maxY >= doc.frame.height - 4
+    }
+
+    /// Drops the oldest fifth of the console in one splice. Trimming a line at
+    /// a time would re-lay-out the document on every append once the cap is
+    /// reached; this pays that cost once per 1000 lines instead.
+    private func trimConsole() {
+        guard let storage = consoleTextView?.textStorage else { return }
+        let text = storage.string as NSString
+        let target = maxConsoleLines / 5
+
+        var cut = 0
+        var dropped = 0
+        while dropped < target && cut < text.length {
+            let found = text.range(of: "\n", options: [],
+                                   range: NSRange(location: cut, length: text.length - cut))
+            guard found.location != NSNotFound else { break }
+            cut = found.location + 1
+            dropped += 1
+        }
+        guard cut > 0 else { return }
+
+        storage.deleteCharacters(in: NSRange(location: 0, length: cut))
+        // Counted from real newlines, so multi-line log messages can't drift
+        // the count away from the document's actual size.
+        consoleLineCount = max(0, consoleLineCount - dropped)
     }
 
     // MARK: - Register Display
@@ -625,25 +755,37 @@ class DebuggerViewController: NSViewController {
         regLabels["X"]?.stringValue = String(format: "%02X", regs.x)
         regLabels["Y"]?.stringValue = String(format: "%02X", regs.y)
         regLabels["SP"]?.stringValue = String(format: "%02X", regs.sp)
-        flagsLabel.stringValue = regs.flagsString
+        flagsLabel?.stringValue = regs.flagsString
 
-        // Source-level debugging: map PC → source location via .dbg info
-        if let info = debugInfo, let loc = info.location(forAddress: regs.pc) {
-            let file = info.fileName(forId: loc.fileId)
-                .map { ($0 as NSString).lastPathComponent } ?? "?"
-            appendConsole(String(format: "  → %@:%d (PC=$%04X)", file, loc.line, regs.pc), color: warnYellow)
-            // Only highlight primary-file lines; a line number from an
-            // include would highlight the wrong line in the main editor.
-            onDebugLineChanged?(loc.fileId == info.primaryFileId ? loc.line : nil)
-        } else {
-            // PC is in ROM or code without debug info — clear highlight
-            onDebugLineChanged?(nil)
-        }
+        // A single stop can produce more than one onPause — VirtualC64
+        // publishes registers on a breakpoint hit and again when we ask for
+        // them. Everything below is once-per-stop work, so gate it on the PC
+        // actually having moved.
+        guard regs.pc != lastSteppedPC else { return }
+        let executedPC = lastSteppedPC
+        lastSteppedPC = regs.pc
+
+        accumulateCycles(forInstructionAt: executedPC)
+        reportSourceLocation(pc: regs.pc)
     }
 
-    /// True while a jam alert is on screen, so a CPU that keeps re-jamming
-    /// (or a duplicate message) can't stack a pile of modal sheets.
-    private var isShowingJamAlert = false
+    /// Logs the source location for `pc` and drives the editor highlight.
+    private func reportSourceLocation(pc: UInt16) {
+        guard let info = debugInfo, let loc = info.location(forAddress: pc) else {
+            // PC is in ROM, an IRQ handler, or code with no debug info. Clear
+            // the highlight rather than pointing at whichever line happened to
+            // be nearest — that used to light up the last line of the file
+            // every time execution left the program.
+            onDebugLineChanged?(nil)
+            return
+        }
+        let file = info.fileName(forId: loc.fileId)
+            .map { ($0 as NSString).lastPathComponent } ?? "?"
+        appendConsole(String(format: "  → %@:%d (PC=$%04X)", file, loc.line, pc), color: warnYellow)
+        // Only highlight primary-file lines; a line number from an
+        // include would highlight the wrong line in the main editor.
+        onDebugLineChanged?(loc.fileId == info.primaryFileId ? loc.line : nil)
+    }
 
     /// Present the "CPU jammed" alert with three choices. Default is the
     /// non-destructive Open Debugger so a reflexive Return doesn't wipe the
@@ -691,13 +833,17 @@ class DebuggerViewController: NSViewController {
             // Bring the debugger window forward and re-assert the PC highlight.
             // The machine stays frozen; we're just surfacing the corpse.
             self.view.window?.makeKeyAndOrderFront(nil)
-            updateRegisters(target.registers)
+            // Clearing the baseline makes the next update re-log the trace and
+            // re-assert the highlight for a PC we've already reported.
+            lastSteppedPC = nil
+            target.requestRegisters()
             appendConsole("Inspect registers and memory above; Reset when done.",
                           color: warnYellow)
 
         case .alertSecondButtonReturn:  // Reset
             appendConsole("↻ Resetting after jam.", color: promptCyan)
             onDebugLineChanged?(nil)     // clear the stale highlight
+            lastSteppedPC = nil
             target.reset()
 
         default:                        // Dismiss (Esc / third button)
@@ -718,18 +864,16 @@ class DebuggerViewController: NSViewController {
             connectButton.title = "Connect"
             for (_, label) in regLabels { label.stringValue = "----" }
             flagsLabel?.stringValue = "--------"
+            lastSteppedPC = nil
             onDebugLineChanged?(nil)
         }
     }
 
     @objc private func goAction(_ sender: Any?) {
-        guard let target = debugTarget else {
-            appendConsole("No debug session attached.", color: warnYellow)
-            return
-        }
-        let addr = getAddress()
+        guard let target = requireTarget(), let addr = requireAddress() else { return }
         appendConsole(String(format: "→ PC = $%04X", addr), color: promptCyan)
         onDebugLineChanged?(nil)
+        lastSteppedPC = nil
         target.goto(address: addr)
     }
 
@@ -737,53 +881,40 @@ class DebuggerViewController: NSViewController {
 
     @objc private func resetCycles(_ sender: Any?) {
         cycleAccumulator = 0
-        let timing = C64Timing.from(config: (NSApp.delegate as? AppDelegate)?.mainWindowController?.buildConfig ?? BuildConfiguration())
-        cycleCountLabel?.stringValue = "0 cycles  ·  0.00 raster lines (\(timing.name))"
+        // Drop the baseline too, so the next stop starts a fresh count
+        // instead of immediately billing the instruction we're sitting on.
+        lastSteppedPC = nil
+        let t = timing
+        cycleCountLabel?.stringValue = "0 cycles  ·  0.00 raster lines (\(t.name))"
     }
 
-    /// Annotate cycle cost from a `RegisterState` — reads the opcode at PC
-    /// from the target's memory so we don't need to parse VICE text output.
-    private func annotateStepCycles(at pc: UInt16, target: any DebuggableTarget) {
+    /// Adds the cost of the instruction that just executed.
+    ///
+    /// `pc` is where we were stopped *before* this update, not where we are
+    /// now: charging for the opcode at the new PC bills an instruction that
+    /// hasn't run yet. `nil` means there's no baseline (fresh attach, or we
+    /// just resumed and ran an unknown number of instructions), so there's
+    /// nothing meaningful to charge.
+    ///
+    /// This runs from `updateRegisters`, which fires on every stop. It used
+    /// to be wired only into the breakpoint callback, so the counter never
+    /// moved while stepping — the thing it exists to measure.
+    private func accumulateCycles(forInstructionAt pc: UInt16?) {
+        guard let pc, let target = debugTarget else { return }
+
         let data = target.readMemory(from: pc, to: pc)
         guard let opcode = data.first else { return }
         let info = Disassembler6502.opcodeTable[Int(opcode)]
         guard info.mnemonic != "???" else { return }
-        let timing = C64Timing.from(config: (NSApp.delegate as? AppDelegate)?.mainWindowController?.buildConfig ?? BuildConfiguration())
+
         cycleAccumulator += info.cycles
         // maxCycles applies the branch rule (+1 taken, +1 again across a page),
         // so a branch reports "+2" rather than understating it as "+1".
         let penalty = info.maxCycles - info.cycles
         let penaltyStr = penalty > 0 ? "+\(penalty)" : ""
-        let rasterStr = timing.rasterLines(for: cycleAccumulator)
-        cycleCountLabel?.stringValue = "last: \(info.cycles)\(penaltyStr)  ·  total: \(cycleAccumulator)  ·  \(rasterStr) lines (\(timing.name))"
-    }
-
-    /// Parse the opcode byte from a VICE step/disassembly response line and
-    /// accumulate its cycle cost.
-    /// VICE format: "(C:$fd7c) .C:fd7e  D0 08       BNE $FD88   - A:AB ..."
-    private func annotateStepCycles(from response: String) {
-        guard let dotCRange = response.range(of: ".C:") ?? response.range(of: ".c:") else { return }
-
-        let afterDotC = response[dotCRange.upperBound...]
-        let addrPart = afterDotC.prefix(4)
-        guard addrPart.count == 4, addrPart.allSatisfy({ $0.isHexDigit }) else { return }
-
-        let afterAddr = afterDotC.dropFirst(4).drop(while: { $0 == " " })
-        let opcodeStr = String(afterAddr.prefix(2))
-        guard opcodeStr.count == 2, let opcode = UInt8(opcodeStr, radix: 16) else { return }
-
-        let info = Disassembler6502.opcodeTable[Int(opcode)]
-        guard info.mnemonic != "???" else { return }
-
-        let timing = C64Timing.from(config: (NSApp.delegate as? AppDelegate)?.mainWindowController?.buildConfig ?? BuildConfiguration())
-        cycleAccumulator += info.cycles
-
-        // maxCycles applies the branch rule (+1 taken, +1 again across a page),
-        // so a branch reports "+2" rather than understating it as "+1".
-        let penalty = info.maxCycles - info.cycles
-        let penaltyStr = penalty > 0 ? "+\(penalty)" : ""
-        let rasterStr = timing.rasterLines(for: cycleAccumulator)
-        cycleCountLabel?.stringValue = "last: \(info.cycles)\(penaltyStr)  ·  total: \(cycleAccumulator)  ·  \(rasterStr) lines (\(timing.name))"
+        let t = timing
+        cycleCountLabel?.stringValue =
+            "last: \(info.cycles)\(penaltyStr)  ·  total: \(cycleAccumulator)"
+            + "  ·  \(t.rasterLines(for: cycleAccumulator)) lines (\(t.name))"
     }
 }
-

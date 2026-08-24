@@ -290,10 +290,16 @@ final class VC64RunTarget: NSObject, @MainActor DebuggableTarget {
         return RegisterState(pc: r.pc, a: r.a, x: r.x, y: r.y, sp: r.sp, flags: r.flags)
     }
 
+    /// The bridge answers register reads synchronously and cheaply, so this
+    /// just republishes the current state through the usual `onPause` path.
+    func requestRegisters() { notifyPause() }
+
     func stepInto()   { bridge.stepInto();   notifyPause() }
     func stepOver()   { bridge.stepOver();   notifyPause() }
     func stepCycle()  { bridge.stepCycle();  notifyPause() }
-    func finishLine() { bridge.finishLine() }
+    /// Step out. `notifyPause()` so the debugger's register view and source
+    /// highlight follow, the way stepInto/stepOver already do.
+    func finishLine() { bridge.finishLine(); notifyPause() }
 
     /// Sets PC to `address` and resumes. Not implemented yet: VC64Bridge
     /// doesn't expose a PC setter, and the RetroShell syntax for register

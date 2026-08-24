@@ -7,23 +7,41 @@ import Foundation
 /// Connects to VICE's remote text monitor via TCP.
 ///
 /// VICE must be launched with: `-remotemonitor -remotemonitoraddress 127.0.0.1:6510`
-/// This client handles connection lifecycle, command dispatch, and response parsing.
+/// This client owns the connection lifecycle, command dispatch, and line framing.
+///
+/// ## Threading contract
+///
+/// Callbacks fire on this client's internal read thread — **not** on the main
+/// queue. That is deliberate. `VICERunTarget.synchronousRequest` blocks its
+/// caller (usually the main thread) on a semaphore until the matching reply
+/// arrives, so hopping to the main queue here would deadlock: the reply that
+/// signals the semaphore can't be dispatched while the waiter owns the main
+/// queue, and every request would sit out its full timeout. Consumers hop to
+/// whichever queue they need themselves.
 class VICEMonitorClient {
 
+    /// Guards `_isConnected` and the two stream references, which are touched
+    /// from both the caller's thread and the read thread.
+    private let stateLock = NSLock()
+    private var _isConnected = false
+
+    /// Owned by the read thread once `readLoop` starts; it unschedules and
+    /// closes the stream on its way out. Closing a scheduled CFStream from
+    /// another thread is not safe, so `disconnect()` deliberately leaves it be.
     private var inputStream: InputStream?
     private var outputStream: OutputStream?
     private var readThread: Thread?
-    private var isConnected = false
+
     private let host: String
     private let port: UInt32
 
-    /// Called when data is received from VICE
+    /// Called for every complete line received from VICE.
     var onResponse: ((String) -> Void)?
 
-    /// Called when connection state changes
+    /// Called when the connection state changes.
     var onConnectionChanged: ((Bool) -> Void)?
 
-    /// Called when VICE hits a breakpoint (response contains register dump)
+    /// Called when VICE reports hitting a breakpoint.
     var onBreakpoint: ((String) -> Void)?
 
     init(host: String = "127.0.0.1", port: UInt32 = 6510) {
@@ -37,57 +55,79 @@ class VICEMonitorClient {
 
     // MARK: - Connection
 
-    var connected: Bool { isConnected }
+    var connected: Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return _isConnected
+    }
 
     /// Establishes a TCP connection to the VICE monitor.
     /// Returns `true` if connected, `false` otherwise.
     func connect() -> Bool {
-        var readStream: Unmanaged<CFReadStream>?
+        var readStream:  Unmanaged<CFReadStream>?
         var writeStream: Unmanaged<CFWriteStream>?
 
         CFStreamCreatePairWithSocketToHost(nil, host as CFString, port, &readStream, &writeStream)
 
-        guard let read = readStream?.takeRetainedValue(),
+        guard let read  = readStream?.takeRetainedValue(),
               let write = writeStream?.takeRetainedValue() else {
             return false
         }
 
-        inputStream = read as InputStream
-        outputStream = write as OutputStream
+        let input  = read  as InputStream
+        let output = write as OutputStream
 
-        inputStream?.open()
-        outputStream?.open()
+        input.open()
+        output.open()
 
-        // Wait briefly for connection handshake
+        // Wait briefly for the connection handshake.
         Thread.sleep(forTimeInterval: 0.2)
 
-        guard outputStream?.streamStatus == .open else {
-            disconnect()
+        guard output.streamStatus == .open else {
+            // No read thread exists yet, so tear both streams down here.
+            input.close()
+            output.close()
             return false
         }
 
-        isConnected = true
+        stateLock.lock()
+        inputStream  = input
+        outputStream = output
+        _isConnected = true
+        stateLock.unlock()
+
         onConnectionChanged?(true)
 
-        // Start reading responses on a background thread
-        readThread = Thread { [weak self] in
-            self?.readLoop()
-        }
-        readThread?.name = "VICEMonitor-Read"
-        readThread?.start()
+        let thread = Thread { [weak self] in self?.readLoop() }
+        thread.name = "VICEMonitor-Read"
+        stateLock.lock()
+        readThread = thread
+        stateLock.unlock()
+        thread.start()
 
         return true
     }
 
-    /// Gracefully disconnects and cleans up resources.
+    /// Marks the session closed and shuts down the write side. The read thread
+    /// notices `connected == false` within one run-loop tick (250 ms) and
+    /// closes the read side itself. Idempotent.
     func disconnect() {
-        isConnected = false
-        readThread?.cancel()
-        readThread = nil
-        inputStream?.close()
-        outputStream?.close()
-        inputStream = nil
+        stateLock.lock()
+        guard _isConnected else {
+            stateLock.unlock()
+            return
+        }
+        _isConnected = false
+        let output = outputStream
         outputStream = nil
+        let thread = readThread
+        readThread = nil
+        stateLock.unlock()
+
+        output?.close()
+        // Don't cancel the read thread from itself — it's already unwinding.
+        if thread !== Thread.current { thread?.cancel() }
+
         onConnectionChanged?(false)
     }
 
@@ -95,123 +135,60 @@ class VICEMonitorClient {
 
     /// Sends a raw command string to the VICE monitor.
     func send(_ command: String) {
-        guard isConnected, let output = outputStream else { return }
-        let cmd = command + "\n"
-        let data = [UInt8](cmd.utf8)
-        output.write(data, maxLength: data.count)
-    }
-
-    /// Requests a register dump.
-    func registers() { send("r") }
-
-    /// Reads a memory range.
-    func readMemory(start: UInt16, end: UInt16) {
-        send(String(format: "m %04x %04x", start, end))
-    }
-
-    /// Disassembles at a given address.
-    func disassemble(at address: UInt16, lines: Int = 16) {
-        send(String(format: "d %04x", address))
-    }
-
-    /// Sets a hardware breakpoint at an address.
-    func setBreakpoint(at address: UInt16) {
-        send(String(format: "break %04x", address))
-    }
-
-    /// Deletes a breakpoint by its numeric ID.
-    func deleteBreakpoint(_ number: Int) {
-        send("delete \(number)")
-    }
-
-    /// Lists all active breakpoints.
-    func listBreakpoints() { send("break") }
-
-    /// Continues execution (exits the monitor).
-    func continueExecution() { send("x") }
-
-    /// Jumps to a specific address.
-    func goto(address: UInt16) {
-        send(String(format: "g %04x", address))
-    }
-
-    /// Steps one instruction.
-    func step() { send("z") }
-
-    /// Steps over (next) a function call.
-    func stepOver() { send("n") }
-
-    /// Steps out (returns from) the current function.
-    func stepOut() { send("ret") }
-
-    /// Writes a single byte to memory.
-    func writeByte(address: UInt16, value: UInt8) {
-        send(String(format: "> %04x %02x", address, value))
-    }
-
-    /// Writes multiple bytes to memory.
-    func writeBytes(address: UInt16, data: [UInt8]) {
-        let hexData = data.map { String(format: "%02x", $0) }.joined(separator: " ")
-        send(String(format: "> %04x %@", address, hexData))
-    }
-
-    /// Shows the call stack.
-    func callStack() { send("bt") }
-
-    /// Sets the current bank.
-    func setBank(_ bank: String) { send("bank \(bank)") }
-
-    /// Fills a memory range with specified bytes.
-    func fill(start: UInt16, end: UInt16, values: [UInt8]) {
-        let hexData = values.map { String(format: "%02x", $0) }.joined(separator: " ")
-        send(String(format: "f %04x %04x %@", start, end, hexData))
-    }
-
-    /// Compares two memory ranges.
-    func compare(start: UInt16, end: UInt16, address: UInt16) {
-        send(String(format: "c %04x %04x %04x", start, end, address))
-    }
-
-    /// Hunts for a byte pattern in memory.
-    func hunt(start: UInt16, end: UInt16, values: [UInt8]) {
-        let hexData = values.map { String(format: "%02x", $0) }.joined(separator: " ")
-        send(String(format: "h %04x %04x %@", start, end, hexData))
+        stateLock.lock()
+        let output = _isConnected ? outputStream : nil
+        let data = [UInt8]((command + "\n").utf8)
+        output?.write(data, maxLength: data.count)
+        stateLock.unlock()
     }
 
     // MARK: - Read Loop
 
-    /// Continuously reads from the input stream, parsing complete lines
-    /// and dispatching callbacks to the main queue.
+    /// Continuously reads from the input stream and dispatches complete lines
+    /// to `onResponse` / `onBreakpoint` on this thread.
     ///
-    /// Uses a RunLoop with a 250ms timeout to efficiently block until
-    /// data arrives, avoiding busy-polling while maintaining responsiveness.
+    /// Uses a RunLoop with a 250 ms timeout to block until data arrives,
+    /// avoiding busy-polling while staying responsive to `disconnect()`.
     private func readLoop() {
         let bufferSize = 4096
         var buffer = [UInt8](repeating: 0, count: bufferSize)
         var accumulated = ""
 
-        guard let input = inputStream else { return }
+        stateLock.lock()
+        let input = inputStream
+        stateLock.unlock()
+        guard let input else { return }
+
         input.schedule(in: .current, forMode: .default)
 
-        while isConnected && !Thread.current.isCancelled {
+        // Runs on every exit path, including the EOF/error returns below,
+        // which previously leaked the stream's run-loop registration.
+        defer {
+            input.remove(from: .current, forMode: .default)
+            input.close()
+            stateLock.lock()
+            inputStream = nil
+            stateLock.unlock()
+        }
+
+        while connected && !Thread.current.isCancelled {
             RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.25))
 
             while input.hasBytesAvailable {
                 let bytesRead = input.read(&buffer, maxLength: bufferSize)
 
-                if bytesRead <= 0 {
-                    if bytesRead < 0 {
-                        DispatchQueue.main.async { [weak self] in
-                            self?.disconnect()
-                        }
-                    }
+                // 0 means the peer closed the socket, negative means a read
+                // error. Both end the session: leaving the client "connected"
+                // kept the UI showing a live monitor and silently swallowed
+                // every command written into the dead stream.
+                guard bytesRead > 0 else {
+                    disconnect()
                     return
                 }
 
-                let text = String(bytes: buffer[0..<bytesRead], encoding: .utf8) ?? ""
-                accumulated += text
+                accumulated += String(decoding: buffer[0..<bytesRead], as: UTF8.self)
 
-                // Process complete lines
+                // Process complete lines.
                 while let newlineRange = accumulated.range(of: "\n") {
                     let line = String(accumulated[accumulated.startIndex..<newlineRange.lowerBound])
                     accumulated = String(accumulated[newlineRange.upperBound...])
@@ -219,17 +196,23 @@ class VICEMonitorClient {
                     let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !trimmed.isEmpty else { continue }
 
-                    DispatchQueue.main.async { [weak self] in
-                        if trimmed.contains("BREAK:") || trimmed.contains("#") && trimmed.contains("(Stop") {
-                            self?.onBreakpoint?(trimmed)
-                        }
-                        self?.onResponse?(trimmed)
+                    if Self.isBreakpointHit(trimmed) {
+                        onBreakpoint?(trimmed)
                     }
+                    onResponse?(trimmed)
                 }
             }
         }
+    }
 
-        input.remove(from: .current, forMode: .default)
+    /// True only for VICE's "the CPU stopped here" announcement, which looks
+    /// like `#1 (Stop on  exec 0810)   0810`.
+    ///
+    /// Deliberately does *not* match `BREAK: 1  C:$0810  (Stop on exec)` —
+    /// that's a row of `break`'s breakpoint *listing*. Treating those as hits
+    /// made every `refreshBreakpointMap()` fire a phantom breakpoint event for
+    /// each breakpoint that existed.
+    private static func isBreakpointHit(_ line: String) -> Bool {
+        line.hasPrefix("#") && line.contains("(Stop")
     }
 }
-
