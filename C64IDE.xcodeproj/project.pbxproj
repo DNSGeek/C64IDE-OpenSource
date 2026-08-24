@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		133513F12F844A5500A98A29 /* ReferencePanelDialectTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 133513F02F844A5500A98A29 /* ReferencePanelDialectTests.swift */; };
 		13AA10022F900002 /* OpcodeReferenceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13AA10012F900001 /* OpcodeReferenceTests.swift */; };
+		13AA10112F900011 /* DisassemblerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13AA10102F900010 /* DisassemblerTests.swift */; };
 		13AA20022FD00002 /* MemoryMapParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13AA20012FD00001 /* MemoryMapParserTests.swift */; };
 		13AA20042FD00004 /* MemoryMapColumnViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13AA20032FD00003 /* MemoryMapColumnViewTests.swift */; };
 		13AA10042F900004 /* ROMSymbolReferenceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13AA10032F900003 /* ROMSymbolReferenceTests.swift */; };
@@ -115,6 +116,7 @@
 /* Begin PBXFileReference section */
 		133513F02F844A5500A98A29 /* ReferencePanelDialectTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReferencePanelDialectTests.swift; sourceTree = "<group>"; };
 		13AA10012F900001 /* OpcodeReferenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpcodeReferenceTests.swift; sourceTree = "<group>"; };
+		13AA10102F900010 /* DisassemblerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisassemblerTests.swift; sourceTree = "<group>"; };
 		13AA20012FD00001 /* MemoryMapParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryMapParserTests.swift; sourceTree = "<group>"; };
 		13AA20032FD00003 /* MemoryMapColumnViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryMapColumnViewTests.swift; sourceTree = "<group>"; };
 		13AA10032F900003 /* ROMSymbolReferenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ROMSymbolReferenceTests.swift; sourceTree = "<group>"; };
@@ -329,6 +331,7 @@
 			isa = PBXGroup;
 			children = (
 				13651BEE2F735C7B001749B5 /* Disassembler6502.swift */,
+				13AA10102F900010 /* DisassemblerTests.swift */,
 				13651BEF2F735C7B001749B5 /* DisassemblerWindowController.swift */,
 				1347C3C72FAEFC8500FC1CBB /* C64ROMSymbols.swift */,
 			);
@@ -622,6 +625,7 @@
 				133513E02F844A5500A98A29 /* BasicAutoArrangeTests.swift in Sources */,
 				133513F12F844A5500A98A29 /* ReferencePanelDialectTests.swift in Sources */,
 				13AA10022F900002 /* OpcodeReferenceTests.swift in Sources */,
+				13AA10112F900011 /* DisassemblerTests.swift in Sources */,
 				13AA20022FD00002 /* MemoryMapParserTests.swift in Sources */,
 				13AA20042FD00004 /* MemoryMapColumnViewTests.swift in Sources */,
 				13AA10042F900004 /* ROMSymbolReferenceTests.swift in Sources */,

@@ -656,14 +656,23 @@ public struct C64Reference {
     // MARK: - Lookup Methods
     // ══════════════════════════════════════════════════════════
 
-    /// Searches the static memory map entries for a region containing the given address.
-    /// Note: Linear scan optimized for compile-time static data, not runtime performance-critical paths.
-    public static func lookup(address: UInt16) -> MemoryMapEntry? {
-        let allEntries = zeroPageEntries + stackAndBufferEntries + screenMemoryEntries +
+    /// Every memory map entry, concatenated once.
+    ///
+    /// This used to be rebuilt inside `lookup(address:)`, which allocated and
+    /// copied the whole map on every call -- and the disassembler calls it once
+    /// per annotated instruction, so a full 64 KB disassembly rebuilt it
+    /// thousands of times.
+    public static let allMemoryMapEntries: [MemoryMapEntry] = {
+        zeroPageEntries + stackAndBufferEntries + screenMemoryEntries +
             basicAreaEntries + vicRegisters + sidRegisters + colorRAMEntries +
             cia1Registers + cia2Registers + kernalAreaEntries
+    }()
 
-        for entry in allEntries {
+    /// Searches the static memory map entries for a region containing the given address.
+    /// Note: Linear scan over a prebuilt array; the map is small and entries are
+    /// ranges, so an ordered scan stays simpler than an index.
+    public static func lookup(address: UInt16) -> MemoryMapEntry? {
+        for entry in allMemoryMapEntries {
             if let end = entry.endAddress {
                 if address >= entry.address && address <= end { return entry }
             } else if address == entry.address {
@@ -679,9 +688,15 @@ public struct C64Reference {
         return lookup(address: UInt16(decimalAddress))
     }
 
+    /// KERNAL routines indexed by entry point, so lookups do not rescan the
+    /// table on every disassembled instruction.
+    private static let kernalRoutinesByAddress: [UInt16: KernalRoutine] = {
+        Dictionary(kernalRoutines.map { ($0.address, $0) }, uniquingKeysWith: { first, _ in first })
+    }()
+
     /// Finds a KERNAL routine by its entry point address.
     public static func lookupKernal(address: UInt16) -> KernalRoutine? {
-        return kernalRoutines.first { $0.address == address }
+        return kernalRoutinesByAddress[address]
     }
 }
 

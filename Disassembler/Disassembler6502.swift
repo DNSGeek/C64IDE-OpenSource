@@ -75,11 +75,37 @@ struct OpcodeInfo {
         self.pageCrossPenalty = pageCross
         self.illegal = illegal
     }
+
+    /// Worst-case cycle count for this instruction.
+    ///
+    /// Every mode except `.relative` charges `pageCrossPenalty` at most once,
+    /// when the effective address crosses a page boundary. Branches charge it
+    /// twice: +1 when the branch is taken, and +1 again when the taken branch
+    /// lands on a different page -- so `BNE` runs 2, 3 or 4 cycles. Deriving the
+    /// worst case here rather than at each call site keeps the disassembler,
+    /// the debugger and the ASM reference panel from drifting apart.
+    var maxCycles: Int {
+        mode == .relative ? cycles + 2 * pageCrossPenalty
+                          : cycles + pageCrossPenalty
+    }
 }
 
 // ═══════════════════════════════════════════════════════════
 // MARK: - Disassembled Line
 // ═══════════════════════════════════════════════════════════
+
+extension String {
+    /// Right-pads to `width` with spaces, but never truncates.
+    ///
+    /// `String.padding(toLength:)` silently *cuts* anything longer than the
+    /// target, which corrupted operands the moment a symbol name made an
+    /// instruction longer than its column (`LDA VIC_BORDERCOLOR,X` came out as
+    /// `LDA VIC_BORDER`). Columns may drift on an over-long line; the text may
+    /// not be lost.
+    func columnPadded(to width: Int) -> String {
+        count >= width ? self : self + String(repeating: " ", count: width - count)
+    }
+}
 
 /// Represents a single line of disassembled 6502 code.
 struct DisassembledLine {
@@ -94,6 +120,21 @@ struct DisassembledLine {
     let cycles: Int
     /// Additional cycles if page boundary crossed or branch taken
     let pageCrossPenalty: Int
+    /// Addressing mode of the decoded instruction; `nil` on data lines.
+    /// Needed to apply the branch-specific worst-case cycle rule and to know
+    /// when ca65 needs an explicit address-size override on export.
+    let mode: AddressingMode?
+    /// Operand text for ca65 export, which is not always the text shown on
+    /// screen -- see `Disassembler6502.formatOperand(forAssembly:)`.
+    let asmOperand: String
+
+    /// Worst-case cycle count, applying the branch rule described on
+    /// `OpcodeInfo.maxCycles`. Data lines cost nothing.
+    var maxCycles: Int {
+        guard !isData else { return 0 }
+        return mode == .relative ? cycles + 2 * pageCrossPenalty
+                                 : cycles + pageCrossPenalty
+    }
 
     // MARK: - PETSCII hint
 
@@ -117,7 +158,7 @@ struct DisassembledLine {
     /// Three-character PETSCII hint for the instruction bytes, always padded to three
     /// characters so the column stays at a fixed position regardless of instruction length.
     ///
-    /// Example: bytes $48 $45 $4C -> "HEL", bytes $EA -> "...  "
+    /// Example: bytes $48 $45 $4C -> "|HEL|", bytes $EA -> "|.  |"
     ///
     /// This lets you scan down and spot sequences that are really string data rather
     /// than genuine code -- even if the disassembler has decoded them as illegal opcodes.
@@ -136,16 +177,16 @@ struct DisassembledLine {
     var formatted: String {
         let addrStr = String(format: "$%04X", address)
         let hexBytes = bytes.map { String(format: "%02X", $0) }.joined(separator: " ")
-        let hexPadded = hexBytes.padding(toLength: 9, withPad: " ", startingAt: 0)
+        let hexPadded = hexBytes.columnPadded(to: 9)
 
         if isData {
             return "\(addrStr)  \(hexPadded)  \(mnemonic) \(operand)  \(petsciiHint)"
         }
 
-        // Always use instPadded (14 chars) so the PETSCII column stays at a fixed
-        // offset regardless of whether this line has a comment.
+        // Always pad the instruction to 14 chars so the PETSCII column stays at a
+        // fixed offset regardless of whether this line has a comment.
         let inst = operand.isEmpty ? mnemonic : "\(mnemonic) \(operand)"
-        let instPadded = inst.padding(toLength: 14, withPad: " ", startingAt: 0)
+        let instPadded = inst.columnPadded(to: 14)
 
         if let comment = comment {
             return "\(addrStr)  \(hexPadded)  \(instPadded) ; \(comment)  \(petsciiHint)"
@@ -153,15 +194,36 @@ struct DisassembledLine {
         return "\(addrStr)  \(hexPadded)  \(instPadded)  \(petsciiHint)"
     }
 
+    /// ca65 spells three of the undocumented mnemonics differently from the
+    /// names this disassembler prints. Verified by assembling each form with
+    /// `.setcpu "6502X"` and checking the emitted byte: ISC = $E7, ANE = $8B,
+    /// AXS = $CB. Every other mnemonic the table produces -- including JAM,
+    /// SHA, SHX, SHY and TAS -- ca65 accepts as spelled.
+    static let ca65Mnemonics: [String: String] = [
+        "ISB": "ISC",
+        "XAA": "ANE",
+        "SBX": "AXS",
+    ]
+
+    /// Mnemonic as ca65 spells it.
+    var ca65Mnemonic: String { Self.ca65Mnemonics[mnemonic] ?? mnemonic }
+
     /// Formats the line as reassemblable source: "    LDA #$00    ; comment"
     var asmSource: String {
         if isData {
             let values = bytes.map { String(format: "$%02X", $0) }.joined(separator: ", ")
             return "    .byte \(values)"
         }
-        let inst = operand.isEmpty ? mnemonic : "\(mnemonic) \(operand)"
-        if let comment = comment {
-            return "    \(inst.padding(toLength: 16, withPad: " ", startingAt: 0)); \(comment)"
+        let inst = asmOperand.isEmpty ? ca65Mnemonic : "\(ca65Mnemonic) \(asmOperand)"
+        // An undocumented opcode is worth calling out in exported source even
+        // when the operand already earned a more specific comment.
+        let note = isIllegal ? (comment.map { "\($0) [undocumented]" } ?? "undocumented opcode")
+                             : comment
+        if let note = note {
+            // columnPadded stops at the column width, so an over-long
+            // instruction still needs a separating space before the comment.
+            let padded = inst.columnPadded(to: 16)
+            return "    \(padded)\(padded.hasSuffix(" ") ? "" : " "); \(note)"
         }
         return "    \(inst)"
     }
@@ -178,32 +240,125 @@ struct DisassembledLine {
 /// 2. Disassembles instructions, formatting operands and adding ROM/I/O comments.
 class Disassembler6502 {
 
+    /// Largest block the 6502 address space can hold.
+    static let addressSpaceSize = 0x10000
+
     /// Known labels for annotation (address → name)
     private var labels: [UInt16: String] = [:]
 
-    /// Branch/jump targets found during disassembly
+    /// Branch/jump targets that land on an instruction boundary within the
+    /// disassembled block, and so can carry a generated `L_xxxx` label.
     private(set) var branchTargets: Set<UInt16> = []
+
+    /// Named labels actually referenced by the operands of the last
+    /// disassembly. Export uses this to emit equates for exactly the symbols
+    /// the source mentions, instead of dumping the whole ROM symbol table.
+    private(set) var referencedLabels: Set<UInt16> = []
+
+    /// Memoised results of `descriptionForAddress`, which otherwise re-runs a
+    /// linear memory-map scan for every annotated instruction.
+    private var descriptionCache: [UInt16: String?] = [:]
 
     init() {
         loadKernalLabels()
         loadIOLabels()
+        ensureUniqueLabelNames()
+    }
+
+    /// Guarantees no two addresses share a label name.
+    ///
+    /// Labels are merged from several independent tables -- the ROM symbol set,
+    /// the KERNAL jump table and the hand-written VIC/SID/CIA lists -- so a name
+    /// collision between them is possible. Left alone it would surface far
+    /// downstream as either a duplicate-symbol error from ca65 or, worse, an
+    /// operand quietly resolving to the wrong address. Colliding names get their
+    /// address appended, which is both unique and self-explanatory.
+    private func ensureUniqueLabelNames() {
+        var used: Set<String> = []
+        for address in labels.keys.sorted() {
+            guard let name = labels[address] else { continue }
+            if used.insert(name).inserted { continue }
+            let unique = "\(name)_\(String(format: "%04X", address))"
+            labels[address] = unique
+            used.insert(unique)
+        }
     }
 
     // MARK: - Load PRG
 
-    /// Loads a `.prg` file and extracts the load address and program data.
-    /// - Parameter url: Path to the `.prg` file.
-    /// - Returns: Tuple of `(loadAddress, data)`.
-    /// - Throws: `DisassemblerError.fileTooSmall` if the file is invalid.
-    static func loadPRG(from url: URL) throws -> (address: UInt16, data: [UInt8]) {
-        let fileData = try Data(contentsOf: url)
-        guard fileData.count >= 3 else {
-            throw DisassemblerError.fileTooSmall
+    /// Header a `.p00` (PC64) container puts in front of the payload:
+    /// the eight bytes `C64File\0`, a 16-byte PETSCII name, one record-size
+    /// byte and one reserved byte -- 26 in all -- then the usual two-byte
+    /// load address.
+    private static let p00Magic = Array("C64File".utf8) + [0x00]
+    private static let p00HeaderSize = 26
+
+    /// How a program file carries -- or fails to carry -- its load address.
+    enum ProgramFormat {
+        /// Two-byte little-endian load address, then the payload.
+        case prg
+        /// A `.prg` behind a 26-byte `C64File` container header.
+        case p00
+        /// A raw memory dump. Nothing in the file records where it belongs.
+        case raw
+    }
+
+    /// A program file split into its load address and payload.
+    struct ProgramFile {
+        let format: ProgramFormat
+        /// The address the file declares, or `nil` for `.raw`, where only the
+        /// user can say where the bytes were meant to live.
+        let loadAddress: UInt16?
+        let data: [UInt8]
+    }
+
+    /// Loads a program file and splits off its load address, if it has one.
+    ///
+    /// Three layouts reach this method and they are not interchangeable:
+    ///
+    /// - `.prg` puts a two-byte little-endian load address in front.
+    /// - `.p00` buries that same pair behind a `C64File` header. Read as a
+    ///   plain `.prg` it yields a load address of `$3643` -- the ASCII `C6` --
+    ///   and 24 bytes of header disassembled as instructions.
+    /// - `.bin` is a raw dump by convention and carries no address at all.
+    ///   Reading its first two bytes as one both loses them from the dump and
+    ///   bases the whole listing wherever those bytes happen to point, so every
+    ///   address, branch target and symbol comes out wrong. There is nothing to
+    ///   guess from, so `loadAddress` is `nil` and the caller must ask.
+    ///
+    /// - Throws: `DisassemblerError.fileTooSmall` if there is nothing to
+    ///   disassemble, or `.tooLarge` if the payload cannot fit in the 6502
+    ///   address space.
+    static func load(from url: URL) throws -> ProgramFile {
+        var bytes = [UInt8](try Data(contentsOf: url))
+
+        let isP00 = bytes.count >= p00HeaderSize
+            && Array(bytes.prefix(p00Magic.count)) == p00Magic
+        if isP00 { bytes.removeFirst(p00HeaderSize) }
+
+        if !isP00 && url.pathExtension.lowercased() == "bin" {
+            guard !bytes.isEmpty else { throw DisassemblerError.fileTooSmall }
+            guard bytes.count <= addressSpaceSize else { throw DisassemblerError.tooLarge }
+            return ProgramFile(format: .raw, loadAddress: nil, data: bytes)
         }
 
-        let loadAddr = UInt16(fileData[0]) | (UInt16(fileData[1]) << 8)
-        let programData = Array(fileData.dropFirst(2))
-        return (loadAddr, programData)
+        let (address, payload) = try splitLoadAddress(from: bytes)
+        return ProgramFile(format: isP00 ? .p00 : .prg, loadAddress: address, data: payload)
+    }
+
+    /// Splits a two-byte little-endian load address off the front of a block.
+    ///
+    /// Exposed separately so a raw `.bin` that does turn out to carry a header
+    /// can be reinterpreted without going back to disk.
+    static func splitLoadAddress(from bytes: [UInt8]) throws -> (address: UInt16, data: [UInt8]) {
+        guard bytes.count >= 3 else { throw DisassemblerError.fileTooSmall }
+        let address = UInt16(bytes[0]) | (UInt16(bytes[1]) << 8)
+        let payload = Array(bytes.dropFirst(2))
+
+        // Everything downstream indexes memory with a UInt16, so a payload that
+        // cannot be addressed is rejected here rather than trapping mid-decode.
+        guard payload.count <= addressSpaceSize else { throw DisassemblerError.tooLarge }
+        return (address, payload)
     }
 
     // MARK: - Disassemble
@@ -215,38 +370,44 @@ class Disassembler6502 {
     /// - Returns: Array of `DisassembledLine` objects.
     func disassemble(data: [UInt8], startAddress: UInt16) -> [DisassembledLine] {
         var lines: [DisassembledLine] = []
-        var offset = 0
         branchTargets.removeAll()
+        referencedLabels.removeAll()
 
-        // First pass: find branch/jump targets for label generation
-        var tempOffset = 0
-        while tempOffset < data.count {
-            let opcode = data[tempOffset]
-            let info = Self.opcodeTable[Int(opcode)]
+        // ── First pass ───────────────────────────────────────
+        // Walk the instruction stream collecting control-flow targets, and the
+        // set of addresses that begin an instruction. A target is only usable
+        // as a label if it lands on a boundary this walk actually reached --
+        // otherwise the exported source would define `L_xxxx` nowhere and the
+        // operand referencing it would not resolve.
+        var rawTargets: Set<UInt16> = []
+        var instructionStarts: Set<UInt16> = []
+        var offset = 0
+        while offset < data.count {
+            let info = Self.opcodeTable[Int(data[offset])]
             let size = info.mode.instructionSize
+            let addr = startAddress &+ UInt16(truncatingIfNeeded: offset)
+            instructionStarts.insert(addr)
 
-            if tempOffset + size <= data.count {
-                let addr = startAddress &+ UInt16(tempOffset)
-
-                if info.mode == .relative && tempOffset + 2 <= data.count {
-                    let rel = Int8(bitPattern: data[tempOffset + 1])
-                    let target = UInt16(Int(addr) + 2 + Int(rel))
-                    branchTargets.insert(target)
-                } else if (info.mnemonic == "JMP" || info.mnemonic == "JSR") && info.mode == .absolute && tempOffset + 3 <= data.count {
-                    let target = UInt16(data[tempOffset + 1]) | (UInt16(data[tempOffset + 2]) << 8)
-                    branchTargets.insert(target)
+            if offset + size <= data.count {
+                if info.mode == .relative {
+                    rawTargets.insert(Self.branchTarget(from: addr, offset: data[offset + 1]))
+                } else if info.mode == .absolute,
+                          info.mnemonic == "JMP" || info.mnemonic == "JSR" {
+                    rawTargets.insert(UInt16(data[offset + 1]) | (UInt16(data[offset + 2]) << 8))
                 }
             }
-
-            tempOffset += size
-            if size == 0 { tempOffset += 1 }  // Safety for unknown opcodes
+            // `instructionSize` is `1 + operandSize`, so it is never zero and
+            // this walk always advances.
+            offset += size
         }
+        branchTargets = rawTargets.intersection(instructionStarts)
 
-        // Second pass: disassemble with labels and annotations
+        // ── Second pass ──────────────────────────────────────
+        // Disassemble with labels and annotations.
+        offset = 0
         while offset < data.count {
-            let currentAddr = startAddress &+ UInt16(offset)
-            let opcode = data[offset]
-            let info = Self.opcodeTable[Int(opcode)]
+            let currentAddr = startAddress &+ UInt16(truncatingIfNeeded: offset)
+            let info = Self.opcodeTable[Int(data[offset])]
             let size = info.mode.instructionSize
 
             // Check if we have enough bytes for a complete instruction
@@ -257,20 +418,24 @@ class Disassembler6502 {
                     address: currentAddr, bytes: remaining,
                     mnemonic: ".byte", operand: remaining.map { String(format: "$%02X", $0) }.joined(separator: ", "),
                     comment: "incomplete instruction", isIllegal: false, isData: true,
-                    cycles: 0, pageCrossPenalty: 0
+                    cycles: 0, pageCrossPenalty: 0, mode: nil, asmOperand: ""
                 ))
                 break
             }
 
             let instrBytes = Array(data[offset..<offset + size])
-            let operand = formatOperand(info.mode, bytes: instrBytes, address: currentAddr)
+            let operand = formatOperand(info, bytes: instrBytes, address: currentAddr,
+                                        forAssembly: false)
+            let asmOperand = formatOperand(info, bytes: instrBytes, address: currentAddr,
+                                           forAssembly: true)
             let comment = annotateInstruction(info, bytes: instrBytes, address: currentAddr)
 
             lines.append(DisassembledLine(
                 address: currentAddr, bytes: instrBytes,
                 mnemonic: info.mnemonic, operand: operand,
                 comment: comment, isIllegal: info.illegal, isData: false,
-                cycles: info.cycles, pageCrossPenalty: info.pageCrossPenalty
+                cycles: info.cycles, pageCrossPenalty: info.pageCrossPenalty,
+                mode: info.mode, asmOperand: asmOperand
             ))
 
             offset += size
@@ -279,10 +444,61 @@ class Disassembler6502 {
         return lines
     }
 
+    /// Resolves a relative branch to its target address.
+    ///
+    /// The 6502 computes this in a 16-bit register that simply wraps, so the
+    /// arithmetic is done on `UInt16` with wrapping operators. Doing it through
+    /// a checked `UInt16(Int(...))` conversion used to trap the whole app: any
+    /// backward branch decoded near `$0000`, or forward branch near `$FFFF`,
+    /// left the representable range. Because every byte is decoded as an
+    /// opcode, data regions produce such branches constantly.
+    static func branchTarget(from address: UInt16, offset: UInt8) -> UInt16 {
+        let signed = Int16(Int8(bitPattern: offset))
+        return address &+ 2 &+ UInt16(bitPattern: signed)
+    }
+
     // MARK: - Operand Formatting
 
-    private func formatOperand(_ mode: AddressingMode, bytes: [UInt8], address: UInt16) -> String {
-        switch mode {
+    /// Renders an instruction's operand.
+    ///
+    /// - Parameter forAssembly: when `true`, produce text ca65 will assemble
+    ///   back to the same bytes. The two forms differ in one place: an
+    ///   absolute-mode operand whose address is below `$0100` needs ca65's `a:`
+    ///   size override, because ca65 otherwise "optimises" `LDA $0010` from the
+    ///   three-byte absolute encoding ($AD) down to the two-byte zero-page one
+    ///   ($A5), shifting every following address. Verified against ca65 2.19.
+    private func formatOperand(_ info: OpcodeInfo, bytes: [UInt8], address: UInt16,
+                               forAssembly: Bool) -> String {
+        /// Symbolic name for an address, preferring a known ROM/IO symbol and
+        /// falling back to a generated branch-target label.
+        func symbol(for addr: UInt16) -> String? {
+            if let label = labels[addr] {
+                referencedLabels.insert(addr)
+                return label
+            }
+            return nil
+        }
+
+        /// Absolute operand text, with ca65's size override where required.
+        func absolute(_ addr: UInt16, suffix: String) -> String {
+            // ca65 picks the encoding from the value, so anything that fits in
+            // a byte must be forced wide to preserve the original instruction.
+            let prefix = (forAssembly && addr < 0x0100) ? "a:" : ""
+            if let name = symbol(for: addr) { return "\(prefix)\(name)\(suffix)" }
+            return prefix + String(format: "$%04X", addr) + suffix
+        }
+
+        /// Jump/branch destination: a ROM symbol if there is one, otherwise the
+        /// generated label when the target starts an instruction we emitted.
+        func destination(_ addr: UInt16) -> String {
+            if let name = symbol(for: addr) { return name }
+            if branchTargets.contains(addr) { return String(format: "L_%04X", addr) }
+            return String(format: "$%04X", addr)
+        }
+
+        let word = { UInt16(bytes[1]) | (UInt16(bytes[2]) << 8) }
+
+        switch info.mode {
         case .implied:
             return ""
         case .accumulator:
@@ -290,78 +506,97 @@ class Disassembler6502 {
         case .immediate:
             return String(format: "#$%02X", bytes[1])
         case .zeroPage:
-            return String(format: "$%02X", bytes[1])
+            return symbol(for: UInt16(bytes[1])) ?? String(format: "$%02X", bytes[1])
         case .zeroPageX:
-            return String(format: "$%02X,X", bytes[1])
+            return (symbol(for: UInt16(bytes[1])) ?? String(format: "$%02X", bytes[1])) + ",X"
         case .zeroPageY:
-            return String(format: "$%02X,Y", bytes[1])
+            return (symbol(for: UInt16(bytes[1])) ?? String(format: "$%02X", bytes[1])) + ",Y"
         case .absolute:
-            let addr = UInt16(bytes[1]) | (UInt16(bytes[2]) << 8)
-            if let label = labels[addr] { return label }
-            return String(format: "$%04X", addr)
+            // JMP/JSR are control flow and can reach a generated label; every
+            // other absolute instruction is a data reference.
+            if info.mnemonic == "JMP" || info.mnemonic == "JSR" {
+                return destination(word())
+            }
+            return absolute(word(), suffix: "")
         case .absoluteX:
-            let addr = UInt16(bytes[1]) | (UInt16(bytes[2]) << 8)
-            if let label = labels[addr] { return "\(label),X" }
-            return String(format: "$%04X,X", addr)
+            return absolute(word(), suffix: ",X")
         case .absoluteY:
-            let addr = UInt16(bytes[1]) | (UInt16(bytes[2]) << 8)
-            if let label = labels[addr] { return "\(label),Y" }
-            return String(format: "$%04X,Y", addr)
+            return absolute(word(), suffix: ",Y")
         case .indirect:
-            let addr = UInt16(bytes[1]) | (UInt16(bytes[2]) << 8)
-            return String(format: "($%04X)", addr)
+            let addr = word()
+            // `JMP (CINV)` reads far better than `JMP ($0314)`. No size override
+            // is needed: $6C is the only indirect JMP encoding, so ca65 has
+            // nothing to optimise it down to.
+            if let name = symbol(for: addr) { return "(\(name))" }
+            return "(" + String(format: "$%04X", addr) + ")"
         case .indirectX:
-            return String(format: "($%02X,X)", bytes[1])
+            return "(" + (symbol(for: UInt16(bytes[1])) ?? String(format: "$%02X", bytes[1])) + ",X)"
         case .indirectY:
-            return String(format: "($%02X),Y", bytes[1])
+            return "(" + (symbol(for: UInt16(bytes[1])) ?? String(format: "$%02X", bytes[1])) + "),Y"
         case .relative:
-            let rel = Int8(bitPattern: bytes[1])
-            let target = UInt16(Int(address) + 2 + Int(rel))
-            if let label = labels[target] { return label }
-            return String(format: "$%04X", target)
+            return destination(Self.branchTarget(from: address, offset: bytes[1]))
         }
     }
 
     // MARK: - Annotations
 
+    /// Builds the trailing `; comment` for an instruction.
+    ///
+    /// Annotations accumulate rather than short-circuit. The previous version
+    /// returned on the first match, so an undocumented opcode with a known
+    /// target address (`SLO $D020`) silently lost its "illegal" note -- and if
+    /// the address had a label but no description, the line ended up with no
+    /// comment at all even though there was something to say about it.
     private func annotateInstruction(_ info: OpcodeInfo, bytes: [UInt8], address: UInt16) -> String? {
-        // Annotate absolute addresses with known labels
-        if info.mode == .absolute || info.mode == .absoluteX || info.mode == .absoluteY {
-            let targetAddr = UInt16(bytes[1]) | (UInt16(bytes[2]) << 8)
-            if labels[targetAddr] != nil {
-                return descriptionForAddress(targetAddr)
-            }
-        }
+        var notes: [String] = []
 
-        // Annotate immediate values for common patterns
-        if info.mode == .immediate {
+        switch info.mode {
+        case .absolute, .absoluteX, .absoluteY, .indirect:
+            let target = UInt16(bytes[1]) | (UInt16(bytes[2]) << 8)
+            if let desc = descriptionForAddress(target) { notes.append(desc) }
+        case .zeroPage, .zeroPageX, .zeroPageY, .indirectX, .indirectY:
+            if let desc = descriptionForAddress(UInt16(bytes[1])) { notes.append(desc) }
+        case .immediate:
+            // Show the character an immediate load would put on screen. The
+            // C64's PETSCII and ASCII agree over this range, so the same
+            // mapping the byte-hint column uses applies here.
             let val = bytes[1]
-            if info.mnemonic == "LDA" || info.mnemonic == "LDX" || info.mnemonic == "LDY" {
-                if val >= 0x20 && val < 0x7F {
-                    return "'\(Character(UnicodeScalar(val)))'"
-                }
+            if ["LDA", "LDX", "LDY", "CMP", "CPX", "CPY"].contains(info.mnemonic),
+               val >= 0x20, val < 0x7F {
+                notes.append("'\(Character(UnicodeScalar(val)))'")
             }
+        case .implied, .accumulator, .relative:
+            break
         }
 
-        // Annotate illegal opcodes
-        if info.illegal {
-            return "ILLEGAL OPCODE"
-        }
+        if info.illegal { notes.append("ILLEGAL OPCODE") }
 
-        return nil
+        return notes.isEmpty ? nil : notes.joined(separator: " — ")
     }
 
+    /// Human-readable description of a memory address, or `nil` if nothing is
+    /// known about it.
+    ///
+    /// Results are memoised: this runs once per instruction, and the underlying
+    /// memory-map lookup is a linear scan over the whole C64 memory map.
     private func descriptionForAddress(_ address: UInt16) -> String? {
-        // ROM symbols — covers BASIC, floating point, KERNAL jump table, and internals
+        if let cached = descriptionCache[address] { return cached }
+        let result = computeDescription(for: address)
+        descriptionCache[address] = result
+        return result
+    }
+
+    private func computeDescription(for address: UInt16) -> String? {
+        // ROM symbols — covers BASIC, floating point, KERNAL jump table, and internals.
+        // KERNAL jump-table entries are merged into this set by `loadKernalLabels`,
+        // so there is no need to scan `C64Reference.kernalRoutines` separately.
         if let sym = C64ROMSymbols.symbol(at: address) {
             return "\(sym.name) — \(sym.description)"
         }
 
         // KERNAL routines (in case of any not in ROM symbols)
-        for routine in C64Reference.kernalRoutines {
-            if routine.address == address {
-                return routine.name
-            }
+        if let routine = C64Reference.lookupKernal(address: address) {
+            return routine.name
         }
 
         // VIC-II, SID, CIA registers — provide register-level detail if available
@@ -552,46 +787,61 @@ class Disassembler6502 {
         return generateAssembly(lines: lines, startAddress: startAddress, buildable: false)
     }
 
-    /// Generates assembly source, optionally with a full ca65 header that can be assembled and run.
+    /// Generates assembly source, optionally with a full ca65 header that can be
+    /// assembled and linked back into the original program.
+    ///
+    /// Reassembling to the *same bytes* takes more than printing mnemonics, and
+    /// each of the following was a way the old output failed to build:
+    ///
+    /// - Operands name ROM and I/O symbols (`CHROUT`, `VIC_BORDERCOLOR`), so the
+    ///   source has to define them. Only the symbols actually referenced are
+    ///   emitted, not the whole table.
+    /// - Undocumented opcodes need `.setcpu "6502X"`, and three of them are
+    ///   spelled differently by ca65 -- handled by `asmSource`.
+    /// - No BASIC stub is synthesised. A `.prg` that loads at `$0801` already
+    ///   *contains* its stub, and emitting a second one both duplicated the
+    ///   bytes and produced a `SYS` that pointed back at the stub itself.
     func generateAssembly(lines: [DisassembledLine], startAddress: UInt16, buildable: Bool) -> String {
         var output: [String] = []
+        let usesIllegalOpcodes = lines.contains { $0.isIllegal }
+
+        output.append("; ═══════════════════════════════════════════════════════")
+        output.append("; Disassembled by C64 IDE")
+        output.append(String(format: "; Load address: $%04X", startAddress))
+        if buildable && startAddress != 0x0801 {
+            // The bundled c64Prg config defaults %S to $0801; anything else has
+            // to be passed through to ld65 or the program links to the wrong place.
+            output.append(String(format: "; Link with: ld65 --start-addr $%04X", startAddress))
+        }
+        output.append("; ═══════════════════════════════════════════════════════")
+        output.append("")
+
+        if usesIllegalOpcodes {
+            output.append("; This program uses undocumented opcodes.")
+            output.append(".setcpu \"6502X\"")
+            output.append("")
+        }
+
+        // Equates for every ROM/IO symbol the operands mention.
+        let equates = symbolEquates()
+        if !equates.isEmpty {
+            output.append("; ── Symbols referenced below ──────────────────────────")
+            output.append(contentsOf: equates)
+            output.append("")
+        }
 
         if buildable {
-            output.append("; ═══════════════════════════════════════════════════════")
-            output.append("; Disassembled by C64 IDE")
-            output.append(String(format: "; Original load address: $%04X", startAddress))
-            output.append("; ═══════════════════════════════════════════════════════")
-            output.append("")
+            // The two-byte load address that prefixes a .prg. The bundled linker
+            // configs import __LOADADDR__ and place this segment at %S - 2.
             output.append(".export __LOADADDR__: absolute = 1")
             output.append("")
             output.append(".segment \"LOADADDR\"")
             output.append(String(format: "    .word $%04X", startAddress))
             output.append("")
-
-            // If loading at $0801, add a BASIC stub
-            if startAddress == 0x0801 || startAddress == 0x0800 {
-                output.append(".segment \"STARTUP\"")
-                output.append("    ; BASIC stub: 10 SYS <entry>")
-                output.append("    .word @stub_end")
-                output.append("    .word 10")
-                output.append("    .byte $9E             ; SYS")
-                let entryAddr = lines.first(where: { !$0.isData })?.address ?? startAddress
-                output.append("    .byte \"\(entryAddr)\"")
-                output.append("    .byte 0")
-                output.append("@stub_end:")
-                output.append("    .word 0")
-                output.append("")
-            }
-
-            output.append(".segment \"CODE\"")
-            output.append("")
-        } else {
-            output.append("; Disassembled by C64 IDE")
-            output.append(String(format: "; Load address: $%04X", startAddress))
-            output.append("")
-            output.append(".segment \"CODE\"")
-            output.append("")
         }
+
+        output.append(".segment \"CODE\"")
+        output.append("")
 
         // Add labels at branch targets
         for line in lines {
@@ -600,8 +850,19 @@ class Disassembler6502 {
             }
             output.append(line.asmSource)
         }
+        output.append("")
 
         return output.joined(separator: "\n")
+    }
+
+    /// `NAME = $ADDR` definitions for the symbols referenced by the last
+    /// disassembly, sorted by address. `ensureUniqueLabelNames` guarantees the
+    /// names are distinct, so this cannot emit a duplicate definition.
+    private func symbolEquates() -> [String] {
+        referencedLabels.sorted().compactMap { address in
+            guard let name = labels[address] else { return nil }
+            return "\(name.columnPadded(to: 16))= $\(String(format: "%04X", address))"
+        }
     }
 
     // MARK: - Full 6502 Opcode Table
@@ -941,14 +1202,19 @@ class Disassembler6502 {
 
 // MARK: - Errors
 
-enum DisassemblerError: Error, LocalizedError {
+enum DisassemblerError: Error, LocalizedError, Equatable {
     case fileTooSmall
     case invalidPRG
+    case tooLarge
+    case invalidAddress(String)
 
     var errorDescription: String? {
         switch self {
-        case .fileTooSmall: return "File too small to be a valid PRG"
-        case .invalidPRG: return "Invalid PRG file format"
+        case .fileTooSmall: return "File is too small to disassemble"
+        case .invalidPRG:   return "Invalid PRG file format"
+        case .tooLarge:     return "File is larger than the 64 KB the 6502 can address"
+        case .invalidAddress(let text):
+            return "\"\(text)\" is not a valid address. Enter 1 to 4 hexadecimal digits, for example C000."
         }
     }
 }

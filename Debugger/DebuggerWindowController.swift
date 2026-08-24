@@ -750,7 +750,10 @@ class DebuggerViewController: NSViewController {
         guard info.mnemonic != "???" else { return }
         let timing = C64Timing.from(config: (NSApp.delegate as? AppDelegate)?.mainWindowController?.buildConfig ?? BuildConfiguration())
         cycleAccumulator += info.cycles
-        let penaltyStr = info.pageCrossPenalty > 0 ? "+\(info.pageCrossPenalty)" : ""
+        // maxCycles applies the branch rule (+1 taken, +1 again across a page),
+        // so a branch reports "+2" rather than understating it as "+1".
+        let penalty = info.maxCycles - info.cycles
+        let penaltyStr = penalty > 0 ? "+\(penalty)" : ""
         let rasterStr = timing.rasterLines(for: cycleAccumulator)
         cycleCountLabel?.stringValue = "last: \(info.cycles)\(penaltyStr)  ·  total: \(cycleAccumulator)  ·  \(rasterStr) lines (\(timing.name))"
     }
@@ -775,7 +778,10 @@ class DebuggerViewController: NSViewController {
         let timing = C64Timing.from(config: (NSApp.delegate as? AppDelegate)?.mainWindowController?.buildConfig ?? BuildConfiguration())
         cycleAccumulator += info.cycles
 
-        let penaltyStr = info.pageCrossPenalty > 0 ? "+\(info.pageCrossPenalty)" : ""
+        // maxCycles applies the branch rule (+1 taken, +1 again across a page),
+        // so a branch reports "+2" rather than understating it as "+1".
+        let penalty = info.maxCycles - info.cycles
+        let penaltyStr = penalty > 0 ? "+\(penalty)" : ""
         let rasterStr = timing.rasterLines(for: cycleAccumulator)
         cycleCountLabel?.stringValue = "last: \(info.cycles)\(penaltyStr)  ·  total: \(cycleAccumulator)  ·  \(rasterStr) lines (\(timing.name))"
     }
