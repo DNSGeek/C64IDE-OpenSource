@@ -64,6 +64,53 @@ protocol WritableTapeArchive: TapeArchive {
 }
 
 // ═══════════════════════════════════════════════════════════
+// MARK: - PETSCII
+// ═══════════════════════════════════════════════════════════
+
+/// PETSCII → ASCII conversion for names stored in tape containers.
+///
+/// Shared by both container formats: they had separate copies that dropped
+/// the same characters.
+enum PETSCII {
+
+    /// Converts one PETSCII byte to an ASCII character, or nil when it has no
+    /// ASCII equivalent.
+    ///
+    /// `$C1–$DA` matter: in the shifted character set that is where the
+    /// upper-case letters live, so a name recorded as "Games" is stored with
+    /// its `G` at `$C7`. Keeping only `$20–$7E` silently deleted those
+    /// letters — "Games" listed as "AMES" and "Boulder" as "OULDER". They map
+    /// to upper case rather than lower so that an ordinary all-caps name
+    /// doesn't come back mixed-case.
+    static func character(for byte: UInt8) -> Character? {
+        switch byte {
+        case 0x20...0x7E:
+            return Character(UnicodeScalar(byte))
+        case 0xC1...0xDA:
+            return Character(UnicodeScalar(byte - 0x80))
+        case 0xA0:
+            return " "                      // shifted space
+        default:
+            return nil                      // graphics, control codes
+        }
+    }
+
+    /// Decodes a fixed-width PETSCII name field.
+    ///
+    /// Stops at `$00`, then trims trailing padding — both plain spaces and
+    /// shifted spaces (`$A0`), which the KERNAL uses for filename padding.
+    static func decodeName(_ bytes: [UInt8]) -> String {
+        var text = ""
+        for b in bytes {
+            if b == 0x00 { break }
+            if let ch = character(for: b) { text.append(ch) }
+        }
+        while let last = text.last, last == " " { text.removeLast() }
+        return text
+    }
+}
+
+// ═══════════════════════════════════════════════════════════
 // MARK: - Shared Entry Type
 // ═══════════════════════════════════════════════════════════
 
@@ -168,10 +215,15 @@ final class T64Image: WritableTapeArchive {
         fileURL = url
         guard raw.count >= 64 else { throw TapeError.truncatedHeader }
 
-        // Validate signature
+        // Validate signature. The TAP check comes first and is decisive:
+        // "C64-TAPE-RAW" satisfies every loose C64/tape test, so without it a
+        // TAP file was accepted here and read as hundreds of junk entries.
+        guard !TapeArchiveLoader.isTAPHeader(raw.prefix(32)) else {
+            throw TapeError.invalidSignature
+        }
         let sigBytes = Array(raw[0..<32])
         let sig = String(bytes: sigBytes.filter { $0 != 0 }, encoding: .ascii) ?? ""
-        guard sig.contains("C64") || sig.contains("c64") || sig.lowercased().contains("tape") else {
+        guard sig.uppercased().contains("C64") || sig.uppercased().contains("TAPE") else {
             throw TapeError.invalidSignature
         }
 
@@ -201,8 +253,10 @@ final class T64Image: WritableTapeArchive {
             let c64sType    = raw[base]
             let petsciiType = raw[base + 1]
 
-            // c64s type 0 = end of directory.
-            if c64sType == 0 { break }
+            // c64s type 0 marks a *free* slot, not necessarily the end of the
+            // directory. Breaking here truncated any archive whose writer left
+            // a gap; the `limit` above already bounds the scan.
+            if c64sType == 0 { continue }
 
             let loadAddr = UInt16(raw[base + 2]) | (UInt16(raw[base + 3]) << 8)
             let endAddr  = UInt16(raw[base + 4]) | (UInt16(raw[base + 5]) << 8)
@@ -218,16 +272,37 @@ final class T64Image: WritableTapeArchive {
         // Sorted payload offsets, for bounding entries with broken sizes.
         let sortedOffsets = records.map(\.dataOffset).sorted()
 
+        /// First offset strictly greater than `offset`, by binary search over
+        /// the already-sorted list.
+        func nextOffset(after offset: Int) -> Int {
+            var lo = 0, hi = sortedOffsets.count
+            while lo < hi {
+                let mid = (lo + hi) / 2
+                if sortedOffsets[mid] > offset { hi = mid } else { lo = mid + 1 }
+            }
+            return lo < sortedOffsets.count ? sortedOffsets[lo] : raw.count
+        }
+
         for rec in records {
-            let declaredSize = rec.endAddr > rec.loadAddr ? Int(rec.endAddr - rec.loadAddr) : 0
+            let declaredSize: Int
+            if rec.endAddr > rec.loadAddr {
+                declaredSize = Int(rec.endAddr - rec.loadAddr)
+            } else if rec.endAddr == 0 && rec.loadAddr > 0 {
+                // A file running to the top of memory ends at $10000, which
+                // does not fit the 16-bit field and is stored wrapped to
+                // $0000. Reading that as "no size" threw the length away.
+                declaredSize = 0x10000 - Int(rec.loadAddr)
+            } else {
+                declaredSize = 0
+            }
 
             // C64S-era T64s very often carry zeroed/garbage end addresses.
             // When the declared size is unusable, bound the fallback by the
             // start of the next payload (or EOF for the last one) — a
             // plain "everything to EOF" fallback swallows every subsequent
             // file's data in a multi-entry archive.
-            let nextOffset = sortedOffsets.first(where: { $0 > rec.dataOffset }) ?? raw.count
-            let fallbackAvailable = max(0, min(nextOffset, raw.count) - rec.dataOffset)
+            let bound = nextOffset(after: rec.dataOffset)
+            let fallbackAvailable = max(0, min(bound, raw.count) - rec.dataOffset)
             let sizeBytes = declaredSize > 0 ? declaredSize : min(fallbackAvailable, 65535)
 
             let kind: TAPEntry.FileKind
@@ -242,9 +317,11 @@ final class T64Image: WritableTapeArchive {
             }
 
             // Slice payload (clamped to file extent).
+            // `dataOffset` is assembled from four bytes and so is never
+            // negative; only the upper bound needs checking.
             let take = min(sizeBytes, max(0, raw.count - rec.dataOffset))
             let payload: Data
-            if take > 0, rec.dataOffset >= 0, rec.dataOffset + take <= raw.count {
+            if take > 0, rec.dataOffset + take <= raw.count {
                 payload = Data(raw[rec.dataOffset..<(rec.dataOffset + take)])
             } else {
                 payload = Data()
@@ -365,46 +442,48 @@ final class T64Image: WritableTapeArchive {
         let count = entries.count
         guard count <= 1024 else { throw TapeError.directoryFull(max: 1024) }
 
-        // Layout: 64-byte header + N × 32-byte directory entries + packed payloads.
+        // Layout: 64-byte header, then the WHOLE directory, then the packed
+        // payloads. The directory must be contiguous at offset 64 — that is
+        // what the header advertises and what `dataOffset` is measured
+        // against.
+        //
+        // This previously appended each directory record immediately followed
+        // by its own payload, so from the second entry onward a reader found
+        // payload bytes where record N should be, and every recorded
+        // `dataOffset` pointed into the wrong place. Archives of one entry
+        // happened to survive; everything larger was written corrupt.
         let dirSlots        = max(count, 1)
         let dirByteLen      = dirSlots * 32
         let firstDataOffset = 64 + dirByteLen
 
-        var archive = Data()
-        archive.reserveCapacity(firstDataOffset + payloads.reduce(0) { $0 + $1.count })
+        var directory   = Data()
+        var payloadArea = Data()
+        directory.reserveCapacity(dirByteLen)
+        payloadArea.reserveCapacity(payloads.reduce(0) { $0 + $1.count })
 
-        // ── Header (64 bytes) ────────────────────────────────
-        archive.append(buildHeader(usedEntries: count, maxEntries: dirSlots))
-
-        // ── Directory entries & Payloads ───────────────────────
+        // Payloads are packed back to back. The 512-byte padding this used to
+        // insert aligned nothing — `firstDataOffset` isn't a multiple of 512 —
+        // and no reader requires it, so it only inflated the file.
         var cursor = firstDataOffset
         for (i, entry) in entries.enumerated() {
             let payload = payloads[i]
-
-            // Calculate 512-byte alignment padding (0 if already aligned)
-            let padding = (512 - payload.count % 512) % 512
-            let dataOffset = cursor // Points to the start of the actual file data
-
-            archive.append(buildDirectoryEntry(
-                entry:      entry,
-                payload:    payload,
-                dataOffset: dataOffset
-            ))
-
-            // Write payload, then alignment padding
-            archive.append(payload)
-            if padding > 0 {
-                archive.append(Data(repeating: 0, count: padding))
-            }
-
-            // Advance cursor past payload + padding
-            cursor = dataOffset + payload.count + padding
+            directory.append(buildDirectoryEntry(entry:      entry,
+                                                 payload:    payload,
+                                                 dataOffset: cursor))
+            payloadArea.append(payload)
+            cursor += payload.count
         }
 
         // Pad unused dir slots with zeros (c64s type 0 ⇒ end-of-directory).
         if count < dirSlots {
-            archive.append(Data(repeating: 0, count: 32 * (dirSlots - count)))
+            directory.append(Data(repeating: 0, count: 32 * (dirSlots - count)))
         }
+
+        var archive = Data()
+        archive.reserveCapacity(firstDataOffset + payloadArea.count)
+        archive.append(buildHeader(usedEntries: count, maxEntries: dirSlots))
+        archive.append(directory)
+        archive.append(payloadArea)
 
         // ── Atomic write ─────────────────────────────────────
         try Self.atomicWrite(archive, to: target)
@@ -489,27 +568,9 @@ final class T64Image: WritableTapeArchive {
 
     // MARK: - Static helpers (name encoding / atomic write)
 
-    /// Decode a directory or tape-name byte field. Stops at $00,
-    /// strips trailing spaces (0x20) and shifted-spaces (0xA0).
+    /// Decode a directory or tape-name byte field.
     private static func decodeName(_ bytes: [UInt8]) -> String {
-        var end = bytes.count
-        while end > 0 && (bytes[end - 1] == 0x20
-                       || bytes[end - 1] == 0xA0
-                       || bytes[end - 1] == 0x00) {
-            end -= 1
-        }
-        var s = ""
-        for i in 0..<end {
-            let b = bytes[i]
-            if b == 0x00 { break }
-            if b >= 0x20 && b < 0x7F {
-                s.append(Character(UnicodeScalar(b)))
-            } else if b == 0xA0 {
-                s.append(" ")
-            }
-            // Other bytes (PETSCII graphics, etc.) are dropped silently.
-        }
-        return s
+        PETSCII.decodeName(bytes)
     }
 
     /// Encode a string for storage in a fixed-length T64 name field.
@@ -567,7 +628,30 @@ final class T64Image: WritableTapeArchive {
 // ═══════════════════════════════════════════════════════════
 
 enum TapeArchiveLoader {
-    /// Load a TAP or T64 from a URL, detecting format by extension.
+
+    /// TAP signatures, all 12 ASCII bytes at offset 0.
+    static let tapSignatures = ["C64-TAPE-RAW", "C16-TAPE-RAW", "VIC-TAPE-RAW"]
+
+    /// True when the header carries a raw-tape (TAP) signature.
+    ///
+    /// Must be tested before any T64 check: a TAP signature literally begins
+    /// "C64-", so a `contains("C64")` test claims every TAP file as a T64.
+    static func isTAPHeader(_ header: Data) -> Bool {
+        guard header.count >= 12,
+              let sig = String(bytes: header.prefix(12), encoding: .ascii) else { return false }
+        return tapSignatures.contains(sig)
+    }
+
+    /// True when the header looks like a T64 container.
+    static func isT64Header(_ header: Data) -> Bool {
+        guard !isTAPHeader(header), header.count >= 32 else { return false }
+        let text = String(bytes: header.prefix(32).filter { $0 >= 0x20 && $0 < 0x7F },
+                          encoding: .ascii)?.uppercased() ?? ""
+        return text.contains("C64") || text.contains("TAPE")
+    }
+
+    /// Load a TAP or T64 from a URL, detecting format by extension and,
+    /// failing that, by signature.
     /// - Parameter url: The file URL to load.
     /// - Returns: An instance conforming to `TapeArchive`.
     /// - Throws: `TapeError` if the file is invalid or unsupported.
@@ -576,23 +660,12 @@ enum TapeArchiveLoader {
         case "t64": return try T64Image(contentsOf: url)
         case "tap": return try TAPImage(contentsOf: url)
         default:
-            // Fallback: peek at the signature
-            let header = (try? Data(contentsOf: url))?.prefix(32) ?? Data()
-            let sig    = String(bytes: header, encoding: .ascii) ?? ""
-            if sig.contains("C64") || sig.lowercased().contains("tape") {
-                return try T64Image(contentsOf: url)
-            }
-            return try TAPImage(contentsOf: url)
+            let header = (try? FileHandle(forReadingFrom: url).readData(ofLength: 32)) ?? Data()
+            if isTAPHeader(header) { return try TAPImage(contentsOf: url) }
+            if isT64Header(header) { return try T64Image(contentsOf: url) }
+            throw TapeError.unsupportedFormat
         }
     }
 }
 
-extension String {
-    /// Pads/truncates string to `length` using PETSCII space (0x20).
-    func petsciiPadded(to length: Int) -> [UInt8] {
-        let utf8 = utf8.map { UInt8($0) }
-        let padded = utf8 + Data(repeating: 0x20, count: max(0, length - utf8.count))
-        return Array(padded.prefix(length))
-    }
-}
 

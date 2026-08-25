@@ -117,10 +117,23 @@ class TAPImage: TapeArchive {
         }
 
         // Decode raw bytes → pulse array (all values in TAP units = 8 µs each)
-        let dataLen  = Int(raw[16]) | (Int(raw[17]) << 8) | (Int(raw[18]) << 16) | (Int(raw[19]) << 24)
-        let pulseEnd = min(20 + dataLen, raw.count)
+        //
+        // The header's length field is advisory: some tools write 0, and
+        // others a value past the end of the file. Trusting it blindly meant a
+        // zero there produced an empty directory from an image whose pulse
+        // data was sitting right after the header.
+        let declaredLen = Int(raw[16]) | (Int(raw[17]) << 8)
+                        | (Int(raw[18]) << 16) | (Int(raw[19]) << 24)
+        let availableLen = raw.count - 20
+        let dataLen  = (declaredLen > 0 && declaredLen <= availableLen) ? declaredLen : availableLen
+        let pulseEnd = 20 + dataLen
         var decoded: [UInt32] = []
-        decoded.reserveCapacity(pulseEnd - 20)
+        decoded.reserveCapacity(dataLen)
+
+        // Versions 1 and 2 both escape an over-long pulse as $00 followed by a
+        // 24-bit little-endian length. Only v1 used to be handled, so a v2
+        // image had those three length bytes read back as pulses of their own.
+        let hasExtendedPulses = (version >= 1)
 
         var i = 20
         while i < pulseEnd {
@@ -128,7 +141,7 @@ class TAPImage: TapeArchive {
             if byte != 0 {
                 // Standard compression: byte value represents pulse length
                 decoded.append(UInt32(byte))
-            } else if version == 1 {
+            } else if hasExtendedPulses {
                 // Extended compression: 0x00 followed by 3 bytes LE value / 8
                 guard i &+ 3 <= pulseEnd else { break }
                 let lo  = UInt32(raw[i])
@@ -137,7 +150,7 @@ class TAPImage: TapeArchive {
                 i += 3
                 decoded.append((lo | (mid << 8) | (hi << 16)) / 8)
             } else {
-                // Fallback for unknown versions
+                // Version 0: $00 means "longer than 255 units", length unrecorded.
                 decoded.append(256)
             }
         }
@@ -150,10 +163,12 @@ class TAPImage: TapeArchive {
 
     /// Re-decodes the pulse stream using the current `timing` settings.
     func reparse() {
-        groupsCache    = nil   // group boundaries depend on timing (LONG classification)
-        entries        = []
-        hasTurboBlocks = false
-        parseLog       = []
+        groupsCache     = nil   // group boundaries depend on timing (LONG classification)
+        blocksCache     = nil   // blocks are built from groups
+        entries         = []
+        payloadsByIndex = [:]
+        hasTurboBlocks  = false
+        parseLog        = []
         parse()
     }
 
@@ -170,9 +185,9 @@ class TAPImage: TapeArchive {
     // MARK: - Pulse-group Splitter
 
     /// Cached result of makeGroups(). The full pulse array can run to
-    /// millions of entries, and extractPRG previously re-split it from
-    /// scratch on every extraction. Invalidated by reparse(), since group
-    /// boundaries depend on the timing thresholds.
+    /// millions of entries, and the tape walk would otherwise re-split it
+    /// from scratch. Invalidated by reparse(), since group boundaries depend
+    /// on the timing thresholds.
     private var groupsCache: [[UInt32]]?
 
     /// Returns the pulse groups, computing and caching them on first use.
@@ -197,6 +212,29 @@ class TAPImage: TapeArchive {
         }
         if !current.isEmpty { groups.append(current) }
         return groups
+    }
+
+    // MARK: - Pilot Detection
+
+    /// Proportion of a group's pulses that must be SHORT for it to count as a
+    /// pilot tone, as a percentage.
+    ///
+    /// Requiring *every* pulse to be SHORT made a single bad sample — one
+    /// dropout on a decades-old cassette — hide an entire file from the
+    /// directory, with nothing logged and the turbo flag left clear. No
+    /// timing adjustment could recover it, because the test was unanimity
+    /// rather than a threshold.
+    private let pilotShortPercent = 95
+
+    /// True when a group is a pilot tone of at least `minPulses` pulses.
+    ///
+    /// Byte groups can't be mistaken for pilots: they are 19 pulses long, far
+    /// below any pilot threshold, and roughly half their pulses are MEDIUM.
+    private func isPilot(_ g: [UInt32], minPulses: Int) -> Bool {
+        guard g.count >= minPulses else { return false }
+        var shorts = 0
+        for p in g where classify(p) == .short { shorts += 1 }
+        return shorts * 100 >= g.count * pilotShortPercent
     }
 
     // MARK: - Byte Group Decoder
@@ -236,76 +274,83 @@ class TAPImage: TapeArchive {
         return result
     }
 
-    // MARK: - Parser
+    // MARK: - Recorded Blocks
 
-    /// Main parsing loop: finds pilots, decodes byte streams, and processes blocks.
-    private func parse() {
-        log("TAP v\(version)  \(platformName)  \(pulses.count) pulses")
-        log("Timing — S≤\(timing.shortMax)  M≤\(timing.mediumMax)  pilot≥\(timing.minPilotPulses)")
+    /// One recorded block: a pilot tone plus the bytes that follow it.
+    private struct TapeBlock {
+        /// Index of the pilot group in the group array, for log messages.
+        let pilotIndex: Int
+        /// Bytes decoded from the 19-pulse groups after the pilot. Empty when
+        /// nothing decoded, which is the signature of a turbo loader.
+        let bytes: [UInt8]
+    }
+
+    /// Cached tape walk. Invalidated by reparse() along with the groups.
+    private var blocksCache: [TapeBlock]?
+
+    /// Splits the tape into pilot-led blocks.
+    ///
+    /// This is the single walk of the tape. `parse()` and PRG extraction were
+    /// previously two independent walks that each counted files their own
+    /// way, and they disagreed about malformed blocks — a header the parser
+    /// skipped was still counted during extraction, so their file indices
+    /// drifted and a listed file could not be extracted. One walk removes the
+    /// possibility.
+    private func blocks() -> [TapeBlock] {
+        if let cached = blocksCache { return cached }
 
         let groups = self.groups()
-        log("  \(groups.count) groups after splitting at LONG boundaries")
-
+        var out: [TapeBlock] = []
         var gi = 0
-        var fileIdx = 0
 
         while gi < groups.count {
-            let g = groups[gi]
-
-            // Pilot detection: requires a run of SHORT pulses exceeding threshold
-            guard g.count >= timing.minPilotPulses,
-                  g.allSatisfy({ classify($0) == .short }) else {
+            guard isPilot(groups[gi], minPulses: timing.minPilotPulses) else {
                 gi += 1
                 continue
             }
-
-            log("  Pilot at group \(gi): \(g.count) pulses")
+            let pilotIndex = gi
             gi += 1
 
-            // Collect all subsequent 19-pulse groups as a byte stream
             var byteStream: [UInt8] = []
-            while gi < groups.count {
-                guard groups[gi].count == 19,
-                      let byte = decodeByteGroup(groups[gi]) else { break }
+            while gi < groups.count,
+                  groups[gi].count == 19,
+                  let byte = decodeByteGroup(groups[gi]) {
                 byteStream.append(byte)
                 gi += 1
             }
-
-            guard !byteStream.isEmpty else {
-                hasTurboBlocks = true
-                log("  ⚠ No decodable bytes after pilot — possible turbo loader")
-                continue
-            }
-
-            log("  Block: \(byteStream.count) raw bytes decoded")
-            if !processBlock(byteStream, fileIndex: &fileIdx) {
-                log("  Stopping at end-of-tape marker")
-                break
-            }
+            out.append(TapeBlock(pilotIndex: pilotIndex, bytes: byteStream))
         }
 
-        log("Done — \(entries.count) file(s)\(hasTurboBlocks ? ", turbo block(s) present" : "")")
+        blocksCache = out
+        return out
     }
 
-    // MARK: - Sync Countdown / Checksum (shared by parse and extractPRG)
+    // MARK: - Sync Countdown / Checksum
 
     /// Walks the first-copy sync countdown $89, $88, ..., $81.
     /// Returns the index of the first byte after the countdown, or nil if
     /// the countdown is absent, incomplete, or has no content following it.
     /// (Repeat copies use $09..$01 and are intentionally not matched, so
     /// each recorded block is processed once.)
+    ///
+    /// Retries at the next $89 when a run doesn't complete: a stray $89 ahead
+    /// of the real countdown used to make the whole block unreadable.
     private func consumeCountdown(in bytes: [UInt8]) -> Int? {
-        guard let start = bytes.firstIndex(of: 0x89) else { return nil }
-        var pos = start
-        var expected: UInt8 = 0x89
-        // Bound at $80: a corrupt stream continuing $80, $7F, ... must not
-        // walk (or underflow) past the end of the countdown.
-        while pos < bytes.count && expected > 0x80 && bytes[pos] == expected {
-            expected -= 1
-            pos += 1
+        var searchFrom = 0
+        while searchFrom < bytes.count,
+              let start = bytes[searchFrom...].firstIndex(of: 0x89) {
+            var pos = start
+            var expected: UInt8 = 0x89
+            // Bound at $80: a corrupt stream continuing $80, $7F, ... must not
+            // walk (or underflow) past the end of the countdown.
+            while pos < bytes.count && expected > 0x80 && bytes[pos] == expected {
+                expected -= 1
+                pos += 1
+            }
+            if expected == 0x80 && pos < bytes.count { return pos }
+            searchFrom = start + 1
         }
-        guard expected == 0x80, pos < bytes.count else { return nil }
-        return pos
+        return nil
     }
 
     /// XOR over a byte range. A block payload followed by its own XOR
@@ -318,198 +363,205 @@ class TAPImage: TapeArchive {
     /// 192 bytes (type + addresses + name + body) plus 1 checksum byte.
     private let headerContentPlusChecksum = 193
 
-    // MARK: - Block Processor
+    /// Header block types that occupy a directory slot.
+    private let directoryBlockTypes: Set<UInt8> = [0x01, 0x03, 0x04]
 
-    /// Processes a decoded byte stream (countdown + header content) to
-    /// extract file information.
-    /// Standard header types: $01 relocatable BASIC program, $02 data
-    /// chunk, $03 non-relocatable (ML) program, $04 SEQ file header,
-    /// $05 end-of-tape.
-    /// Returns false when an end-of-tape marker is found, signalling the
-    /// caller to stop parsing.
-    private func processBlock(_ bytes: [UInt8], fileIndex: inout Int) -> Bool {
-        guard let contentStart = consumeCountdown(in: bytes) else {
-            log("  ! No valid sync countdown ($89..$81)")
-            return true
-        }
-
-        // Verify the block checksum when the full standard header
-        // (192 content bytes + 1 checksum) decoded. A failure usually means
-        // marginal pulse timing; the entry is still listed so the user can
-        // adjust the timing sliders and re-parse.
-        if bytes.count >= contentStart + headerContentPlusChecksum {
-            let ok = xorReduce(bytes[contentStart..<(contentStart + headerContentPlusChecksum)]) == 0
-            log(ok ? "  Header checksum OK"
-                   : "  ! Header checksum FAILED — data may be misread; try adjusting timing")
-        } else {
-            log("  ! Header truncated (\(bytes.count - contentStart) of \(headerContentPlusChecksum) bytes)")
-        }
-
-        var pos = contentStart
-        let blockType = bytes[pos]; pos += 1
-
-        switch blockType {
-        case 0x01, 0x03:
-            // Program header — $01 relocatable BASIC, $03 non-relocatable ML.
-            // Identical layout: [type][loadL][loadH][endL][endH][name x16]...
-            guard pos + 4 <= bytes.count else { return true }
-            let load = UInt16(bytes[pos])     | (UInt16(bytes[pos + 1]) << 8)
-            let end  = UInt16(bytes[pos + 2]) | (UInt16(bytes[pos + 3]) << 8)
-            let nameEnd = min(pos + 4 + 16, bytes.count)
-            let name = petsciiToString(Array(bytes[(pos + 4)..<nameEnd]))
-            let sz   = end > load ? Int(end - load) : 0
-            entries.append(TAPEntry(index: fileIndex, name: name,
-                                    loadAddress: load, endAddress: end,
-                                    kind: .program, sizeBytes: sz))
-            let typeLabel = blockType == 0x01 ? "01/BASIC" : "03/ML"
-            log("  Header(\(typeLabel)): \"\(name)\" PRG \(String(format: "$%04X-$%04X", load, end)) (\(sz)b)")
-            fileIndex += 1
-
-        case 0x04:
-            // SEQ file header — same field layout; the data arrives later
-            // in $02 chunks, which extractPRG does not reassemble.
-            guard pos + 4 <= bytes.count else { return true }
-            let load = UInt16(bytes[pos])     | (UInt16(bytes[pos + 1]) << 8)
-            let end  = UInt16(bytes[pos + 2]) | (UInt16(bytes[pos + 3]) << 8)
-            let nameEnd = min(pos + 4 + 16, bytes.count)
-            let name = petsciiToString(Array(bytes[(pos + 4)..<nameEnd]))
-            entries.append(TAPEntry(index: fileIndex, name: name,
-                                    loadAddress: load, endAddress: end,
-                                    kind: .sequential, sizeBytes: 0))
-            log("  Header(04): \"\(name)\" SEQ (extraction not supported)")
-            fileIndex += 1
-
-        case 0x02:
-            log("  Data chunk ($02) outside a SEQ context")
-
-        case 0x05:
-            log("  End-of-tape marker ($05)")
-            return false
-
-        default:
-            log("  Data/unknown block type 0x\(String(format: "%02X", blockType))")
-        }
-        return true
+    /// True when a block's content looks like a standard header rather than
+    /// file data. Used to notice that a file's data block is missing, so its
+    /// successor's header isn't consumed as payload.
+    private func looksLikeHeader(_ content: ArraySlice<UInt8>) -> Bool {
+        content.count == headerContentPlusChecksum
+            && content.first.map { (0x01...0x05).contains($0) } == true
     }
 
-    // MARK: - Inter-block Pilot Threshold
+    // MARK: - Parser
 
-    /// Minimum number of SHORT pulses required to identify an inter-block pilot tone.
-    /// Main pilots are longer; verify-copy pilots are shorter.
-    private let interBlockPilotMin = 40
+    /// Main parsing loop: walks the recorded blocks, building directory
+    /// entries and capturing each program's payload as it goes.
+    private func parse() {
+        log("TAP v\(version)  \(platformName)  \(pulses.count) pulses")
+        log("Timing — S≤\(timing.shortMax)  M≤\(timing.mediumMax)  pilot≥\(timing.minPilotPulses)")
+
+        let blocks = self.blocks()
+        log("  \(groups().count) groups after splitting at LONG boundaries")
+        log("  \(blocks.count) pilot-led block(s)")
+
+        var fileIdx = 0
+        var i = 0
+
+        while i < blocks.count {
+            let block = blocks[i]
+
+            guard !block.bytes.isEmpty else {
+                hasTurboBlocks = true
+                log("  ⚠ Pilot at group \(block.pilotIndex) with no decodable bytes — possible turbo loader")
+                i += 1
+                continue
+            }
+
+            // Blocks without a first-copy countdown are the repeat copies
+            // ($09..$01) that follow every recorded block. Skipping them here
+            // is what stops each file being listed twice.
+            guard let contentStart = consumeCountdown(in: block.bytes) else {
+                i += 1
+                continue
+            }
+
+            log("  Block at group \(block.pilotIndex): \(block.bytes.count) raw bytes decoded")
+            verifyHeaderChecksum(block.bytes, contentStart: contentStart)
+
+            let blockType = block.bytes[contentStart]
+            let fieldStart = contentStart + 1
+
+            switch blockType {
+            case 0x01, 0x03:
+                // Program header — $01 relocatable BASIC, $03 non-relocatable ML.
+                // Identical layout: [type][loadL][loadH][endL][endH][name x16]...
+                guard let fields = headerFields(block.bytes, from: fieldStart) else {
+                    log("  ! Program header truncated — not listed")
+                    i += 1
+                    continue
+                }
+                let sz = fields.end > fields.load ? Int(fields.end - fields.load) : 0
+                entries.append(TAPEntry(index: fileIdx, name: fields.name,
+                                        loadAddress: fields.load, endAddress: fields.end,
+                                        kind: .program, sizeBytes: sz))
+                let typeLabel = blockType == 0x01 ? "01/BASIC" : "03/ML"
+                log("  Header(\(typeLabel)): \"\(fields.name)\" PRG "
+                  + "\(String(format: "$%04X-$%04X", fields.load, fields.end)) (\(sz)b)")
+
+                // The data block is the next block carrying a first-copy
+                // countdown; the header's own repeat copy in between has
+                // $09..$01 and is skipped by consumeCountdown.
+                i += 1
+                i = capturePayload(from: blocks, startingAt: i,
+                                   fileIndex: fileIdx, declaredSize: sz, name: fields.name)
+                fileIdx += 1
+
+            case 0x04:
+                // SEQ file header — same field layout; the data arrives later
+                // in $02 chunks, which are not reassembled.
+                guard let fields = headerFields(block.bytes, from: fieldStart) else {
+                    log("  ! SEQ header truncated — not listed")
+                    i += 1
+                    continue
+                }
+                entries.append(TAPEntry(index: fileIdx, name: fields.name,
+                                        loadAddress: fields.load, endAddress: fields.end,
+                                        kind: .sequential, sizeBytes: 0))
+                log("  Header(04): \"\(fields.name)\" SEQ (extraction not supported)")
+                fileIdx += 1
+                i += 1
+
+            case 0x05:
+                log("  End-of-tape marker ($05)")
+                log("Done — \(entries.count) file(s)\(hasTurboBlocks ? ", turbo block(s) present" : "")")
+                return
+
+            case 0x02:
+                log("  Data chunk ($02) outside a SEQ context")
+                i += 1
+
+            default:
+                log("  Data/unknown block type 0x\(String(format: "%02X", blockType))")
+                i += 1
+            }
+        }
+
+        log("Done — \(entries.count) file(s)\(hasTurboBlocks ? ", turbo block(s) present" : "")")
+    }
+
+    /// Logs whether a header block's XOR checksum verifies.
+    ///
+    /// A failure usually means marginal pulse timing; the entry is still
+    /// listed so the user can adjust the timing sliders and re-parse.
+    private func verifyHeaderChecksum(_ bytes: [UInt8], contentStart: Int) {
+        guard bytes.count >= contentStart + headerContentPlusChecksum else {
+            log("  ! Header truncated (\(bytes.count - contentStart) of \(headerContentPlusChecksum) bytes)")
+            return
+        }
+        let ok = xorReduce(bytes[contentStart..<(contentStart + headerContentPlusChecksum)]) == 0
+        log(ok ? "  Header checksum OK"
+               : "  ! Header checksum FAILED — data may be misread; try adjusting timing")
+    }
+
+    /// Reads the load address, end address and name shared by header types
+    /// $01, $03 and $04.
+    private func headerFields(_ bytes: [UInt8],
+                              from pos: Int) -> (load: UInt16, end: UInt16, name: String)? {
+        guard pos + 4 <= bytes.count else { return nil }
+        let load = UInt16(bytes[pos])     | (UInt16(bytes[pos + 1]) << 8)
+        let end  = UInt16(bytes[pos + 2]) | (UInt16(bytes[pos + 3]) << 8)
+        let nameEnd = min(pos + 4 + 16, bytes.count)
+        let name = PETSCII.decodeName(Array(bytes[(pos + 4)..<nameEnd]))
+        return (load, end, name)
+    }
+
+    /// Captures the payload of the data block belonging to the header just
+    /// read, and returns the block index to continue from.
+    ///
+    /// Resolving payloads during the parse is what lets `extractPRG` be a
+    /// lookup rather than a second, independently-counted walk of the tape.
+    private func capturePayload(from blocks: [TapeBlock],
+                                startingAt start: Int,
+                                fileIndex: Int,
+                                declaredSize: Int,
+                                name: String) -> Int {
+        var i = start
+        while i < blocks.count {
+            let candidate = blocks[i]
+            guard !candidate.bytes.isEmpty,
+                  let dp = consumeCountdown(in: candidate.bytes) else {
+                i += 1
+                continue
+            }
+
+            // A following header means this file's data block never recorded.
+            if looksLikeHeader(candidate.bytes[dp...]) {
+                log("  ! \"\(name)\": no data block found — cannot extract")
+                return i
+            }
+
+            // Data blocks have no type byte; the payload starts immediately
+            // after the countdown, with the XOR checksum at the end.
+            let available = candidate.bytes.count - dp
+            let take = min(declaredSize, available)
+            guard take > 0 else {
+                log("  ! \"\(name)\": data block empty")
+                return i + 1
+            }
+
+            if available >= take + 1 {
+                let ok = xorReduce(candidate.bytes[dp..<(dp + take + 1)]) == 0
+                log(ok ? "  \"\(name)\": data checksum OK"
+                       : "  ! \"\(name)\": data checksum FAILED — extracted data may be corrupt")
+            } else {
+                log("  ! \"\(name)\": block shorter than declared size (\(available)/\(declaredSize)b)")
+            }
+
+            payloadsByIndex[fileIndex] = Data(candidate.bytes[dp..<(dp + take)])
+            return i + 1
+        }
+
+        log("  ! \"\(name)\": tape ends before its data block")
+        return i
+    }
 
     // MARK: - PRG Extraction
 
+    /// Payload bytes per directory index, captured during `parse()`.
+    /// No load-address header — `extractPRG` prepends it.
+    private var payloadsByIndex: [Int: Data] = [:]
+
     /// Extracts the raw PRG data (including load address header) for a specific entry.
     func extractPRG(for entry: TAPEntry) -> Data? {
-        guard entry.kind == .program else { return nil }
+        guard entry.kind == .program,
+              let payload = payloadsByIndex[entry.index],
+              !payload.isEmpty else { return nil }
 
-        let groups = self.groups()
-        var gi = 0
-        var fileIdx = 0
-
-        while gi < groups.count {
-            let g = groups[gi]
-
-            // Main pilot: must meet the full minPilotPulses threshold
-            guard g.count >= timing.minPilotPulses,
-                  g.allSatisfy({ classify($0) == .short }) else {
-                gi += 1; continue
-            }
-            gi += 1
-
-            // Collect header block byte stream
-            var byteStream: [UInt8] = []
-            while gi < groups.count {
-                guard groups[gi].count == 19,
-                      let byte = decodeByteGroup(groups[gi]) else { break }
-                byteStream.append(byte)
-                gi += 1
-            }
-            guard !byteStream.isEmpty else { continue }
-
-            // Walk the sync countdown; skip streams without one
-            guard var pos = consumeCountdown(in: byteStream) else { continue }
-            let blockType = byteStream[pos]; pos += 1
-
-            // Header types that occupy directory slots — must mirror the
-            // set that processBlock creates entries for, or fileIdx and
-            // entry.index drift apart: $01/$03 programs, $04 SEQ.
-            guard blockType == 0x01 || blockType == 0x03 || blockType == 0x04 else { continue }
-
-            if fileIdx == entry.index {
-                // SEQ data lives in $02 chunks; not reassembled here.
-                guard blockType != 0x04 else { return nil }
-
-                // Load address — same offsets for $01 and $03:
-                // [type][loadL][loadH][endL][endH]...
-                guard pos + 1 < byteStream.count else { return nil }
-                let load = UInt16(byteStream[pos]) | (UInt16(byteStream[pos + 1]) << 8)
-
-                // Skip verify copy of header:
-                // advance past any inter-block pilot (>= interBlockPilotMin shorts)
-                // and its following 19-pulse byte groups
-                while gi < groups.count {
-                    let vg = groups[gi]
-                    if vg.count >= interBlockPilotMin, vg.allSatisfy({ classify($0) == .short }) {
-                        gi += 1
-                        while gi < groups.count && groups[gi].count == 19 { gi += 1 }
-                        break
-                    }
-                    gi += 1
-                }
-
-                // Find data block pilot (may be preceded by a short transition group)
-                while gi < groups.count {
-                    let dg = groups[gi]
-                    if dg.count >= interBlockPilotMin, dg.allSatisfy({ classify($0) == .short }) {
-                        gi += 1
-
-                        // Decode data block bytes
-                        var dataBytes: [UInt8] = []
-                        while gi < groups.count {
-                            guard groups[gi].count == 19,
-                                  let b = decodeByteGroup(groups[gi]) else { break }
-                            dataBytes.append(b)
-                            gi += 1
-                        }
-
-                        // If no bytes decoded, this was a transition group before the
-                        // real data pilot (e.g. the short ~79-pulse run before a 5000+
-                        // pulse main data pilot) — keep searching
-                        guard !dataBytes.isEmpty else { continue }
-
-                        // Consume the data block's sync countdown.
-                        // The payload starts IMMEDIATELY after it — data
-                        // blocks have no type byte (only header blocks do);
-                        // the XOR checksum follows the payload at the end.
-                        guard let dp = consumeCountdown(in: dataBytes) else { return nil }
-
-                        let available = dataBytes.count - dp
-                        let take = min(entry.sizeBytes, available)
-                        guard take > 0 else { return nil }
-
-                        // Verify the block checksum when it decoded:
-                        // payload + checksum XORs to zero.
-                        if available >= take + 1 {
-                            let ok = xorReduce(dataBytes[dp..<(dp + take + 1)]) == 0
-                            log(ok ? "Extract \"\(entry.name)\": data checksum OK"
-                                   : "! Extract \"\(entry.name)\": data checksum FAILED — output may be corrupt")
-                        } else {
-                            log("! Extract \"\(entry.name)\": block shorter than declared size (\(available)/\(entry.sizeBytes)b)")
-                        }
-
-                        var prg = Data([UInt8(load & 0xFF), UInt8(load >> 8)])
-                        prg.append(contentsOf: dataBytes[dp..<(dp + take)])
-                        return prg
-                    }
-                    gi += 1
-                }
-                return nil  // couldn't find data block
-            }
-            fileIdx += 1
-        }
-        return nil
+        var prg = Data([UInt8(entry.loadAddress & 0xFF), UInt8(entry.loadAddress >> 8)])
+        prg.append(payload)
+        return prg
     }
 
     // MARK: - Helpers
@@ -525,15 +577,6 @@ class TAPImage: TapeArchive {
 
     private func log(_ msg: String) { parseLog.append(msg) }
 
-    /// Converts PETSCII bytes to an ASCII string. Stops at null, $A0 (shift-space), or space padding.
-    private func petsciiToString(_ bytes: [UInt8]) -> String {
-        var s = ""
-        for b in bytes {
-            if b == 0x00 || b == 0xA0 { break }
-            if b >= 0x20 && b < 0x7F { s.append(Character(UnicodeScalar(b))) }
-        }
-        return s.trimmingCharacters(in: .init(charactersIn: " "))
-    }
 }
 
 // MARK: - TAP Writing (intentionally absent)

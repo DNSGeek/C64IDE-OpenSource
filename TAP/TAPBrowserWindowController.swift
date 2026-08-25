@@ -639,8 +639,8 @@ class TAPBrowserViewController: NSViewController,
         guard promptToSaveIfDirty() else { return }
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [
-            UTType(filenameExtension: "tap")!,
-            UTType(filenameExtension: "t64")!,
+            contentType(for: "tap"),
+            contentType(for: "t64"),
         ]
         panel.title = "Open Tape Image (TAP / T64)"
         panel.begin { [weak self] response in
@@ -672,39 +672,47 @@ class TAPBrowserViewController: NSViewController,
     }
 
     @objc private func saveArchive(_ sender: Any?) {
-        guard let arc = writable else { return }
-        if arc.fileURL == nil {
-            saveArchiveAs(sender)
-            return
-        }
-        do {
-            try arc.save(to: nil)
-            isDirty = false
-            statusLabel.stringValue = "Saved \(arc.fileURL?.lastPathComponent ?? "")"
-            refreshDirectory()
-        } catch {
-            NSAlert(error: error).runModal()
-        }
+        _ = performSave(askForLocation: false)
     }
 
     @objc private func saveArchiveAs(_ sender: Any?) {
-        guard let arc = writable else { return }
-        let panel = NSSavePanel()
-        panel.allowedContentTypes  = [UTType(filenameExtension: "t64")!]
-        panel.nameFieldStringValue =
-            arc.fileURL?.lastPathComponent
-            ?? "\(sanitizeForMacOS(arc.archiveName.lowercased())).t64"
-        panel.title = "Save T64 Archive"
-        panel.begin { [weak self] response in
-            guard response == .OK, let url = panel.url else { return }
-            do {
-                try arc.save(to: url)
-                self?.isDirty = false
-                self?.statusLabel.stringValue = "Saved → \(url.lastPathComponent)"
-                self?.refreshDirectory()
-            } catch {
-                NSAlert(error: error).runModal()
-            }
+        _ = performSave(askForLocation: true)
+    }
+
+    /// Saves the archive, asking for a location when one is needed.
+    ///
+    /// Synchronous by design. The unsaved-changes prompt has to know whether
+    /// the save actually happened before it can allow a close to proceed, and
+    /// the previous asynchronous `panel.begin` returned control immediately —
+    /// so choosing "Save" for a never-saved archive left `isDirty` set,
+    /// cancelled the close, and only then put a save panel on screen.
+    ///
+    /// - Returns: true when the archive is on disk and no longer dirty.
+    @discardableResult
+    private func performSave(askForLocation: Bool) -> Bool {
+        guard let arc = writable else { return false }
+
+        var target = askForLocation ? nil : arc.fileURL
+        if target == nil {
+            let panel = NSSavePanel()
+            panel.allowedContentTypes  = [contentType(for: "t64")]
+            panel.nameFieldStringValue =
+                arc.fileURL?.lastPathComponent
+                ?? "\(sanitizeForMacOS(arc.archiveName.lowercased(), fallback: "tape")).t64"
+            panel.title = "Save T64 Archive"
+            guard panel.runModal() == .OK, let chosen = panel.url else { return false }
+            target = chosen
+        }
+
+        do {
+            try arc.save(to: target)
+            isDirty = false
+            statusLabel.stringValue = "Saved → \(target?.lastPathComponent ?? "")"
+            refreshDirectory()
+            return true
+        } catch {
+            NSAlert(error: error).runModal()
+            return false
         }
     }
 
@@ -713,7 +721,7 @@ class TAPBrowserViewController: NSViewController,
     @objc private func addPRGFile(_ sender: Any?) {
         guard let arc = writable else { return }
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [UTType(filenameExtension: "prg")!]
+        panel.allowedContentTypes = [contentType(for: "prg")]
         panel.allowsMultipleSelection = true
         panel.title = "Add PRG file(s) to archive"
         panel.begin { [weak self] response in
@@ -727,7 +735,12 @@ class TAPBrowserViewController: NSViewController,
     private func addURLs(_ urls: [URL], to arc: any WritableTapeArchive) -> Int {
         var added = 0
         var failures: [String] = []
-        for url in urls where url.pathExtension.lowercased() == "prg" {
+        for url in urls {
+            // Dropped files of other types used to disappear without a word.
+            guard url.pathExtension.lowercased() == "prg" else {
+                failures.append("\(url.lastPathComponent): not a .prg file")
+                continue
+            }
             do {
                 let data = try Data(contentsOf: url)
                 let name = url.deletingPathExtension().lastPathComponent.uppercased()
@@ -861,7 +874,7 @@ class TAPBrowserViewController: NSViewController,
 
         if response == .alertFirstButtonReturn {
             let panel = NSSavePanel()
-            panel.allowedContentTypes  = [UTType(filenameExtension: format)!]
+            panel.allowedContentTypes  = [contentType(for: format)]
             panel.nameFieldStringValue = "\(sanitizeForMacOS(entry.name.lowercased())).\(format)"
             panel.begin { [weak self] saveResp in
                 guard saveResp == .OK, let url = panel.url else { return }
@@ -869,16 +882,22 @@ class TAPBrowserViewController: NSViewController,
                 let disk: any DiskImage = isD81
                     ? D81Image(diskName: entry.name.uppercased(), diskID: "C6")
                     : D64Image(diskName: entry.name.uppercased(), diskID: "C6")
-                if arc.exportToDisk(entry, disk: disk) {
-                    try? disk.save(to: url)
-                    self?.statusLabel.stringValue = "Exported to new \(format.uppercased()): \(url.lastPathComponent)"
-                } else {
+                guard arc.exportToDisk(entry, disk: disk) else {
                     self?.statusLabel.stringValue = "Export failed — could not extract file data."
+                    return
+                }
+                do {
+                    // The write was previously a `try?`, so a failure here
+                    // still reported success and left no file behind.
+                    try disk.save(to: url)
+                    self?.statusLabel.stringValue = "Exported to new \(format.uppercased()): \(url.lastPathComponent)"
+                } catch {
+                    self?.statusLabel.stringValue = "Could not write \(url.lastPathComponent): \(error.localizedDescription)"
                 }
             }
         } else {
             let panel = NSOpenPanel()
-            panel.allowedContentTypes = [UTType(filenameExtension: format)!]
+            panel.allowedContentTypes = [contentType(for: format)]
             panel.begin { [weak self] openResp in
                 guard openResp == .OK, let url = panel.url else { return }
                 do {
@@ -913,7 +932,14 @@ class TAPBrowserViewController: NSViewController,
         if BasicTokenizer.isTokenizedBASIC(prgData) {
             if let source = BasicTokenizer.detokenize(prgData) {
                 let tempURL = tempDir.appendingPathComponent("\(sanitizeForMacOS(entry.name.lowercased())).bas")
-                try? source.write(to: tempURL, atomically: true, encoding: .utf8)
+                do {
+                    // Was a `try?`, which handed a nonexistent path to the
+                    // editor when the write failed.
+                    try source.write(to: tempURL, atomically: true, encoding: .utf8)
+                } catch {
+                    statusLabel.stringValue = "Could not stage \"\(entry.name)\": \(error.localizedDescription)"
+                    return
+                }
                 (NSApp.delegate as? AppDelegate)?.mainWindowController?.loadDocument(from: tempURL)
                 statusLabel.stringValue = source.contains("{$")
                     ? "Opened \"\(entry.name)\" — some tokens unrecognized."
@@ -942,7 +968,12 @@ class TAPBrowserViewController: NSViewController,
         }
         let tempURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(sanitizeForMacOS(entry.name.lowercased())).prg")
-        try? prgData.write(to: tempURL)
+        do {
+            try prgData.write(to: tempURL)
+        } catch {
+            statusLabel.stringValue = "Could not stage \"\(entry.name)\": \(error.localizedDescription)"
+            return
+        }
         (NSApp.delegate as? AppDelegate)?.openDisassemblerWith(url: tempURL)
         statusLabel.stringValue = "Disassembling \"\(entry.name)\"…"
     }
@@ -968,8 +999,7 @@ class TAPBrowserViewController: NSViewController,
         alert.addButton(withTitle: "Cancel")
         switch alert.runModal() {
         case .alertFirstButtonReturn:
-            saveArchive(nil)
-            return !isDirty   // true only if the save actually cleared the dirty flag
+            return performSave(askForLocation: false)
         case .alertSecondButtonReturn:
             return true
         default:
@@ -1043,9 +1073,17 @@ class TAPBrowserViewController: NSViewController,
               let colID = tableColumn?.identifier else { return nil }
         let entry = entries[row]
 
-        let cell = NSTextField(labelWithString: "")
-        cell.font          = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
-        cell.lineBreakMode = .byTruncatingTail
+        // Recycle cells rather than allocating a fresh NSTextField per row
+        // per reload.
+        let cell: NSTextField
+        if let reused = tableView.makeView(withIdentifier: colID, owner: self) as? NSTextField {
+            cell = reused
+        } else {
+            cell = NSTextField(labelWithString: "")
+            cell.identifier    = colID
+            cell.lineBreakMode = .byTruncatingTail
+        }
+        cell.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
 
         switch colID {
         case NSUserInterfaceItemIdentifier("idx"):
@@ -1076,16 +1114,33 @@ class TAPBrowserViewController: NSViewController,
     }
 }
 
+// MARK: - Content types
+
+/// UTType for a bare file extension.
+///
+/// `UTType(filenameExtension:)` is documented as failable, so the bang it
+/// replaces was an unnecessary risk; `.data` keeps the panel usable if a
+/// system ever declines to vend a type for one of these retro extensions.
+private func contentType(for ext: String) -> UTType {
+    UTType(filenameExtension: ext) ?? .data
+}
+
 // MARK: - Filename sanitizer
 
 /// Sanitizes a string for safe use as a macOS filename.
 /// Replaces invalid characters (/ \ : \0) with safe alternatives.
-private func sanitizeForMacOS(_ name: String) -> String {
-    name.map { ch -> String in
+///
+/// A corrupt archive can hand us an empty or all-punctuation entry name; the
+/// fallback keeps that from becoming a bare ".prg" or a dotfile.
+private func sanitizeForMacOS(_ name: String, fallback: String = "untitled") -> String {
+    let cleaned = name.map { ch -> String in
         switch ch {
         case "/", "\\", ":", "\0": return "-"
         default: return String(ch)
         }
-    }.joined()
+    }.joined().trimmingCharacters(in: .whitespaces)
+
+    let usable = cleaned.drop { $0 == "." }
+    return usable.isEmpty ? fallback : String(cleaned)
 }
 

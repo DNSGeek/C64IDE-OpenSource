@@ -633,11 +633,14 @@ PETSCII conventions.
 
 Handles **TAP** tape images and **T64** archives.
 
-- **Open…** a TAP or T64; **New T64** creates an archive.
+- **Open…** a TAP or T64; **New T64** creates an archive. Format is detected
+  from the file's signature, so an image with the wrong extension still opens
+  as whatever it actually is.
 - TAP parsing is configurable: minimum pilot pulses, the medium/long pulse
   boundary in units, and a **Preset** picker with a **Custom** option. Change
   the settings and hit **Re-parse**; the **Parse Log** explains what the parser
-  found and why.
+  found and why. Pilot detection tolerates a small amount of tape dropout, so
+  an occasional bad pulse doesn't hide a file from the listing.
 - Entries show filename and address range, and are marked **EDITABLE** or
   **READ ONLY** depending on the container.
 - **Add PRG…**, **Extract PRG…**, **Rename**, **Delete**, **Open in IDE** and
