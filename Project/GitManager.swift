@@ -241,8 +241,23 @@ final class GitManager {
             return (-1, "", "Failed to run git: \(error.localizedDescription)")
         }
 
-        let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-        let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+        var stdoutData = Data()
+        var stderrData = Data()
+        let group = DispatchGroup()
+
+        group.enter()
+        DispatchQueue.global().async {
+            stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+            group.leave()
+        }
+
+        group.enter()
+        DispatchQueue.global().async {
+            stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+            group.leave()
+        }
+
+        group.wait()
         process.waitUntilExit()
 
         let stdout = String(data: stdoutData, encoding: .utf8)?
