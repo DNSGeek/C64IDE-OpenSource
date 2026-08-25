@@ -37,7 +37,9 @@ final class U64SettingsViewController: NSViewController {
     }()
 
     private let autoRunCheckbox: NSButton = {
-        let b = NSButton(checkboxWithTitle: "Auto-run after build", target: nil, action: nil)
+        let b = NSButton(checkboxWithTitle: "Run after build (⌘R)", target: nil, action: nil)
+        b.toolTip = "When off, ⌘R loads the program on the U64 without running it. "
+                  + "The Run and Load toolbar buttons always do what they say."
         return b
     }()
 
@@ -135,16 +137,26 @@ final class U64SettingsViewController: NSViewController {
         view.addSubview(statusLabel)
         y -= 36 + rowGap
 
-        // Info box — positioned above the save button
-        let safeHeight = max(40, y - 40) // Reserve space for save button
-        infoBox.frame = NSRect(x: 16, y: 12, width: view.bounds.width - 32, height: safeHeight)
+        // Buttons occupy the bottom band; the info box gets whatever is left
+        // above it. The old `max(40, y - 40)` anchored the box at y = 12, which
+        // put the Save button inside its border.
+        let buttonBandTop: CGFloat = 14 + 28 + 12
+        let infoHeight = max(40, y - buttonBandTop)
+        infoBox.frame = NSRect(x: 16, y: buttonBandTop,
+                               width: view.bounds.width - 32, height: infoHeight)
         infoLabel.frame = NSRect(x: 8, y: 8,
                                  width: infoBox.frame.width - 16,
                                  height: infoBox.frame.height - 28)
         infoBox.addSubview(infoLabel)
         view.addSubview(infoBox)
 
-        // Save button — bottom right
+        // Cancel + Save — bottom right
+        let cancelBtn = NSButton(title: "Cancel", target: self, action: #selector(cancelTapped))
+        cancelBtn.bezelStyle    = .rounded
+        cancelBtn.keyEquivalent = "\u{1b}"          // Escape
+        cancelBtn.frame = NSRect(x: view.bounds.width - 188, y: 14, width: 80, height: 28)
+        view.addSubview(cancelBtn)
+
         let saveBtn = NSButton(title: "Save", target: self, action: #selector(saveTapped))
         saveBtn.bezelStyle = .rounded
         saveBtn.keyEquivalent = "\r"
@@ -156,11 +168,17 @@ final class U64SettingsViewController: NSViewController {
     // MARK: - Data Binding
 
     /// Subscribes to the U64 client's connection state and updates the UI accordingly.
+    ///
+    /// No `receive(on: RunLoop.main)`: the client and this controller are both
+    /// `@MainActor`, and the hop let the generic "Connected" text land *after*
+    /// the detailed "Connected ✓" that `testConnectionTapped` had just set.
+    /// While a test is running the sink stands aside entirely, so it can't
+    /// overwrite either the progress or the error message.
     private func bindClient() {
         U64Client.shared.$isConnected
-            .receive(on: RunLoop.main)
             .sink { [weak self] connected in
-                self?.updateStatusUI(connected: connected)
+                guard let self, !self.isTesting else { return }
+                self.updateStatusUI(connected: connected)
             }
             .store(in: &cancellables)
     }
@@ -169,7 +187,7 @@ final class U64SettingsViewController: NSViewController {
     private func loadSettings() {
         hostField.stringValue     = U64Client.shared.host
         passwordField.stringValue = U64Client.shared.password
-        autoRunCheckbox.state     = UserDefaults.standard.bool(forKey: "u64AutoRun") ? .on : .off
+        autoRunCheckbox.state     = U64Client.shared.autoRun ? .on : .off
         updateStatusUI(connected: U64Client.shared.isConnected)
         if let info = U64Client.shared.lastInfo { populateInfoBox(info) }
     }
@@ -178,6 +196,23 @@ final class U64SettingsViewController: NSViewController {
 
     @objc private func saveTapped() {
         commitFields()
+
+        // Report a Keychain write that didn't land instead of closing on a
+        // save that silently didn't happen.
+        if U64Client.shared.lastPasswordStoreFailed {
+            setStatus(text: "Could not save the password to the Keychain.",
+                      color: .systemRed,
+                      symbol: NSImage(systemSymbolName: "xmark.circle.fill",
+                                      accessibilityDescription: nil))
+            NSSound.beep()
+            return
+        }
+
+        view.window?.performClose(self)
+    }
+
+    @objc private func cancelTapped() {
+        view.window?.performClose(self)
     }
 
     @objc private func testConnectionTapped() {
@@ -214,7 +249,9 @@ final class U64SettingsViewController: NSViewController {
     private func commitFields() {
         U64Client.shared.host     = hostField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         U64Client.shared.password = passwordField.stringValue
-        UserDefaults.standard.set(autoRunCheckbox.state == .on, forKey: "u64AutoRun")
+        // Goes through the client rather than a bare UserDefaults key, so the
+        // run path reads the same value the checkbox writes.
+        U64Client.shared.autoRun  = autoRunCheckbox.state == .on
     }
 
     private func updateStatusUI(connected: Bool) {
@@ -255,8 +292,11 @@ extension U64SettingsViewController {
         view.window?.performClose(sender)
     }
 
-    /// Convenience: wraps the view controller in an NSWindow for use as a standalone settings sheet.
-    static func asSheet() -> NSWindow {
+    /// Convenience: wraps the view controller in a standalone settings window.
+    ///
+    /// Named for what it is — it is opened with `makeKeyAndOrderFront`, never
+    /// presented as a sheet.
+    static func asWindow() -> NSWindow {
         let vc  = U64SettingsViewController()
         let win = NSWindow(contentViewController: vc)
         win.title = "Ultimate 64 Settings"

@@ -79,23 +79,50 @@ final class U64ToolbarController {
 /// Bridges the IDE's build system to the U64Client.
 /// Builds the current file (BASIC tokenize or ca65 assemble),
 /// then sends the PRG to the Ultimate 64 via REST API.
+///
+/// The build, single-transfer gate, validation, cancellation and logging all
+/// come from `HardwareBuildPipeline`; only the delivery step is U64-specific.
 @MainActor
-final class U64BuildPipeline: NSObject {
+final class U64BuildPipeline: HardwareBuildPipeline {
 
     static let shared = U64BuildPipeline()
     private override init() {}
 
     private var settingsWindow: NSWindow?
 
-    // MARK: - Toolbar Actions
+    // MARK: - Target description
 
-    @objc func runOnHardware() {
-        Task { await buildAndSend(loadOnly: false) }
+    override var targetName: String { "U64" }
+
+    /// True once a host has been entered. The U64's settings live on the client
+    /// rather than in `BuildConfiguration`, so this ignores its argument.
+    private var hostIsSet: Bool {
+        !U64Client.shared.host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    @objc func loadOnHardware() {
-        Task { await buildAndSend(loadOnly: true) }
+    override func configurationError(config: BuildConfiguration) -> String? {
+        hostIsSet ? nil : "Host not configured. Use Tools → U64 Settings."
     }
+
+    override func isTransferItem(_ item: NSToolbarItem) -> Bool {
+        item.itemIdentifier == .u64RunOnHardware || item.itemIdentifier == .u64LoadOnly
+    }
+
+    // MARK: - Delivery
+
+    override func deliver(prgURL: URL, loadOnly: Bool, config: BuildConfiguration) async throws {
+        let data = try Data(contentsOf: prgURL)
+        logBuild("  POST \(loadOnly ? "v1/runners:load_prg" : "v1/runners:run_prg") "
+               + "→ \(U64Client.shared.host)", type: .plain)
+
+        if loadOnly {
+            try await U64Client.shared.loadPRG(data)
+        } else {
+            try await U64Client.shared.runPRG(data)
+        }
+    }
+
+    // MARK: - Extra actions
 
     @objc func resetMachine() {
         Task {
@@ -111,78 +138,28 @@ final class U64BuildPipeline: NSObject {
 
     @objc func openSettings() {
         if settingsWindow == nil {
-            settingsWindow = U64SettingsViewController.asSheet()
+            settingsWindow = U64SettingsViewController.asWindow()
         }
         settingsWindow?.makeKeyAndOrderFront(nil)
     }
 
-    // MARK: - Core Pipeline
-
-    /// Orchestrates the build process and transfers the resulting PRG to the U64.
-    private func buildAndSend(loadOnly: Bool) async {
-        guard let appDelegate = NSApp.delegate as? AppDelegate,
-              let wc = appDelegate.mainWindowController else {
-            logMessage("U64: No active editor.", type: .error)
-            return
-        }
-
-        let doc = wc.editorViewController.document
-        wc.bottomPanelController.selectTab(.build)
-
-        logBuild("═══════════════════════════════════════", type: .plain)
-        logBuild("Building for Ultimate 64…", type: .plain)
-        logBuild("═══════════════════════════════════════", type: .plain)
-
-        // Step 1: Build the PRG (shared helper — see BuildPipelineSupport)
-        guard let prgURL = await BuildPipelineSupport.buildPRG(windowController: wc,
-                                                                document: doc) else {
-            logBuild("✗ U64: Build failed.", type: .error)
-            return
-        }
-
-        // U64Client expects raw bytes, not a URL — read the freshly-built PRG.
-        guard let prgData = try? Data(contentsOf: prgURL) else {
-            logBuild("✗ U64: PRG file not readable after build.", type: .error)
-            return
-        }
-        logBuild("✓ Built PRG (\(prgData.count) bytes)", type: .success)
-
-        // Step 2: Check connection
-        guard !U64Client.shared.host.isEmpty else {
-            logMessage("U64: Host not configured. Use Tools → U64 Settings.", type: .error)
-            logBuild("✗ U64: not configured (see Messages tab).", type: .error)
-            return
-        }
-
-        // Step 3: Send to hardware
-        do {
-            if loadOnly {
-                try await U64Client.shared.loadPRG(prgData)
-                logBuild("✓ Loaded on U64. Type RUN to start.", type: .success)
-            } else {
-                try await U64Client.shared.runPRG(prgData)
-                logBuild("✓ Running on U64!", type: .success)
-            }
-        } catch {
-            logMessage("U64 transfer failed: \(error.localizedDescription)", type: .error)
-            logBuild("✗ U64: transfer failed (see Messages tab).", type: .error)
+    override func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        switch menuItem.action {
+        case #selector(resetMachine):
+            // Reset needs a configured host but not an open document.
+            return hostIsSet
+        case #selector(openSettings):
+            return true
+        default:
+            return super.validateMenuItem(menuItem)
         }
     }
 
-    // MARK: - Logging
-
-    /// Appends a message to the build output panel.
-    private func logBuild(_ message: String, type: MessageType) {
-        guard let appDelegate = NSApp.delegate as? AppDelegate,
-              let wc = appDelegate.mainWindowController else { return }
-        wc.bottomPanelController.appendBuildOutput(message, type: type)
-    }
-
-    /// Appends a message to the general messages panel.
-    private func logMessage(_ message: String, type: MessageType) {
-        guard let appDelegate = NSApp.delegate as? AppDelegate,
-              let wc = appDelegate.mainWindowController else { return }
-        wc.bottomPanelController.appendMessage(message, type: type)
+    override func validateToolbarItem(_ item: NSToolbarItem) -> Bool {
+        switch item.itemIdentifier {
+        case .u64Reset:    return hostIsSet
+        case .u64Settings: return true
+        default:           return super.validateToolbarItem(item)
+        }
     }
 }
-

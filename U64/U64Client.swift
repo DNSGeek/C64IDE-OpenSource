@@ -11,7 +11,11 @@ struct U64InfoResponse: Codable {
     let coreVersion: String?
     let hostname: String?
     let uniqueId: String?
-    let errors: [String]
+
+    /// Device-reported errors. Optional: firmware that omits the key on a
+    /// successful call used to fail decoding outright, which surfaced as a
+    /// network error even though the U64 had answered correctly.
+    let errors: [String]?
 
     enum CodingKeys: String, CodingKey {
         case product
@@ -26,7 +30,8 @@ struct U64InfoResponse: Codable {
 
 /// Represents a standard JSON response containing an `errors` array.
 struct U64Response: Codable {
-    let errors: [String]
+    /// Optional for the same reason as `U64InfoResponse.errors`.
+    let errors: [String]?
 }
 
 // MARK: - Errors
@@ -66,7 +71,11 @@ private enum Keychain {
     static let account = "networkPassword"
 
     /// Saves a password to the Keychain, updating an existing item or creating a new one.
-    static func save(_ password: String) {
+    ///
+    /// - Returns: `true` when the password is stored. A discarded failure here
+    ///   looked like a successful save until the next request came back 403.
+    @discardableResult
+    static func save(_ password: String) -> Bool {
         let data = Data(password.utf8)
         let lookup: [String: Any] = [
             kSecClass as String:       kSecClassGenericPassword,
@@ -78,12 +87,13 @@ private enum Keychain {
             kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlocked
         ]
         let status = SecItemUpdate(lookup as CFDictionary, update as CFDictionary)
-        if status == errSecItemNotFound {
-            var add = lookup
-            add[kSecValueData as String]     = data
-            add[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlocked
-            SecItemAdd(add as CFDictionary, nil)
-        }
+        if status == errSecSuccess { return true }
+        guard status == errSecItemNotFound else { return false }
+
+        var add = lookup
+        add[kSecValueData as String]     = data
+        add[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlocked
+        return SecItemAdd(add as CFDictionary, nil) == errSecSuccess
     }
 
     /// Retrieves the stored password from the Keychain.
@@ -102,13 +112,15 @@ private enum Keychain {
     }
 
     /// Deletes the stored password from the Keychain.
-    static func delete() {
+    @discardableResult
+    static func delete() -> Bool {
         let query: [String: Any] = [
             kSecClass as String:       kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account
         ]
-        SecItemDelete(query as CFDictionary)
+        let status = SecItemDelete(query as CFDictionary)
+        return status == errSecSuccess || status == errSecItemNotFound
     }
 }
 
@@ -124,10 +136,22 @@ final class U64Client: ObservableObject {
 
     // MARK: Published state
     @Published var host: String {
-        didSet { UserDefaults.standard.set(host, forKey: "u64Host") }
+        didSet { UserDefaults.standard.set(host, forKey: Self.hostKey) }
     }
     @Published var isConnected = false
     @Published var lastInfo: U64InfoResponse?
+
+    /// Whether ⌘R runs the program on the U64 or only loads it.
+    ///
+    /// Previously the settings checkbox wrote a `u64AutoRun` default that
+    /// nothing ever read, so the control had no effect at all. Exposed here so
+    /// the panel and the run path share one accessor.
+    @Published var autoRun: Bool {
+        didSet { UserDefaults.standard.set(autoRun, forKey: Self.autoRunKey) }
+    }
+
+    private static let autoRunKey = "u64AutoRun"
+    private static let hostKey    = "u64Host"
 
     // MARK: Private
     private let session: URLSession = {
@@ -139,28 +163,59 @@ final class U64Client: ObservableObject {
     }()
 
     private init() {
-        self.host = UserDefaults.standard.string(forKey: "u64Host") ?? ""
+        self.host = UserDefaults.standard.string(forKey: Self.hostKey) ?? ""
+        // Defaults to true so ⌘R keeps running programs for anyone who never
+        // opened the settings panel; `bool(forKey:)` alone would say false.
+        self.autoRun = UserDefaults.standard.object(forKey: Self.autoRunKey) as? Bool ?? true
     }
 
     // MARK: Password (Keychain-backed)
 
+    /// In-memory copy of the stored password.
+    ///
+    /// Every outgoing request stamps the password into a header, and reading it
+    /// straight from the Keychain meant a full `SecItemCopyMatching` per
+    /// request. Loaded once, then kept in step by the setter.
+    private var cachedPassword: String?
+
     var password: String {
-        get { Keychain.load() ?? "" }
+        get {
+            if let cachedPassword { return cachedPassword }
+            let stored = Keychain.load() ?? ""
+            cachedPassword = stored
+            return stored
+        }
         set {
-            if newValue.isEmpty { Keychain.delete() }
-            else { Keychain.save(newValue) }
+            let stored = newValue.isEmpty ? Keychain.delete() : Keychain.save(newValue)
+            // Cache what the Keychain actually holds. Caching the requested
+            // value after a failed write would hide the failure until a
+            // restart, when the old password reappeared.
+            cachedPassword = stored ? newValue : (Keychain.load() ?? "")
+            lastPasswordStoreFailed = !stored
         }
     }
+
+    /// True when the last password write did not reach the Keychain, so the
+    /// settings panel can say so instead of showing a silent success.
+    private(set) var lastPasswordStoreFailed = false
 
     // MARK: - Public API
 
     /// Verifies connectivity to the U64 and populates `lastInfo`.
     @discardableResult
     func testConnection() async throws -> U64InfoResponse {
-        let info: U64InfoResponse = try await get("v1/info")
-        lastInfo    = info
-        isConnected = true
-        return info
+        do {
+            let info: U64InfoResponse = try await get("v1/info")
+            lastInfo    = info
+            isConnected = true
+            return info
+        } catch {
+            // Without this the flag stayed true after the first success, so a
+            // U64 that had since been unplugged still reported "Connected"
+            // every time the settings panel opened.
+            isConnected = false
+            throw error
+        }
     }
 
     /// POSTs a PRG file to the U64 — resets, DMA loads, and runs the program.
@@ -180,9 +235,8 @@ final class U64Client: ObservableObject {
 
     /// POSTs a SID file for playback.
     func playSID(_ data: Data, songNumber: Int? = nil) async throws {
-        var route = "v1/runners:sidplay"
-        if let nr = songNumber { route += "?songnr=\(nr)" }
-        try await postBinary(data, route: route)
+        let query = songNumber.map { [URLQueryItem(name: "songnr", value: String($0))] } ?? []
+        try await postBinary(data, route: "v1/runners:sidplay", query: query)
     }
 
     /// Sends a reset command to the C64.
@@ -205,8 +259,10 @@ final class U64Client: ObservableObject {
     ///   - address: Start address (e.g. 0xC000)
     ///   - length:  Number of bytes (default 256)
     func readMemory(address: UInt16, length: Int = 256) async throws -> Data {
-        let route = "v1/machine:readmem?address=\(String(format: "%04X", address))&length=\(length)"
-        return try await getBinary(route)
+        try await getBinary("v1/machine:readmem", query: [
+            URLQueryItem(name: "address", value: String(format: "%04X", address)),
+            URLQueryItem(name: "length",  value: String(length)),
+        ])
     }
 
     /// Writes up to 128 bytes to C64 memory via DMA.
@@ -215,42 +271,88 @@ final class U64Client: ObservableObject {
         guard !bytes.isEmpty, bytes.count <= 128 else {
             throw U64Error.deviceErrors(["writeMemory: 1–128 bytes required"])
         }
-        let hex   = bytes.map { String(format: "%02X", $0) }.joined()
-        let route = "v1/machine:writemem?address=\(String(format: "%04X", address))&data=\(hex)"
-        try await put(route)
+        let hex = bytes.map { String(format: "%02X", $0) }.joined()
+        try await put("v1/machine:writemem", query: [
+            URLQueryItem(name: "address", value: String(format: "%04X", address)),
+            URLQueryItem(name: "data",    value: hex),
+        ])
     }
 
     /// Mounts a disk image already on the U64 filesystem.
     /// Note: The U64 API uses PUT for mount operations.
+    ///
+    /// `path` is passed raw — `URLComponents` handles the escaping. Encoding it
+    /// by hand first meant it went through percent-encoding twice, turning
+    /// every `%` into `%25`.
     func mountDisk(drive: String, path: String, mode: String = "readwrite") async throws {
-        guard let encoded = path.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
-            throw U64Error.invalidURL
-        }
-        try await put("v1/drives/\(drive):mount?image=\(encoded)&mode=\(mode)")
+        try await put("v1/drives/\(drive):mount", query: [
+            URLQueryItem(name: "image", value: path),
+            URLQueryItem(name: "mode",  value: mode),
+        ])
     }
 
     /// POSTs a disk image (.d64 etc.) directly to a drive.
     func mountDiskImage(_ data: Data, drive: String, type diskType: String = "d64", mode: String = "readwrite") async throws {
-        try await postBinary(data, route: "v1/drives/\(drive):mount?type=\(diskType)&mode=\(mode)")
+        try await postBinary(data, route: "v1/drives/\(drive):mount", query: [
+            URLQueryItem(name: "type", value: diskType),
+            URLQueryItem(name: "mode", value: mode),
+        ])
     }
 
     // MARK: - Private Networking
 
     /// Constructs a valid base URL from the configured host string.
+    ///
+    /// Tests for `://` rather than a bare `http` prefix, so a host literally
+    /// named something like `httpbox` isn't mistaken for a full URL.
     private func baseURL() throws -> URL {
         let trimmed = host.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw U64Error.notConfigured }
-        let raw = trimmed.hasPrefix("http") ? trimmed : "http://\(trimmed)"
+        let raw = trimmed.contains("://") ? trimmed : "http://\(trimmed)"
         guard let url = URL(string: raw) else { throw U64Error.invalidURL }
         return url
     }
 
+    /// Builds the full URL for a route and its query.
+    ///
+    /// Query parameters must be assembled through `URLComponents`, never
+    /// appended to the route string. `URL.appendingPathComponent` treats its
+    /// argument as a single path component and escapes `?` to `%3F`, so
+    /// `v1/machine:readmem?address=C000` reached the device as a literal path
+    /// with no query at all — silently breaking every parameterised route.
+    ///
+    /// Exposed at `internal` so the URL shape can be asserted in tests without
+    /// a device on the network.
+    func url(for route: String, query: [URLQueryItem] = []) throws -> URL {
+        let base = try baseURL()
+        guard var components = URLComponents(url: base, resolvingAgainstBaseURL: false) else {
+            throw U64Error.invalidURL
+        }
+
+        // Preserve any path prefix the user typed into the host field.
+        var prefix = components.path
+        if prefix.hasSuffix("/") { prefix.removeLast() }
+        components.path = prefix + "/" + route
+
+        if !query.isEmpty {
+            components.queryItems = query
+            // URLComponents leaves `+` unescaped, and many servers read it as a
+            // space. Matters for disk image paths like "/Usb0/rock+roll.d64".
+            components.percentEncodedQuery = components.percentEncodedQuery?
+                .replacingOccurrences(of: "+", with: "%2B")
+        }
+
+        guard let url = components.url else { throw U64Error.invalidURL }
+        return url
+    }
+
     /// Constructs a URLRequest for the given route and HTTP method.
-    private func request(_ route: String, method: String) throws -> URLRequest {
-        let url  = try baseURL().appendingPathComponent(route)
-        var req  = URLRequest(url: url)
+    private func request(_ route: String,
+                         method: String,
+                         query: [URLQueryItem] = []) throws -> URLRequest {
+        var req = URLRequest(url: try url(for: route, query: query))
         req.httpMethod = method
-        let pwd  = password
+        let pwd = password
         if !pwd.isEmpty { req.setValue(pwd, forHTTPHeaderField: "X-Password") }
         return req
     }
@@ -268,26 +370,29 @@ final class U64Client: ObservableObject {
     /// Checks the response body for U64-specific error arrays and throws if found.
     private func checkErrors(_ data: Data) throws {
         if let result = try? JSONDecoder().decode(U64Response.self, from: data),
-           !result.errors.isEmpty {
-            throw U64Error.deviceErrors(result.errors)
+           let errors = result.errors, !errors.isEmpty {
+            throw U64Error.deviceErrors(errors)
         }
     }
 
     // GET → Codable
-    private func get<T: Decodable>(_ route: String) async throws -> T {
+    private func get<T: Decodable>(_ route: String, query: [URLQueryItem] = []) async throws -> T {
         do {
-            let req          = try request(route, method: "GET")
+            let req          = try request(route, method: "GET", query: query)
             let (data, resp) = try await session.data(for: req)
             try validate(resp)
+            // GET used to skip this, so a device reporting a problem in a
+            // well-formed 200 response still read as success.
+            try checkErrors(data)
             return try JSONDecoder().decode(T.self, from: data)
         } catch let e as U64Error { throw e }
         catch { throw U64Error.networkError(error) }
     }
 
     // GET → raw Data (for readmem)
-    private func getBinary(_ route: String) async throws -> Data {
+    private func getBinary(_ route: String, query: [URLQueryItem] = []) async throws -> Data {
         do {
-            let req          = try request(route, method: "GET")
+            let req          = try request(route, method: "GET", query: query)
             let (data, resp) = try await session.data(for: req)
             try validate(resp)
             return data
@@ -297,9 +402,9 @@ final class U64Client: ObservableObject {
 
     // PUT (no body)
     @discardableResult
-    private func put(_ route: String) async throws -> U64Response {
+    private func put(_ route: String, query: [URLQueryItem] = []) async throws -> U64Response {
         do {
-            let req          = try request(route, method: "PUT")
+            let req          = try request(route, method: "PUT", query: query)
             let (data, resp) = try await session.data(for: req)
             try validate(resp)
             try checkErrors(data)
@@ -309,9 +414,14 @@ final class U64Client: ObservableObject {
     }
 
     // POST binary attachment
-    private func postBinary(_ body: Data, route: String) async throws {
+    private func postBinary(_ body: Data,
+                            route: String,
+                            query: [URLQueryItem] = []) async throws {
+        guard !body.isEmpty else {
+            throw U64Error.deviceErrors(["Nothing to send — the file is empty."])
+        }
         do {
-            var req          = try request(route, method: "POST")
+            var req          = try request(route, method: "POST", query: query)
             req.httpBody     = body
             req.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
             let (data, resp) = try await session.data(for: req)

@@ -875,7 +875,11 @@ class MainWindowController: NSWindowController, NSToolbarDelegate {
                             "✗ Launch failed: \(error.localizedDescription)", type: .error)
                     }
                 case .u64:
-                    U64BuildPipeline.shared.runOnHardware()
+                    // Hand over the PRG we just built rather than calling
+                    // `runOnHardware()`, which would rebuild it from scratch.
+                    U64BuildPipeline.shared.sendPrebuilt(prgURL: prgURL,
+                                                         loadOnly: !U64Client.shared.autoRun,
+                                                         config: buildConfig)
                 case .mega65:
                     // Hand over the PRG we just built. `runOnHardware()` would
                     // discard it and run the whole tokenise-and-bundle pass a
@@ -919,6 +923,10 @@ class MainWindowController: NSWindowController, NSToolbarDelegate {
         }
         if MEGA65BuildPipeline.shared.isTransferring {
             MEGA65BuildPipeline.shared.cancelTransfer()
+            stoppedSomething = true
+        }
+        if U64BuildPipeline.shared.isTransferring {
+            U64BuildPipeline.shared.cancelTransfer()
             stoppedSomething = true
         }
         if EmulatorCoordinator.shared.isActive {

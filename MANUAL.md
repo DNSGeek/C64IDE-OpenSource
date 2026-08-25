@@ -468,8 +468,12 @@ written back to the `.cfg` file.
 
 ### Ultimate 64
 
-**Tools → U64 Settings…** — enter the U64's hostname or IP and password. The
-sheet reports connection status. Then:
+**Tools → U64 Settings…** — enter the U64's hostname or IP and password, and
+**Test Connection** to confirm the IDE can reach it; the panel reports the
+device's firmware, FPGA and core versions. The password is stored in the macOS
+Keychain. **Run after build** controls what `⌘R` does when the U64 is the run
+target — off means load without running; the Run and Load commands below always
+do what they say. Then:
 
 | Command     | Shortcut |
 | ----------- | -------- |
@@ -477,7 +481,8 @@ sheet reports connection status. Then:
 | Load on U64 | `⌃⌘L`    |
 | Reset U64   | —        |
 
-Delivery is over the Ultimate 64's REST API.
+Delivery is over the Ultimate 64's REST API. One transfer runs at a time, and
+**Stop** cancels one in flight.
 
 ### MEGA65
 
