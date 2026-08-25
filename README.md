@@ -18,7 +18,8 @@ available from [gopherbrokesoftware.com](https://gopherbrokesoftware.com/).
   `ca65` / `ld65` toolchain.
 - **BASIC** editing with support for many dialects through a plugin system,
   including Commodore BASIC V2, 3.5, 4.0 and 7.0, MEGA65 BASIC 65, Simon's
-  BASIC, Vision BASIC, the VIC-20 Super Expander, and Commander X16 BASIC.
+  BASIC, Vision BASIC, Final Cartridge III BASIC, the VIC-20 Super Expander,
+  and Commander X16 BASIC.
 - Line-numbered gutter, PETSCII-aware editing, configurable editor fonts, and
   inline reference tooltips.
 - BASIC utilities: renumbering, shortcut expansion, and tokenization support.
@@ -50,7 +51,8 @@ available from [gopherbrokesoftware.com](https://gopherbrokesoftware.com/).
 ### Disk & tape images
 
 - Browse and manipulate **D64** and **D81** disk images.
-- Read and write **TAP** tape images.
+- Read **TAP** tape images and read/write **T64** archives, with export to PRG
+  or disk image.
 
 ### Emulators & hardware targets
 
@@ -82,7 +84,7 @@ Send a freshly built program to any of:
 
 ## Requirements
 
-- macOS (built with Cocoa, AppKit, and SwiftUI).
+- macOS 13.3 or later (built with Cocoa, AppKit, and SwiftUI).
 - The [`cc65`](https://cc65.github.io/) toolchain (`ca65` / `ld65`) for
   assembling and linking.
 - One or more of the supported emulators or hardware devices to run your
