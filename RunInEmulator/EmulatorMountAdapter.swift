@@ -22,8 +22,14 @@ struct DiskMountPlan {
     /// All disks to mount, sorted by drive number.
     let disks: [MountedDisk]
 
-    /// The primary disk (drive 8 by default).
-    var primaryDisk: MountedDisk? { disks.first(where: { $0.driveNumber == 8 }) ?? disks.first }
+    /// The disk to boot from.
+    ///
+    /// Resolved once at plan time from the project's designated primary disk,
+    /// rather than recomputed as "whatever is on drive 8". Those two answers
+    /// disagree whenever the primary disk sits on another drive, and the
+    /// disagreement used to pair one disk's boot-program name with a different
+    /// disk's image.
+    let primaryDisk: MountedDisk?
 
     /// CBM name of the boot program on the primary disk, or nil (= "*").
     let bootProgramName: String?
@@ -57,6 +63,10 @@ enum EmulatorMountAdapter {
     ) -> DiskMountPlan? {
 
         var mounts: [DiskMountPlan.MountedDisk] = []
+        // Resolved together, so the boot-program name can only ever describe an
+        // image that actually made it into the plan.
+        var primaryMount: DiskMountPlan.MountedDisk?
+        var primaryBootName: String?
 
         for disk in config.disks {
             let imageURL = projectRoot.appendingPathComponent(disk.filename)
@@ -64,21 +74,31 @@ enum EmulatorMountAdapter {
                 // Image wasn't produced (build error on that disk) — skip it.
                 continue
             }
-            mounts.append(DiskMountPlan.MountedDisk(
+            let mount = DiskMountPlan.MountedDisk(
                 driveNumber: disk.driveNumber,
                 imageURL:    imageURL,
                 label:       disk.label
-            ))
+            )
+            mounts.append(mount)
+
+            if disk.id == config.primaryDiskID {
+                primaryMount    = mount
+                primaryBootName = disk.bootProgramName?.uppercased()
+            }
         }
 
         guard !mounts.isEmpty else { return nil }
 
-        let primaryDisk = config.disk(withID: config.primaryDiskID)
-        let bootName = primaryDisk?.bootProgramName?.uppercased()
+        let sorted = mounts.sorted { $0.driveNumber < $1.driveNumber }
 
+        // The designated primary is preferred. When its image is missing we
+        // fall back to the lowest-numbered drive and leave the boot name nil:
+        // that name belongs to the disk that didn't build, and handing it to a
+        // different image just produces ?FILE NOT FOUND on the machine.
         return DiskMountPlan(
-            disks:           mounts.sorted { $0.driveNumber < $1.driveNumber },
-            bootProgramName: bootName
+            disks:           sorted,
+            primaryDisk:     primaryMount ?? sorted.first,
+            bootProgramName: primaryMount == nil ? nil : primaryBootName
         )
     }
 
@@ -128,21 +148,30 @@ enum EmulatorMountAdapter {
     /// name syntax like VICE's `-autostart <image>:<name>` — the boot
     /// program ordering is handled by the bundle phase (boot program is
     /// written first on disk).
+    ///
+    /// Only `-8` is emitted. The MEGA65 has one internal 3.5" drive, so the
+    /// `-9`/`-10`/`-11` flags this used to generate for a multi-disk project
+    /// were options `xmega65` doesn't accept.
+    ///
+    /// The plan's boot image always goes in the one drive xemu has, whatever
+    /// drive number the project assigned it. A project that puts its boot disk
+    /// on drive 9 still boots that disk rather than an unrelated one — the
+    /// drive number carries no meaning on a machine with a single drive.
+    ///
+    /// - Returns: Arguments for the boot disk, or an empty array when the plan
+    ///   has nothing to mount. The caller falls back to PRG inject mode.
     static func xemuArguments(for plan: DiskMountPlan, autoRun: Bool) -> [String] {
-        guard plan.primaryDisk != nil else { return [] }
-        var args: [String] = []
+        guard let boot = plan.primaryDisk else { return [] }
 
-        // Drive mounts
-        for disk in plan.disks {
-            args += ["-\(disk.driveNumber)", disk.imageURL.path]
-        }
-
-        // Boot
-        if autoRun {
-            args.append("-autoload")
-        }
-
+        var args = ["-8", boot.imageURL.path]
+        if autoRun { args.append("-autoload") }
         return args
     }
-}
 
+    /// Disks the xemu launch will leave unmounted, so the caller can say so
+    /// rather than letting them vanish silently.
+    static func xemuUnmountedDisks(for plan: DiskMountPlan) -> [DiskMountPlan.MountedDisk] {
+        guard let boot = plan.primaryDisk else { return plan.disks }
+        return plan.disks.filter { $0.imageURL != boot.imageURL }
+    }
+}

@@ -877,7 +877,12 @@ class MainWindowController: NSWindowController, NSToolbarDelegate {
                 case .u64:
                     U64BuildPipeline.shared.runOnHardware()
                 case .mega65:
-                    MEGA65BuildPipeline.shared.runOnHardware()
+                    // Hand over the PRG we just built. `runOnHardware()` would
+                    // discard it and run the whole tokenise-and-bundle pass a
+                    // second time.
+                    MEGA65BuildPipeline.shared.sendPrebuilt(prgURL: prgURL,
+                                                            loadOnly: false,
+                                                            config: buildConfig)
                 }
             } catch {
                 bottomPanelController.appendMessage(
@@ -906,9 +911,26 @@ class MainWindowController: NSWindowController, NSToolbarDelegate {
     }
 
     @objc private func stopProgram(_ sender: Any?) {
+        var stoppedSomething = false
+
+        if XemuBuildPipeline.shared.isXemuRunning {
+            XemuBuildPipeline.shared.stopXemu()
+            stoppedSomething = true
+        }
+        if MEGA65BuildPipeline.shared.isTransferring {
+            MEGA65BuildPipeline.shared.cancelTransfer()
+            stoppedSomething = true
+        }
+        if EmulatorCoordinator.shared.isActive {
+            stoppedSomething = true
+        }
         EmulatorCoordinator.shared.stop()
-        if XemuBuildPipeline.shared.isXemuRunning { XemuBuildPipeline.shared.stopXemu() }
-        bottomPanelController.appendMessage("No emulator running.", type: .info)
+
+        // Only claim nothing was running when nothing was: this used to report
+        // "No emulator running." immediately after stopping one.
+        if !stoppedSomething {
+            bottomPanelController.appendMessage("No emulator running.", type: .info)
+        }
     }
 
     @objc func toggleRightPanel(_ sender: Any?) {

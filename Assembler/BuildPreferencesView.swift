@@ -61,6 +61,10 @@ struct BuildPreferencesView: View {
                     pathField(label: "VICE (xpet)", path: $viewModel.xpetPath)
                     pathField(label: "VICE (xvic)", path: $viewModel.xvicPath)
                     pathField(label: "xemu (xmega65)", path: $viewModel.xemuPath)
+                    pathField(label: "etherload", path: $viewModel.etherloadPath)
+                    Text("etherload sends builds to real MEGA65 hardware; leave it blank to auto-detect. Host and extra flags live in Tools → MEGA65 Settings.")
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(.gray.opacity(0.7))
                     Text("The active dialect picks the Run target: x128 for C128 (e.g. BASIC V7), xpet for PET (BASIC 4), xvic for VIC-20 (Super Expander), xemu for MEGA65 (BASIC 65). Everything else uses your C64 emulator below.")
                         .font(.system(size: 10, design: .monospaced))
                         .foregroundColor(.gray.opacity(0.7))
@@ -308,6 +312,7 @@ class BuildPreferencesViewModel: ObservableObject {
     @Published var xvicPath: String
     @Published var xvicSuperExpanderROM: String
     @Published var xemuPath: String
+    @Published var etherloadPath: String
     @Published var generateDebugInfo: Bool
     @Published var generateListing: Bool
     @Published var viceAutoRun: Bool
@@ -324,6 +329,12 @@ class BuildPreferencesViewModel: ObservableObject {
     private let config: BuildConfiguration
     private var cancellables = Set<AnyCancellable>()
 
+    /// etherload's path is editable from two places — here and Tools → MEGA65
+    /// Settings — so this panel only writes it back when the user actually
+    /// touched the field. Writing unconditionally would silently revert a
+    /// change made in the MEGA65 panel while this window sat open.
+    private let initialEtherloadPath: String
+
     init(config: BuildConfiguration) {
         self.config = config
         self.ca65Path = config.ca65Path
@@ -334,6 +345,8 @@ class BuildPreferencesViewModel: ObservableObject {
         self.xvicPath = config.xvicPath
         self.xvicSuperExpanderROM = config.xvicSuperExpanderROM
         self.xemuPath = config.xemuPath
+        self.etherloadPath = config.etherloadPath
+        self.initialEtherloadPath = config.etherloadPath
         self.generateDebugInfo = config.generateDebugInfo
         self.generateListing = config.generateListing
         self.viceAutoRun = config.viceAutoRun
@@ -355,6 +368,7 @@ class BuildPreferencesViewModel: ObservableObject {
         // validate() shortly after init, which is harmless.
         let pathPublishers: [AnyPublisher<Void, Never>] = [
             $ca65Path, $ld65Path, $vicePath, $x128Path, $xpetPath, $xvicPath, $xemuPath,
+            $etherloadPath,
             $kernalROM, $basicROM, $chargenROM, $xvicSuperExpanderROM,
         ].map { $0.map { _ in () }.eraseToAnyPublisher() }
 
@@ -381,6 +395,7 @@ class BuildPreferencesViewModel: ObservableObject {
         scratch.xpetPath = xpetPath
         scratch.xvicPath = xvicPath
         scratch.xemuPath = xemuPath
+        scratch.etherloadPath = etherloadPath
         scratch.autoDetect()
         ca65Path = scratch.ca65Path
         ld65Path = scratch.ld65Path
@@ -389,6 +404,7 @@ class BuildPreferencesViewModel: ObservableObject {
         xpetPath = scratch.xpetPath
         xvicPath = scratch.xvicPath
         xemuPath = scratch.xemuPath
+        etherloadPath = scratch.etherloadPath
         validate()
     }
 
@@ -402,6 +418,7 @@ class BuildPreferencesViewModel: ObservableObject {
         config.xvicPath = xvicPath
         config.xvicSuperExpanderROM = xvicSuperExpanderROM
         config.xemuPath = xemuPath
+        if etherloadPath != initialEtherloadPath { config.etherloadPath = etherloadPath }
         config.generateDebugInfo = generateDebugInfo
         config.generateListing = generateListing
         config.viceAutoRun = viceAutoRun
@@ -447,6 +464,9 @@ class BuildPreferencesViewModel: ObservableObject {
         }
         if !xvicSuperExpanderROM.isEmpty && !FileManager.default.fileExists(atPath: xvicSuperExpanderROM) {
             validationMessages.append("Super Expander ROM not found at \(xvicSuperExpanderROM)")
+        }
+        if !etherloadPath.isEmpty && !FileManager.default.isExecutableFile(atPath: etherloadPath) {
+            validationMessages.append("etherload not found at \(etherloadPath)")
         }
         if !xemuPath.isEmpty && !FileManager.default.isExecutableFile(atPath: xemuPath) {
             validationMessages.append("xemu not found at \(xemuPath)")

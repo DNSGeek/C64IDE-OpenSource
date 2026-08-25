@@ -43,6 +43,10 @@ class BuildConfiguration: Codable {
     /// Path to xemu's MEGA65 emulator binary (xmega65).
     var xemuPath: String = "/usr/local/bin/xmega65"
 
+    /// Path to the MEGA65 `etherload` utility, used to send builds to real
+    /// hardware. Empty means "auto-detect" — see `MEGA65Client.autoDetectPath()`.
+    var etherloadPath: String = ""
+
     // MARK: - Build Settings
 
     /// Default output directory (relative to source file).
@@ -73,6 +77,16 @@ class BuildConfiguration: Codable {
 
     /// Extra xemu (xmega65) launch arguments. Appended after auto-generated flags.
     var xemuExtraArgs: [String] = []
+
+    /// Extra `etherload` arguments. Appended after the generated mode flags and
+    /// before the PRG path. Flag spelling differs between etherload builds, so
+    /// this is the escape hatch that avoids a code change.
+    var etherloadExtraArgs: [String] = []
+
+    /// MEGA65 hostname or IP, passed to etherload as `-i <host>`. Empty uses
+    /// etherload's own discovery, which only works when the machine is
+    /// reachable by broadcast on the same subnet.
+    var mega65Host: String = ""
 
     /// Auto-run program after loading in VICE.
     var viceAutoRun: Bool = true
@@ -125,6 +139,7 @@ class BuildConfiguration: Codable {
         xpetPath  = value(.xpetPath,  xpetPath)
         xvicPath  = value(.xvicPath,  xvicPath)
         xemuPath  = value(.xemuPath,  xemuPath)
+        etherloadPath = value(.etherloadPath, etherloadPath)
         xvicSuperExpanderROM = value(.xvicSuperExpanderROM, xvicSuperExpanderROM)
 
         outputDirectory   = value(.outputDirectory, outputDirectory)
@@ -137,6 +152,8 @@ class BuildConfiguration: Codable {
 
         viceExtraArgs        = value(.viceExtraArgs, viceExtraArgs)
         xemuExtraArgs        = value(.xemuExtraArgs, xemuExtraArgs)
+        etherloadExtraArgs   = value(.etherloadExtraArgs, etherloadExtraArgs)
+        mega65Host           = value(.mega65Host, mega65Host)
         viceAutoRun          = value(.viceAutoRun, viceAutoRun)
         basicStripWhitespace = value(.basicStripWhitespace, basicStripWhitespace)
         viceKernalROM        = value(.viceKernalROM, viceKernalROM)
@@ -159,15 +176,35 @@ class BuildConfiguration: Codable {
         return dir.appendingPathComponent(configFileName)
     }
 
+    /// UserDefaults key the MEGA65 panel used before etherload moved in here
+    /// with every other tool path.
+    private static let legacyEtherloadDefaultsKey = "mega65EtherloadPath"
+
     /// Loads configuration from disk. Returns defaults if the file is missing or invalid.
     static func load() -> BuildConfiguration {
         let url = configURL
         guard FileManager.default.fileExists(atPath: url.path),
               let data = try? Data(contentsOf: url),
               let config = try? JSONDecoder().decode(BuildConfiguration.self, from: data) else {
-            return BuildConfiguration()
+            let fresh = BuildConfiguration()
+            fresh.adoptLegacyEtherloadPath()
+            return fresh
         }
+        config.adoptLegacyEtherloadPath()
         return config
+    }
+
+    /// Carries a previously configured etherload path over from UserDefaults so
+    /// existing users don't silently lose the setting.
+    private func adoptLegacyEtherloadPath() {
+        guard etherloadPath.isEmpty,
+              let legacy = UserDefaults.standard.string(forKey: Self.legacyEtherloadDefaultsKey)?
+                  .trimmingCharacters(in: .whitespacesAndNewlines),
+              !legacy.isEmpty else { return }
+
+        etherloadPath = legacy
+        save()
+        UserDefaults.standard.removeObject(forKey: Self.legacyEtherloadDefaultsKey)
     }
 
     /// Saves the current configuration to disk atomically.
@@ -232,7 +269,19 @@ class BuildConfiguration: Codable {
             if !xemuPath.isEmpty && !FileManager.default.isExecutableFile(atPath: xemuPath) {
                 errors.append("xemu (xmega65) not found at: \(xemuPath)")
             }
-        case .vc64, .u64, .mega65, .none:
+        case .mega65:
+            // Hardware delivery: the binary is what has to exist. An empty
+            // path is legal — the client auto-detects — so only complain when
+            // both the configured path and auto-detection come up short.
+            if !etherloadPath.isEmpty {
+                if !FileManager.default.isExecutableFile(atPath: etherloadPath) {
+                    errors.append("etherload not found at: \(etherloadPath)")
+                }
+            } else if ExternalTool.locate(MEGA65Client.binaryName,
+                                          extraCandidates: MEGA65Client.extraCandidates) == nil {
+                errors.append("etherload not found. Set its path in MEGA65 Settings.")
+            }
+        case .vc64, .u64, .none:
             break
         }
 
@@ -317,6 +366,13 @@ class BuildConfiguration: Codable {
                 xemuPath = path
                 break
             }
+        }
+
+        // etherload — MEGA65 hardware delivery. Left empty when absent so the
+        // client keeps auto-detecting after the user installs it later.
+        if let etherload = ExternalTool.locate(MEGA65Client.binaryName,
+                                               extraCandidates: MEGA65Client.extraCandidates) {
+            etherloadPath = etherload
         }
     }
 }

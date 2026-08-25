@@ -481,7 +481,16 @@ Delivery is over the Ultimate 64's REST API.
 
 ### MEGA65
 
-**Tools → MEGA65 Settings…** — point the IDE at your `etherload` binary. Then:
+**Tools → MEGA65 Settings…** — point the IDE at your `etherload` binary, and
+optionally set the MEGA65's hostname or IP (passed to etherload as `-i`) plus
+any extra etherload flags. Leave the path blank and the IDE looks in the usual
+install locations (Homebrew, `/usr/local/bin`, `~/.local/bin`); the path can
+also be set in **Preferences → Build → Tool Paths** with the other tools.
+
+Set a host whenever the MEGA65 isn't reachable by broadcast from your Mac —
+a different subnet, a VLAN, or Wi-Fi client isolation. Transfers give up after
+60 seconds so an unreachable machine can't stall the IDE, and **Stop** cancels
+one in flight.
 
 | Command        | Shortcut |
 | -------------- | -------- |

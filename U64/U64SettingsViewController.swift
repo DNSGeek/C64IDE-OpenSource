@@ -262,6 +262,12 @@ extension U64SettingsViewController {
         win.title = "Ultimate 64 Settings"
         win.styleMask = [.titled, .closable]
         win.setContentSize(NSSize(width: 440, height: 300))
+
+        // A programmatic NSWindow defaults to isReleasedWhenClosed = true, which
+        // over-releases under ARC once U64BuildPipeline also holds it — closing
+        // the panel then left a dangling reference for the next open to message.
+        win.isReleasedWhenClosed = false
+
         return win
     }
 }

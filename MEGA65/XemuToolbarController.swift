@@ -85,6 +85,14 @@ final class XemuBuildPipeline: NSObject {
     /// Re-running automatically terminates this instance to prevent multiple windows from fighting for focus.
     public internal(set) var xemuProcess: Process?
 
+    /// PIDs this pipeline terminated on purpose.
+    ///
+    /// A process killed by SIGTERM reports `terminationStatus == 15`, which the
+    /// old `!= 0` check reported as "xemu exited with error" after every Stop
+    /// and every re-run. Tracking our own kills keeps a real crash loud and a
+    /// deliberate stop quiet.
+    private var deliberatelyStopped: Set<Int32> = []
+
     // MARK: - Toolbar Actions
 
     /// Triggers a full build and immediate execution in xemu.
@@ -124,22 +132,41 @@ final class XemuBuildPipeline: NSObject {
         let sizeBytes = (try? prgURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
         logBuild("✓ Built PRG (\(sizeBytes) bytes)", type: .success)
 
-        // Step 2: Launch xemu
-        launchXemu(prgFile: prgURL, autoRun: autoRun, config: wc.buildConfig)
+        // Step 2: Launch xemu.
+        // Routed through the disk-aware entry point so the toolbar button and
+        // ⌘R behave identically on a project that has disk images — the
+        // toolbar used to inject the PRG and silently ignore the disk config.
+        runPRGWithDiskSupport(at: prgURL, autoRun: autoRun, config: wc.buildConfig)
     }
 
     // MARK: - xemu Launch
 
-    /// Public entry point: launches xemu with an already-built PRG.
+    /// Public entry point: launches xemu with an already-built PRG in inject mode.
     /// Used by `MainWindowController.performRun` to hand off a freshly tokenised
     /// BASIC 65 program without triggering this pipeline's own build step.
     public func runPRG(at prgFile: URL, autoRun: Bool, config: BuildConfiguration) {
-        launchXemu(prgFile: prgFile, autoRun: autoRun, config: config)
+        var args: [String] = ["-prg", prgFile.path]
+        if autoRun { args.append("-autoload") }
+        launch(arguments: args, prgFile: prgFile, autoRun: autoRun, config: config, diskMode: false)
     }
 
     /// Core xemu launch logic. Handles binary validation, argument assembly, process spawning,
     /// stderr capture, and termination handling.
-    private func launchXemu(prgFile: URL, autoRun: Bool, config: BuildConfiguration) {
+    ///
+    /// Inject mode and disk mode differ only in `arguments`, so they share this
+    /// one implementation rather than the two near-identical copies that used
+    /// to drift apart.
+    ///
+    /// - Parameters:
+    ///   - arguments: Mode-specific flags. `config.xemuExtraArgs` is appended here.
+    ///   - prgFile:   The build product. Sets the working directory and names the
+    ///                launch in the log; not otherwise used in disk mode.
+    ///   - diskMode:  Only affects log wording.
+    func launch(arguments: [String],
+                prgFile: URL,
+                autoRun: Bool,
+                config: BuildConfiguration,
+                diskMode: Bool) {
         stopXemu()
 
         guard !config.xemuPath.isEmpty,
@@ -150,13 +177,10 @@ final class XemuBuildPipeline: NSObject {
             return
         }
 
-        var args: [String] = ["-prg", prgFile.path]
-        if autoRun {
-            args.append("-autoload")
-        }
-        args.append(contentsOf: config.xemuExtraArgs)
+        let args = arguments + config.xemuExtraArgs
+        let modeNote = diskMode ? " (disk mode)" : ""
 
-        logBuild("Launching xemu: \(prgFile.lastPathComponent)", type: .info)
+        logBuild("Launching xemu\(modeNote): \(prgFile.lastPathComponent)", type: .info)
         logBuild("xemu args: \(args.joined(separator: " "))", type: .plain)
 
         let process = Process()
@@ -180,16 +204,13 @@ final class XemuBuildPipeline: NSObject {
         }
 
         process.terminationHandler = { [weak self] proc in
+            // Clearing the handler releases the pipe along with the closure;
+            // closing the descriptor here instead would race the readability
+            // source and could drop xemu's final stderr line — which is
+            // precisely the fatal-error message worth seeing.
             stderrPipe.fileHandleForReading.readabilityHandler = nil
             DispatchQueue.main.async {
-                if proc.terminationStatus != 0 {
-                    self?.logMessage("xemu exited with error (code \(proc.terminationStatus))",
-                                     type: .error)
-                    self?.logBuild("✗ xemu: exited with error (see Messages tab).", type: .error)
-                } else {
-                    self?.logBuild("xemu exited normally.", type: .info)
-                }
-                self?.xemuProcess = nil
+                self?.handleExit(of: proc)
             }
         }
 
@@ -198,9 +219,9 @@ final class XemuBuildPipeline: NSObject {
             xemuProcess = process
             logBuild("xemu running (PID \(process.processIdentifier))", type: .success)
             if autoRun {
-                logBuild("✓ Running in xemu!", type: .success)
+                logBuild("✓ Running in xemu\(modeNote)!", type: .success)
             } else {
-                logBuild("✓ Loaded in xemu. Type RUN to start.", type: .success)
+                logBuild("✓ Loaded in xemu\(modeNote). Type RUN to start.", type: .success)
             }
         } catch {
             logMessage("Failed to launch xemu: \(error.localizedDescription)", type: .error)
@@ -208,11 +229,37 @@ final class XemuBuildPipeline: NSObject {
         }
     }
 
+    /// Reports how a xemu process ended and clears our reference to it.
+    ///
+    /// Runs on the main queue well after the process died, by which time a
+    /// re-run may already have stored a *newer* process. Clearing the ivar
+    /// unconditionally orphaned that new instance — Stop could no longer reach
+    /// it and the next run wouldn't replace it, which is exactly the
+    /// multiple-windows problem `stopXemu()` exists to prevent. Hence the
+    /// identity check.
+    private func handleExit(of proc: Process) {
+        let wasDeliberate = deliberatelyStopped.remove(proc.processIdentifier) != nil
+
+        if wasDeliberate {
+            logBuild("xemu stopped.", type: .info)
+        } else if proc.terminationReason != .exit {
+            logMessage("xemu was killed by signal \(proc.terminationStatus)", type: .error)
+            logBuild("✗ xemu: killed unexpectedly (see Messages tab).", type: .error)
+        } else if proc.terminationStatus != 0 {
+            logMessage("xemu exited with error (code \(proc.terminationStatus))", type: .error)
+            logBuild("✗ xemu: exited with error (see Messages tab).", type: .error)
+        } else {
+            logBuild("xemu exited normally.", type: .info)
+        }
+
+        if xemuProcess === proc { xemuProcess = nil }
+    }
+
     /// Terminates any running xemu instance spawned by this pipeline.
     public func stopXemu() {
         if let process = xemuProcess, process.isRunning {
+            deliberatelyStopped.insert(process.processIdentifier)
             process.terminate()
-            logBuild("xemu terminated.", type: .info)
         }
         xemuProcess = nil
     }
@@ -241,4 +288,3 @@ final class XemuBuildPipeline: NSObject {
         logBuild(message, type: type)
     }
 }
-
