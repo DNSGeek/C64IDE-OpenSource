@@ -101,9 +101,25 @@ struct BasicCodeGen {
     private var needsMul16 = false
     private var needsDiv16 = false
     /// Set when a byte-table READ needs full 16-bit data-pointer
-    /// addressing (table longer than 256 bytes); gates emission of
+    /// addressing (table longer than 255 bytes); gates emission of
     /// _rt_data_get_byte.
     private var needsWideByteData = false
+    /// Set by any READ from the 5-byte float table; gates _rt_data_get_float.
+    private var needsFloatData = false
+    /// Set by any TI$ read or assignment; gates the clock<->"HHMMSS" runtime.
+    private var needsTiStr = false
+    /// Names of user functions currently being inlined, innermost last.
+    /// DEF FN A(X)=FN A(X) used to recurse until the compiler's own stack
+    /// overflowed and killed the IDE.
+    private var fnInlineStack: [String] = []
+    /// Every FOR seen so far by variable, and the most recent one: a NEXT
+    /// with no open FOR (the second NEXT of a loop closed on another path)
+    /// re-targets the loop's last textual FOR instead of being dropped.
+    private var forHistory: [String: ForEntry] = [:]
+    private var lastForEntry: ForEntry? = nil
+    /// String literals deduplicated by content: PRINT "SCORE" in ten places
+    /// used to embed ten copies.
+    private var stringLitByValue: [String: String] = [:]
 
     // First-pass collection:
     private var dataBytes: [UInt8] = []
@@ -141,6 +157,17 @@ struct BasicCodeGen {
         needsMul16 = false
         needsDiv16 = false
         needsWideByteData = false
+        needsFloatData = false
+        needsTiStr = false
+        fnInlineStack = []
+        forStack = []
+        forHistory = [:]
+        lastForEntry = nil
+        stringDataSection = []
+        floatConstSection = []
+        emittedConstLabels = []
+        floatConstByValue = [:]
+        stringLitByValue = [:]
 
         // Build line → label map
         for line in lines {
@@ -149,6 +176,10 @@ struct BasicCodeGen {
 
         firstPass(lines)
         emitHeader()
+        // RUN starts from zeroed variables and a rewound DATA pointer. The
+        // PRG image ships them zeroed, but typing RUN again after READY
+        // re-enters here with the previous run's values still in place.
+        emit("    jsr _rt_clear_vars")
 
         for line in lines {
             emit("")
@@ -162,6 +193,11 @@ struct BasicCodeGen {
         emit("_program_end:")
         emit("    lda #$37")
         emit("    sta $01")
+        // $A474 never returns, so the return addresses of GOSUBs that were
+        // left by GOTO can be discarded; $FA is the value BASIC's own CLR
+        // resets the stack to.
+        emit("    ldx #$FA")
+        emit("    txs")
         emit("    jmp $A474        ; BASIC warm start — READY.")
 
         emitRuntime()
@@ -205,8 +241,15 @@ struct BasicCodeGen {
             }
         case .dimStmt(let entries):
             for entry in entries {
+                // The interpreter stops with REDIM'D ARRAY; a second entry
+                // here produced a duplicate arr_ label and an assembler
+                // error instead of a diagnostic.
+                guard !arrayDims.contains(where: { $0.name == entry.name }) else {
+                    warn("DIM \(entry.name): array already dimensioned; second DIM ignored")
+                    continue
+                }
                 let sizes = entry.dims.map { e -> Int in
-                    if case .intLit(let n) = e { return n + 1 }
+                    if let n = constIntValue(e), n >= 0 { return n + 1 }
                     warn("DIM \(entry.name): non-constant dimension, allocating 11 elements")
                     return 11
                 }
@@ -366,22 +409,54 @@ struct BasicCodeGen {
     }
 
     // MARK: - Statement Generation
+    /// Names the ROM resolves to system variables; they own no storage.
+    private static let reservedNames: Set<String> = ["TI", "ST", "TI$"]
+
+    /// Diagnoses an input-style store into TI, ST or TI$ (READ/INPUT/GET
+    /// targets). Returns true when the caller must emit nothing.
+    private mutating func rejectReservedTarget(_ name: String, context: String) -> Bool {
+        guard Self.reservedNames.contains(name) else { return false }
+        warn("\(context) into system variable \(name) is not supported; ignored")
+        return true
+    }
+
+    /// Jump target for a line number. A line that does not exist stops
+    /// the program with a warning, the compiled equivalent of UNDEF'D
+    /// STATEMENT, instead of failing later with an undefined line_ symbol.
+    private mutating func jumpTarget(_ n: Int, context: String) -> String {
+        guard lineLabels[n] != nil else {
+            warn("\(context) \(n): line does not exist; program will stop here")
+            return "_rt_err_undef"
+        }
+        return lineLabel(n)
+    }
+
     private mutating func genStmt(_ stmt: Stmt) {
         switch stmt {
         case .gotoStmt(let n):
-            emit("    jmp \(lineLabel(n))")
+            emit("    jmp \(jumpTarget(n, context: "GOTO"))")
         case .gosubStmt(let n):
-            emit("    jsr \(lineLabel(n))")
+            emit("    jsr \(jumpTarget(n, context: "GOSUB"))")
         case .returnStmt:
             emit("    rts")
         case .endStmt, .stopStmt:
             emit("    jmp _program_end")
         case .clrStmt:
-            emit("    ; CLR (no-op in compiled code)")
+            // Clears every variable and array, rewinds DATA, closes files.
+            emit("    jsr _rt_clear_vars")
         case .remStmt:
             break
         case .letFloat(let name, let rhs):
+            if Self.reservedNames.contains(name) {
+                warn("assignment to system variable \(name) is not allowed; ignored")
+                break
+            }
             genAssign(name: name, rhs: rhs)
+        case .letStr("TI$", let rhs):
+            // TI$="HHMMSS" sets the jiffy clock.
+            needsTiStr = true
+            genStrPtr(rhs)
+            emit("    jsr _rt_ti_set")
         case .letStr(let name, let rhs):
             genStrAssign(name: name, rhs: rhs)
         case .letInt(let name, let rhs):
@@ -542,9 +617,6 @@ struct BasicCodeGen {
 
     // MARK: - POKE
     private mutating func genPoke(addr: Expr, val: Expr) {
-        genExprToByte(val)
-        emit("    sta _poke_val")
-
         // No banking needed anywhere: 6510 writes always go through to RAM
         // regardless of $01, and the I/O block at $D000 is visible under
         // the default $37 configuration. The old $35 bank-switch for
@@ -552,11 +624,14 @@ struct BasicCodeGen {
         // by restoring #$37 afterwards, and opened an NMI-with-KERNAL-
         // banked-out crash window (RESTORE key at the wrong microsecond).
         if let constAddr = constWordValue(addr) {
-            emit("    lda _poke_val")
+            // Constant address: the value goes straight from A to memory.
+            genExprToByte(val)
             emit("    sta \(hex(constAddr))")
             return
         }
 
+        genExprToByte(val)
+        emit("    sta _poke_val")
         genExprToWord(addr)
         emit("    sta _poke_lo")
         emit("    stx _poke_hi")
@@ -643,9 +718,12 @@ struct BasicCodeGen {
         // _for_limit that was never stored.
         if cStep == nil { cLimit = nil }
 
-        forStack.append(ForEntry(name: varName, bodyLabel: bodyLabel,
-                                 doneLabel: doneLabel,
-                                 constStep: cStep, constLimit: cLimit))
+        let entry = ForEntry(name: varName, bodyLabel: bodyLabel,
+                             doneLabel: doneLabel,
+                             constStep: cStep, constLimit: cLimit)
+        forStack.append(entry)
+        forHistory[varName] = entry
+        lastForEntry = entry
 
         switch varType.width {
         case .byte:
@@ -688,11 +766,14 @@ struct BasicCodeGen {
                 forStepNeeded.insert(varName)
             }
         default:
-            genExprToFloat(from); genStoreFloatNamed("_for_start_\(asm(varName))")
-            genExprToFloat(to);   genStoreFloatNamed("_for_limit_\(asm(varName))")
+            // Assign the loop variable BEFORE evaluating the limit and step,
+            // as the interpreter does and as the byte/word paths above
+            // already do: FOR X=1 TO X+2 must see the new X in its limit.
+            // The old _for_start detour evaluated the limit first and
+            // ran that loop with the stale X.
+            genExprToFloat(from);     genStoreFloat(varName)
+            genExprToFloat(to);       genStoreFloatNamed("_for_limit_\(asm(varName))")
             genExprToFloat(stepExpr); genStoreFloatNamed("_for_step_\(asm(varName))")
-            genLoadFloatNamed("_for_start_\(asm(varName))")
-            genStoreFloat(varName)
         }
         emit("\(bodyLabel):")
     }
@@ -702,8 +783,18 @@ struct BasicCodeGen {
         if let name = varName,
            let idx = forStack.lastIndex(where: { $0.name == name }) {
             entry = forStack.remove(at: idx)
-        } else if let last = forStack.popLast() {
+        } else if varName == nil, let last = forStack.popLast() {
             entry = last
+        } else if let prior = varName.map({ forHistory[$0] }) ?? lastForEntry {
+            // The loop was already closed by another NEXT on a different
+            // path (IF ... THEN NEXT : GOTO ..., with the ordinary NEXT
+            // further down). The interpreter matches NEXT to FOR at run
+            // time, so this is legal BASIC; jump back to the loop's most
+            // recent textual FOR, with a fresh exit label because the
+            // original one is already placed.
+            entry = ForEntry(name: prior.name, bodyLabel: prior.bodyLabel,
+                             doneLabel: newLabel("fordn"),
+                             constStep: prior.constStep, constLimit: prior.constLimit)
         } else {
             warn("NEXT without a matching FOR (ignored)")
             return
@@ -999,7 +1090,7 @@ struct BasicCodeGen {
     private mutating func genIfGoto(cond: Expr, target: Int) {
         let skip = newLabel("ifsk")
         genConditionBranch(cond, branchIfFalse: skip)
-        emit("    jmp \(lineLabel(target))")
+        emit("    jmp \(jumpTarget(target, context: "IF...THEN"))")
         emit("\(skip):")
     }
 
@@ -1046,12 +1137,18 @@ struct BasicCodeGen {
             // NOT of arbitrary bits: NOT x = -x-1, which is zero only for
             // x = -1. Must be computed bitwise, then tested.
             genWordTest(cond, branchIfFalse: label)
-        case .compareOp(let op, let l, let r) where exprWidth(l) == .byte && exprWidth(r) == .byte:
-            genByteComparison(op: op, left: l, right: r, falseLabel: label)
-        case .compareOp(let op, let l, let r) where exprWidth(l) == .word || exprWidth(r) == .word:
-            genWordComparison(op: op, left: l, right: r, falseLabel: label)
         case .compareOp(let op, let l, let r) where exprIsString(l) || exprIsString(r):
             genStringComparison(op: op, left: l, right: r, falseLabel: label)
+        case .compareOp(let op, let l, let r) where exprWidth(l) == .byte && exprWidth(r) == .byte:
+            genByteComparison(op: op, left: l, right: r, falseLabel: label)
+        case .compareOp(let op, let l, let r) where exprIsIntegral(l) && exprIsIntegral(r):
+            // Both sides are whole 16-bit values (variables, PEEK, integer
+            // arithmetic on them): native word compare. The old test keyed
+            // on either side being word-WIDTH, which sent float variables
+            // through a truncating AYINT and reported 300.5 > 300 false.
+            genWordComparison(op: op, left: l, right: r, falseLabel: label)
+        case .compareOp(let op, let l, let r):
+            genFloatComparison(op: op, left: l, right: r, falseLabel: label)
         default:
             genExprToFloat(cond)
             emit("    lda $61")
@@ -1093,6 +1190,48 @@ struct BasicCodeGen {
         emit("    beq \(label)")
     }
 
+    /// True when the expression is a whole number the 16-bit integer paths
+    /// can hold exactly, so a comparison may skip the FAC. Float-typed
+    /// variables, '/', '^' and the float functions are excluded: they can
+    /// carry a fraction that truncation would erase.
+    private func exprIsIntegral(_ e: Expr) -> Bool {
+        switch e {
+        case .intLit(let n):        return n >= -32768 && n <= 65535
+        case .floatLit(let f):      return f == f.rounded() && f >= -32768 && f <= 65535
+        case .floatVar(let name):   return table[name].width != .float
+        case .intVar, .stVar:       return true
+        case .tiVar:                return false          // 24-bit jiffy counter
+        case .arrayRead(let name, _):
+            if name.hasSuffix("$") { return false }
+            if name.hasSuffix("%") { return true }
+            return table[name].width != .float
+        case .unaryMinus(let inner): return exprIsIntegral(inner)
+        case .notOp, .compareOp:    return true
+        case .binaryOp(let op, let l, let r):
+            switch op {
+            case "+", "-", "*", "AND", "OR": return exprIsIntegral(l) && exprIsIntegral(r)
+            default:                          return false   // "/" and "^" are float
+            }
+        case .funcCall(let fn, _):
+            return ["PEEK", "ASC", "LEN", "POS", "FRE"].contains(fn)
+        default:                    return false
+        }
+    }
+
+    /// FCOMP compares FAC (left) with the packed float at A/Y (right):
+    /// A = 0 equal, 1 when FAC > mem, $FF when FAC < mem.
+    private mutating func genFloatComparison(op: String, left: Expr, right: Expr, falseLabel: String) {
+        let tmp = newLabel("fcmp")
+        emitFloatConst(tmp, 0)
+        genExprToFloat(right)
+        genStoreFloatNamed(tmp)
+        genExprToFloat(left)
+        emit("    lda #<\(tmp)")
+        emit("    ldy #>\(tmp)")
+        emit("    jsr \(ROM.FCOMP)")
+        emitFloatBranchForOp(op, falseLabel: falseLabel)
+    }
+
     /// True when the analysed types allow the expression to hold a negative
     /// value (two's complement in storage). Comparisons must then use
     /// sign-biased sequences: with both operands EOR #$80 (high byte only
@@ -1107,6 +1246,7 @@ struct BasicCodeGen {
             return table[name].isSigned
         case .arrayRead(let name, _):
             return table[name].isSigned
+        case .stVar:               return true    // -128 = DEVICE NOT PRESENT
         case .unaryMinus:          return true
         case .binaryOp("-", _, _): return true
         case .binaryOp(_, let l, let r):
@@ -1144,11 +1284,14 @@ struct BasicCodeGen {
         } else {
             // Sign-biasing both operands turns the unsigned carry tree
             // below into a signed compare; equality is unaffected.
+            // Per-node scratch: the right side may itself contain a
+            // comparison (IF A < (B = C)) that would reuse a shared cell.
+            let s = newLabel("bcs"); emitByteScratch(s)
             if signed { emit("    eor #$80") }
-            emit("    sta _cmp_tmp")
+            emit("    sta \(s)")
             genExprToByte(right)
             if signed { emit("    eor #$80") }
-            emit("    cmp _cmp_tmp")
+            emit("    cmp \(s)")
             switch op {
             case "=":  emit("    bne \(falseLabel)")
             case "<>": emit("    beq \(falseLabel)")
@@ -1167,16 +1310,19 @@ struct BasicCodeGen {
 
     private mutating func genWordComparison(op: String, left: Expr, right: Expr, falseLabel: String) {
         let signed = exprIsSigned(left) || exprIsSigned(right)
+        // Per-node scratch (see genByteComparison).
+        let s = newLabel("wcs"); emitWordScratch(s)
+        let cmpLo = s, cmpHi = "\(s)+1"
         genExprToWord(right)
-        emit("    sta _cmp_lo")
+        emit("    sta \(cmpLo)")
         if signed {
             // Bias the high bytes only: the low-byte compare of a biased
             // word compare stays raw.
             emit("    txa")
             emit("    eor #$80")
-            emit("    sta _cmp_hi")
+            emit("    sta \(cmpHi)")
         } else {
-            emit("    stx _cmp_hi")
+            emit("    stx \(cmpHi)")
         }
         genExprToWord(left)
         if signed {
@@ -1186,23 +1332,23 @@ struct BasicCodeGen {
             emit("    tax")
             emit("    pla")
         }
-        emit("    cpx _cmp_hi")
+        emit("    cpx \(cmpHi)")
         switch op {
         case "=":
             emit("    bne \(falseLabel)")
-            emit("    cmp _cmp_lo")
+            emit("    cmp \(cmpLo)")
             emit("    bne \(falseLabel)")
         case "<>":
             let neOk = newLabel("wne")
             emit("    bne \(neOk)")
-            emit("    cmp _cmp_lo")
+            emit("    cmp \(cmpLo)")
             emit("    beq \(falseLabel)")
             emit("\(neOk):")
         case "<":
             let ltOk = newLabel("wlt")
             emit("    bcc \(ltOk)")
             emit("    bne \(falseLabel)")
-            emit("    cmp _cmp_lo")
+            emit("    cmp \(cmpLo)")
             emit("    bcc \(ltOk)")
             emit("    jmp \(falseLabel)")
             emit("\(ltOk):")
@@ -1213,7 +1359,7 @@ struct BasicCodeGen {
             emit("    beq \(gtEqHi)")
             emit("    jmp \(gtOk)")
             emit("\(gtEqHi):")
-            emit("    cmp _cmp_lo")
+            emit("    cmp \(cmpLo)")
             emit("    beq \(falseLabel)")
             emit("    bcs \(gtOk)")
             emit("    jmp \(falseLabel)")
@@ -1222,7 +1368,7 @@ struct BasicCodeGen {
             let leOk = newLabel("wle")
             emit("    bcc \(leOk)")
             emit("    bne \(falseLabel)")
-            emit("    cmp _cmp_lo")
+            emit("    cmp \(cmpLo)")
             emit("    beq \(leOk)")
             emit("    bcc \(leOk)")
             emit("    jmp \(falseLabel)")
@@ -1231,19 +1377,11 @@ struct BasicCodeGen {
             let geOk = newLabel("wge")
             emit("    bcc \(falseLabel)")
             emit("    bne \(geOk)")
-            emit("    cmp _cmp_lo")
+            emit("    cmp \(cmpLo)")
             emit("    bcc \(falseLabel)")
             emit("\(geOk):")
         default:
-            genExprToFloat(left)
-            let tmp = newLabel("wcmp")
-            emitFloatConst(tmp, 0)
-            genStoreFloatNamed(tmp)
-            genExprToFloat(right)
-            emit("    lda #<\(tmp)")
-            emit("    ldy #>\(tmp)")
-            emit("    jsr \(ROM.FCOMP)")
-            emitFloatBranchForOp(op, falseLabel: falseLabel)
+            break   // the parser only produces the six operators above
         }
     }
 
@@ -1314,11 +1452,15 @@ struct BasicCodeGen {
     private mutating func genPrintExpr(_ expr: Expr) {
         switch expr {
         case .strLit(let s):
-            let lbl = newLabel("pstr")
+            let lbl = stringLiteralLabel(s)
             emit("    lda #<\(lbl)")
             emit("    ldy #>\(lbl)")
             emit("    jsr _print_str")
-            emitStringData(lbl, s)
+        case .strVar("TI$"):
+            genStrPtr(expr)
+            emit("    lda $FB")
+            emit("    ldy $FC")
+            emit("    jsr _print_str")
         case .strVar(let name):
             emit("    lda #<var_\(asm(name))")
             emit("    ldy #>var_\(asm(name))")
@@ -1370,11 +1512,10 @@ struct BasicCodeGen {
     // MARK: - INPUT
     private mutating func genInput(prompt: String?, target: VarTarget) {
         if let p = prompt {
-            let lbl = newLabel("ipr")
+            let lbl = stringLiteralLabel(p)
             emit("    lda #<\(lbl)")
             emit("    ldy #>\(lbl)")
             emit("    jsr _print_str")
-            emitStringData(lbl, p)
         }
         // The interpreter always prints "? " for INPUT, prompt or not.
         emit("    lda #$3F")
@@ -1392,6 +1533,7 @@ struct BasicCodeGen {
             return
         }
         let name = target.name
+        if rejectReservedTarget(name, context: "GET") { return }
         emit("    jsr \(KERNAL.GETIN)")
         if name.hasSuffix("$") {
             emit("    sta var_\(asm(name))")
@@ -1476,6 +1618,7 @@ struct BasicCodeGen {
     }
 
     private mutating func genInputOneVar(_ varName: String) {
+        if rejectReservedTarget(varName, context: "INPUT") { return }
         if varName.hasSuffix("$") {
             emit("    lda #<var_\(asm(varName))")
             emit("    ldy #>var_\(asm(varName))")
@@ -1513,47 +1656,34 @@ struct BasicCodeGen {
     }
 
     /// Fetches the next DATA byte into A, advancing _data_ptr. Tables up to
-    /// 256 bytes keep the fast Y-indexed path (indices 0..255 all reachable;
-    /// the low-byte-only inc can't wrap mid-table). Larger tables go through
-    /// _rt_data_get_byte, which does full 16-bit indexing and carry —
-    /// ldy/inc only ever saw the low byte and wrapped silently after 256.
+    /// 255 bytes keep the fast Y-indexed path with an inline end check
+    /// (reading past the table used to hand back whatever followed it in
+    /// memory; the interpreter stops with OUT OF DATA). Larger tables go
+    /// through _rt_data_get_byte, which does full 16-bit indexing and
+    /// carry - ldy/inc only ever saw the low byte and wrapped silently.
     private mutating func genDataFetchByte() {
-        if dataBytes.count > 256 {
+        if dataBytes.count >= 256 {
             needsWideByteData = true
             emit("    jsr _rt_data_get_byte")
         } else {
+            let ok = newLabel("dok")
             emit("    ldy _data_ptr")
+            emit("    cpy #\(dataBytes.count)")
+            emit("    bcc @\(ok)")
+            emit("    jmp _rt_err_out_of_data")
+            emit("@\(ok):")
             emit("    lda _data_table,y")
             emit("    inc _data_ptr")
         }
     }
 
-    /// Loads the DATA item at _data_ptr into FAC1 (5-byte MFLPT table).
-    /// Does NOT advance the pointer — call `genDataAdvanceFloat` after the
-    /// value has been stored.
+    /// Loads the DATA item at _data_ptr into FAC1 from the 5-byte MFLPT
+    /// table and advances the pointer (FAC1 survives the pointer math).
+    /// One runtime routine instead of ~20 bytes inline per READ, and it
+    /// carries the OUT OF DATA check.
     private mutating func genDataFetchFloat() {
-        let lbl = newLabel("rd")
-        emit("    lda _data_ptr+1")
-        emit("    clc")
-        emit("    adc #>_data_table")
-        emit("    tay")
-        emit("    lda _data_ptr")
-        emit("    clc")
-        emit("    adc #<_data_table")
-        emit("    bcc @\(lbl)")
-        emit("    iny")
-        emit("@\(lbl):")
-        emit("    jsr \(ROM.MOVFM)")
-    }
-
-    private mutating func genDataAdvanceFloat() {
-        emit("    lda _data_ptr")
-        emit("    clc")
-        emit("    adc #5")
-        emit("    sta _data_ptr")
-        emit("    lda _data_ptr+1")
-        emit("    adc #0")
-        emit("    sta _data_ptr+1")
+        needsFloatData = true
+        emit("    jsr _rt_data_get_float")
     }
 
     /// Stores FAC1 into a scalar by its analysed width. AYINT is signed and
@@ -1592,12 +1722,12 @@ struct BasicCodeGen {
             emit("    jsr \(ROM.INTFAC)")   // GIVAYF: A/Y -> FAC1
         } else {
             genDataFetchFloat()
-            genDataAdvanceFloat()
         }
         emit("    jsr _rt_str_from_fac")
     }
 
     private mutating func genReadScalar(_ name: String) {
+        if rejectReservedTarget(name, context: "READ") { return }
         if name.hasSuffix("$") {
             if dataHasString {
                 emit("    lda #<var_\(asm(name))")
@@ -1657,7 +1787,6 @@ struct BasicCodeGen {
         } else {
             genDataFetchFloat()
             genStoreFAC1ByWidth(name)
-            genDataAdvanceFloat()
         }
     }
 
@@ -1728,8 +1857,6 @@ struct BasicCodeGen {
         } else {
             genElementStoreFloat(dest: dest)
         }
-
-        if !dataHasString && !dataIsAllByte { genDataAdvanceFloat() }
     }
 
     // MARK: - Array Element Targets (READ / INPUT#)
@@ -1835,7 +1962,7 @@ struct BasicCodeGen {
             let skip = newLabel("on_c")
             emit("    cmp #\(i + 1)")
             emit("    bne \(skip)")
-            emit("    \(op) \(lineLabel(target))")
+            emit("    \(op) \(jumpTarget(target, context: isGosub ? "ON...GOSUB" : "ON...GOTO"))")
             if isGosub { emit("    jmp \(done)") }
             emit("\(skip):")
         }
@@ -2153,15 +2280,22 @@ struct BasicCodeGen {
             emit("    jsr _rt_fac_to_byte")
             return
         }
+        // Literal-only arithmetic (53280-53248, -1) folds to an immediate.
+        if case .intLit = expr {} else if let v = constIntValue(expr) {
+            emit("    lda #\(v & 0xFF)")
+            return
+        }
         switch expr {
         case .intLit(let n):
             emit("    lda #\(n & 0xFF)")
         case .floatLit(let f):
             genExprToFloat(.floatLit(f))
             emit("    jsr _rt_fac_to_byte")
+        case .stVar:
+            emit("    lda $90")
         case .floatVar(let name):
-            if name == "TI" { genExprToFloat(.tiVar); break }
-            if name == "ST" { genExprToFloat(.stVar); break }
+            if name == "TI" { genExprToByte(.tiVar); break }
+            if name == "ST" { genExprToByte(.stVar); break }
             let w = table[name].width
             if w == .byte || w == .word {
                 emit("    lda var_\(asm(name))")
@@ -2214,6 +2348,9 @@ struct BasicCodeGen {
             // (A possibly-signed divide still falls to float inside
             // genExprToWord, which is exactly what we want.)
             genExprToWord(expr)
+        case .arrayRead(let name, _) where name.hasSuffix("%"):
+            // Direct 2-byte element load; the low byte lands in A.
+            genExprToWord(expr)
         case .unaryMinus(let e):
             genExprToByte(e); emit("    eor #$FF"); emit("    clc"); emit("    adc #1")
         case .funcCall("CHR$", _):
@@ -2226,8 +2363,12 @@ struct BasicCodeGen {
     mutating func genExprToWord(_ expr: Expr) {
         if intPathWouldFloorIntermediates(expr) {
             genExprToFloat(expr)
-            emit("    jsr \(ROM.AYINT)")
-            emit("    lda $65"); emit("    ldx $64")
+            emit("    jsr _rt_fac_to_word")
+            return
+        }
+        // Literal-only arithmetic folds to an immediate 16-bit value.
+        if case .intLit = expr {} else if let v = constIntValue(expr), v >= -32768, v <= 65535 {
+            emit("    lda #<\(v)"); emit("    ldx #>\(v)")
             return
         }
         switch expr {
@@ -2243,22 +2384,40 @@ struct BasicCodeGen {
             }
             let i = Int(f)
             emit("    lda #<\(i)"); emit("    ldx #>\(i)")
+        case .stVar:
+            // Signed byte: DEVICE NOT PRESENT is -128.
+            let pos = newLabel("stx")
+            emit("    lda $90"); emit("    ldx #0")
+            emit("    cmp #$80"); emit("    bcc \(pos)"); emit("    dex"); emit("\(pos):")
         case .floatVar(let name):
-            if name == "TI" { genExprToFloat(.tiVar); break }
-            if name == "ST" { genExprToFloat(.stVar); break }
+            if name == "TI" { genExprToWord(.tiVar); break }
+            if name == "ST" { genExprToWord(.stVar); break }
             let w = table[name].width
             if w == .byte {
                 emit("    lda var_\(asm(name))"); emit("    ldx #0")
+                if table[name].isSigned {
+                    // Sign-extend: a signed byte holding -1 is $FF, and
+                    // zero-extending it made X=-1:Y=X+300 give 555.
+                    let pos = newLabel("sx")
+                    emit("    cmp #$80"); emit("    bcc \(pos)"); emit("    dex"); emit("\(pos):")
+                }
             } else if w == .word {
                 emit("    lda var_\(asm(name))"); emit("    ldx var_\(asm(name))+1")
             } else {
                 genExprToFloat(expr)
-                // AYINT, not FACINT/GETADR: the value may be negative.
-                emit("    jsr \(ROM.AYINT)")
-                emit("    lda $65"); emit("    ldx $64")
+                emit("    jsr _rt_fac_to_word")
             }
         case .intVar(let name):
             emit("    lda var_\(asm(name))"); emit("    ldx var_\(asm(name))+1")
+        case .unaryMinus(let e):
+            // 16-bit two's complement negate, in registers.
+            genExprToWord(e)
+            emit("    eor #$FF"); emit("    clc"); emit("    adc #1"); emit("    tay")
+            emit("    txa"); emit("    eor #$FF"); emit("    adc #0"); emit("    tax"); emit("    tya")
+        case .funcCall("LEN", let args) where !args.isEmpty:
+            genStrPtr(args[0]); emit("    jsr _rt_strlen"); emit("    ldx #0")
+        case .funcCall("ASC", let args) where !args.isEmpty:
+            genStrPtr(args[0]); emit("    ldy #0"); emit("    lda ($FB),y"); emit("    ldx #0")
         case .binaryOp("+", let l, let r):
             // Constant on either side stays register-only.
             if let k = constWordValue(r) ?? constWordValue(l) {
@@ -2329,6 +2488,10 @@ struct BasicCodeGen {
                 if k == 0 {
                     emit("    lda #0")
                     emit("    tax")
+                } else if k == 256 {
+                    // x*256: the low byte becomes the high byte.
+                    emit("    tax")
+                    emit("    lda #0")
                 } else if k > 1 {
                     // Inline shift-add, MSB-first over the bits of k.
                     let s = newLabel("wms"); emitWordScratch(s)
@@ -2386,7 +2549,7 @@ struct BasicCodeGen {
                 if k == 0 {
                     warn("division by constant zero; program will stop here")
                     genExprToWord(l)
-                    emit("    jmp _program_end")
+                    emit("    jmp _rt_err_div0")
                 } else if k == 1 {
                     genExprToWord(l)
                 } else if k.nonzeroBitCount == 1 {
@@ -2479,11 +2642,11 @@ struct BasicCodeGen {
             emit("    jsr _rt_peek_byte"); emit("    ldx #0")
         default:
             genExprToFloat(expr)
-            // AYINT, not FACINT/GETADR: GETADR throws ILLEGAL QUANTITY on
-            // any negative FAC, and word context routinely sees negatives
-            // (A% = -5, signed subexpressions).
-            emit("    jsr \(ROM.AYINT)")
-            emit("    lda $65"); emit("    ldx $64")
+            // Neither ROM conversion alone covers word context: GETADR
+            // throws ILLEGAL QUANTITY on any negative FAC (A% = -5), AYINT
+            // throws above 32767 (POKE INT(53280.4),0). The helper picks
+            // by sign and accepts -32768..65535.
+            emit("    jsr _rt_fac_to_word")
         }
     }
 
@@ -2506,6 +2669,12 @@ struct BasicCodeGen {
     }
 
     mutating func genExprToFloat(_ expr: Expr) {
+        // Literal-only arithmetic becomes one constant load instead of a
+        // chain of FADD/FMUL calls.
+        if case .intLit = expr {} else if let v = constIntValue(expr) {
+            genExprToFloat(.intLit(v))
+            return
+        }
         switch expr {
         case .intLit(let n) where n >= 0 && n <= 255:
             emit("    lda #0"); emit("    ldy #\(n)"); emit("    jsr \(ROM.INTFAC)")
@@ -2571,7 +2740,9 @@ struct BasicCodeGen {
             emit("    lda #0"); emit("    ldy _ti_buf"); emit("    jsr \(ROM.INTFAC)")
             emit("    lda #<\(tmp)"); emit("    ldy #>\(tmp)"); emit("    jsr \(ROM.FADD)")
         case .stVar:
-            emit("    lda #0"); emit("    ldy $90"); emit("    jsr \(ROM.INTFAC)")
+            // The ROM reads ST through its signed-byte conversion ($BC3C):
+            // DEVICE NOT PRESENT is -128, not 128.
+            emit("    lda $90"); emit("    jsr $BC3C")
         case .unaryMinus(let e):
             genExprToFloat(e); emit("    jsr \(ROM.NEGFAC)")
         case .notOp:
@@ -2621,30 +2792,23 @@ struct BasicCodeGen {
                 default: break
                 }
             }
-        case .compareOp(let op, let l, let r):
-            let tmp = newLabel("fcmp")
-            emitFloatConst(tmp, 0.0)
-            genExprToFloat(r); emit("    ldx #<\(tmp)"); emit("    ldy #>\(tmp)"); emit("    jsr \(ROM.MOVMF)")
-            genExprToFloat(l); emit("    lda #<\(tmp)"); emit("    ldy #>\(tmp)"); emit("    jsr \(ROM.FCOMP)")
-            let trueL = newLabel("ct")
-            let endL  = newLabel("ce")
-            switch op {
-            case "=":  emit("    beq \(trueL)")
-            case "<>": emit("    bne \(trueL)")
-            case "<":  emit("    bmi \(trueL)")
-            case ">":  emit("    cmp #1"); emit("    beq \(trueL)")
-            case "<=": emit("    beq \(trueL)"); emit("    bmi \(trueL)")
-            case ">=": emit("    beq \(trueL)"); emit("    cmp #1"); emit("    beq \(trueL)")
-            default: break
-            }
-            emit("    lda #0"); emit("    tay"); emit("    jsr \(ROM.INTFAC)")
-            emit("    jmp \(endL)")
-            emit("\(trueL):")
+        case .compareOp:
+            // Evaluate through the same dispatcher IF uses, so byte, word
+            // and string operands take their native compare instead of
+            // always going through FCOMP.
+            let falseL = newLabel("cf")
+            let endL   = newLabel("ce")
+            genConditionBranch(expr, branchIfFalse: falseL)
             // BASIC truth value is -1, not +1: GIVAYF(A=$FF, Y=$FF) = -1.
             emit("    lda #$FF"); emit("    tay"); emit("    jsr \(ROM.INTFAC)")
+            emit("    jmp \(endL)")
+            emit("\(falseL):")
+            emit("    lda #0"); emit("    tay"); emit("    jsr \(ROM.INTFAC)")
             emit("\(endL):")
         case .funcCall(let fn, let args):
             genFuncCallToFloat(fn: fn, args: args)
+        case .arrayRead(let name, _) where name.hasSuffix("$"):
+            warn("string array element used in numeric context; FAC left unchanged")
         case .arrayRead(let name, let idxs):
             if let off = constArrayByteOffset(name: name, indices: idxs) {
                 // All subscripts constant: the element address is a ca65
@@ -2720,19 +2884,37 @@ struct BasicCodeGen {
         case "ASC":
             if !args.isEmpty { genStrPtr(args[0]); emit("    ldy #0"); emit("    lda ($FB),y"); emit("    tay"); emit("    lda #0"); emit("    jsr \(ROM.INTFAC)") }
         case "STR$", "CHR$", "LEFT$", "RIGHT$", "MID$":
-            break
+            warn("\(fn) used in numeric context; FAC left unchanged")
         case "TI":     genExprToFloat(.tiVar)
         case "ST":     genExprToFloat(.stVar)
         default:
-            if fn.hasPrefix("FN"), let def = userFunctions[String(fn.dropFirst(2))] {
-                genUserFn(def: def, arg: args.first ?? .intLit(0))
+            if fn.hasPrefix("FN") {
+                let name = String(fn.dropFirst(2))
+                if let def = userFunctions[name] {
+                    genUserFn(name: name, def: def, arg: args.first ?? .intLit(0))
+                } else {
+                    warn("FN \(name) called but never defined with DEF FN; result 0")
+                    genExprToFloat(.intLit(0))
+                }
             } else {
                 warn("unimplemented function: \(fn)")
             }
         }
     }
 
-    private mutating func genUserFn(def: (param: String, body: Expr), arg: Expr) {
+    private mutating func genUserFn(name: String, def: (param: String, body: Expr), arg: Expr) {
+        // Inlining a body that calls back into a function already being
+        // inlined never terminates (the interpreter's runtime equivalent
+        // is OUT OF MEMORY); the old code recursed until the compiler's
+        // own stack overflowed.
+        guard !fnInlineStack.contains(name) else {
+            warn("FN \(name) is recursive; the inner call evaluates to 0")
+            genExprToFloat(.intLit(0))
+            return
+        }
+        fnInlineStack.append(name)
+        defer { fnInlineStack.removeLast() }
+
         let tmp = "fn_arg_\(labelCounter)"
         labelCounter += 1
         genExprToFloat(arg)
@@ -2759,10 +2941,13 @@ struct BasicCodeGen {
     private mutating func genStrPtr(_ expr: Expr) {
         switch expr {
         case .strLit(let s):
-            let lbl = newLabel("slit")
-            emitStringData(lbl, s)
+            let lbl = stringLiteralLabel(s)
             emit("    lda #<\(lbl)"); emit("    sta $FB")
             emit("    lda #>\(lbl)"); emit("    sta $FC")
+        case .strVar("TI$"):
+            // Renders the jiffy clock as "HHMMSS"; pointer comes back in $FB/$FC.
+            needsTiStr = true
+            emit("    jsr _rt_ti_str")
         case .strVar(let name):
             emit("    lda #<var_\(asm(name))"); emit("    sta $FB")
             emit("    lda #>var_\(asm(name))"); emit("    sta $FC")
@@ -2902,9 +3087,6 @@ struct BasicCodeGen {
     private mutating func genStoreFloatNamed(_ label: String) {
         emit("    ldx #<\(label)"); emit("    ldy #>\(label)"); emit("    jsr \(ROM.MOVMF)")
     }
-    private mutating func genLoadFloatNamed(_ label: String) {
-        emit("    lda #<\(label)"); emit("    ldy #>\(label)"); emit("    jsr \(ROM.MOVFM)")
-    }
 
     // MARK: - Helpers
     private mutating func emit(_ line: String) { output.append(line) }
@@ -2927,13 +3109,14 @@ struct BasicCodeGen {
     private func hex(_ n: Int) -> String { String(format: "$%04X", n) }
 
     private func constByteValue(_ expr: Expr) -> Int? {
-        if case .intLit(let n) = expr, n >= 0, n <= 255 { return n }
+        if let n = constIntValue(expr), n >= 0, n <= 255 { return n }
         return nil
     }
     /// Compile-time integer value of an expression, negatives included
-    /// (STEP -1 parses as unaryMinus(intLit(1))). Float literals qualify
-    /// when integral.
+    /// (STEP -1 parses as unaryMinus(intLit(1))) and literal-only
+    /// arithmetic folded (53248+21). Float literals qualify when integral.
     private func constIntValue(_ e: Expr) -> Int? {
+        if let v = BasicTypeAnalyser().foldConstant(e) { return v }
         switch e {
         case .intLit(let n): return n
         case .floatLit(let f):
@@ -3006,7 +3189,14 @@ struct BasicCodeGen {
             if n >= 0 && n <= 255 { return .byte }
             if n <= 65535 { return .word }
             return .float
+        case .unaryMinus(.intLit(let n)):
+            // -1 is a byte-width (signed) constant, so IF X=-1 on a byte
+            // variable keeps the 8-bit compare instead of dropping to FCOMP.
+            if n <= 128 { return .byte }
+            if n <= 32768 { return .word }
+            return .float
         case .floatLit: return .float
+        case .stVar: return .byte
         case .floatVar(let name): return table[name].width
         case .intVar(let name): return table[name].width
         case .funcCall("PEEK", _): return .byte
@@ -3081,9 +3271,81 @@ struct BasicCodeGen {
         emit("")
 
         emit("_rt_sys:")
+        // Same register protocol as the interpreter's SYS ($E12A): A/X/Y/P
+        // are loaded from $030C-$030F before the call and stored back
+        // after, so POKE 780,n : SYS ... conventions keep working.
         emit("    lda _sys_lo"); emit("    sta @sj+1")
         emit("    lda _sys_hi"); emit("    sta @sj+2")
-        emit("@sj:"); emit("    jsr $0000"); emit("    rts")
+        emit("    lda $030F"); emit("    pha")
+        emit("    lda $030C"); emit("    ldx $030D"); emit("    ldy $030E")
+        emit("    plp")
+        emit("@sj:"); emit("    jsr $0000")
+        emit("    php")
+        emit("    sta $030C"); emit("    stx $030D"); emit("    sty $030E")
+        emit("    pla"); emit("    sta $030F")
+        emit("    rts")
+        emit("")
+
+        emit("_rt_clear_vars:")
+        // Zeroes every scalar, FOR cell and array (_vars_start.._image_end),
+        // rewinds DATA, resets the concat buffer and closes all files: what
+        // the interpreter does on RUN and CLR.
+        emit("    jsr $FFE7")                // CLALL
+        emit("    lda #0")
+        emit("    sta _data_ptr"); emit("    sta _data_ptr+1"); emit("    sta _cat_len")
+        emit("    lda #<_vars_start"); emit("    sta $FB")
+        emit("    lda #>_vars_start"); emit("    sta $FC")
+        emit("    lda #0")
+        emit("    ldx #>(_image_end - _vars_start)")   // whole pages
+        emit("    beq @cv_rem")
+        emit("    ldy #0")
+        emit("@cv_page:")
+        emit("    sta ($FB),y"); emit("    iny"); emit("    bne @cv_page")
+        emit("    inc $FC"); emit("    dex"); emit("    bne @cv_page")
+        emit("@cv_rem:")
+        emit("    ldy #<(_image_end - _vars_start)")   // remaining bytes
+        emit("    beq @cv_done")
+        emit("@cv_tail:")
+        emit("    dey"); emit("    sta ($FB),y"); emit("    bne @cv_tail")
+        emit("@cv_done:"); emit("    rts")
+        emit("")
+
+        // Runtime errors: restore default I/O channels, print the message
+        // (device 3 = screen, so a CMD redirect never swallows it) and
+        // warm-start, the compiled equivalent of the ROM's ?XXX ERROR.
+        emit("_rt_err_undef:")
+        emit("    lda #<_msg_undef"); emit("    ldy #>_msg_undef"); emit("    jmp _rt_error")
+        emit("_rt_err_out_of_data:")
+        emit("    lda #<_msg_ood"); emit("    ldy #>_msg_ood"); emit("    jmp _rt_error")
+        emit("_rt_err_div0:")
+        emit("    lda #<_msg_div0"); emit("    ldy #>_msg_div0"); emit("    jmp _rt_error")
+        emit("_rt_err_type:")
+        emit("    lda #<_msg_type"); emit("    ldy #>_msg_type"); emit("    jmp _rt_error")
+        emit("_rt_err_syntax:")
+        emit("    lda #<_msg_syntax"); emit("    ldy #>_msg_syntax")
+        emit("_rt_error:")
+        emit("    pha"); emit("    tya"); emit("    pha")
+        emit("    jsr \(KERNAL.CLRCHN)")
+        emit("    pla"); emit("    tay"); emit("    pla")
+        emit("    jsr _print_str")
+        emit("    jmp _program_end")
+        emit("_msg_undef:  .byte $0D, \"?UNDEF'D STATEMENT  ERROR\", $0D, 0")
+        emit("_msg_ood:    .byte $0D, \"?OUT OF DATA  ERROR\", $0D, 0")
+        emit("_msg_div0:   .byte $0D, \"?DIVISION BY ZERO  ERROR\", $0D, 0")
+        emit("_msg_type:   .byte $0D, \"?TYPE MISMATCH  ERROR\", $0D, 0")
+        emit("_msg_syntax: .byte $0D, \"?SYNTAX  ERROR\", $0D, 0")
+        emit("")
+
+        emit("_rt_fac_to_word:")
+        // FAC -> A=lo, X=hi over the whole word-context range -32768..65535.
+        // GETADR rejects negatives, AYINT rejects values above 32767, so
+        // pick by sign.
+        emit("    lda $66"); emit("    bmi @neg")
+        emit("    jsr \(ROM.FACINT)")          // GETADR: A=hi, Y=lo
+        emit("    tax"); emit("    tya"); emit("    rts")
+        emit("@neg:")
+        emit("    jsr \(ROM.AYINT)")           // $64 hi, $65 lo
+        emit("    lda $65"); emit("    ldx $64"); emit("    rts")
         emit("")
 
         emit("_rt_fac_to_byte:")
@@ -3212,18 +3474,26 @@ struct BasicCodeGen {
         emit("")
 
         emit("_rt_input_str:")
-        emit("    sta $FB"); emit("    sty $FC"); emit("    ldy #0"); emit("    lda #0")
-        emit("    sta $CC"); emit("@is:")
+        // Reads one line through CHRIN into the buffer at A/Y. From the
+        // keyboard the screen editor handles editing and the cursor, but
+        // leaves the cursor at the end of the typed line; BASIC's INPUT
+        // prints the CR itself ($AAD7) and so do we, for the keyboard
+        // only - INPUT# from a file echoes nothing. A file line ends at
+        // CR or when the status byte reports EOF/timeout; without that
+        // check a file with no trailing CR spun forever on CHRIN's zeros.
+        emit("    sta $FB"); emit("    sty $FC"); emit("    ldy #0")
+        emit("@is:")
         emit("    jsr $FFCF"); emit("    cmp #$0D"); emit("    beq @is_done")
-        emit("    cmp #$14"); emit("    beq @is_bs"); emit("    cmp #$00"); emit("    beq @is")
-        emit("    cpy #254"); emit("    bcs @is")
-        emit("    sta ($FB),y"); emit("    iny"); emit("    jmp @is")
-        emit("@is_bs:")
-        emit("    cpy #0"); emit("    beq @is"); emit("    dey"); emit("    jmp @is")
+        emit("    cmp #$00"); emit("    beq @is_chk")
+        emit("    cpy #254"); emit("    bcs @is_chk")
+        emit("    sta ($FB),y"); emit("    iny")
+        emit("@is_chk:")
+        emit("    lda $90"); emit("    beq @is")
         emit("@is_done:")
-        emit("    lda #1"); emit("    sta $CC"); emit("    lda #$20"); emit("    jsr \(KERNAL.CHROUT)")
-        emit("    lda #$14"); emit("    jsr \(KERNAL.CHROUT)")
-        emit("    lda #0"); emit("    sta ($FB),y"); emit("    lda #$0D"); emit("    jsr \(KERNAL.CHROUT)")
+        emit("    lda #0"); emit("    sta ($FB),y")
+        emit("    lda $99"); emit("    bne @is_file")     // input redirected: no echo
+        emit("    lda #$0D"); emit("    jsr \(KERNAL.CHROUT)")
+        emit("@is_file:")
         emit("    rts")
         emit("")
 
@@ -3257,13 +3527,11 @@ struct BasicCodeGen {
         emit("@cd_done:")
         emit("    rts")
         emit("@cd_err:")
-        // Restore default channels before aborting: a GET# reaches this
-        // with the input channel still redirected to a file/serial device,
-        // and warm-starting in that state leaves READY reading from the
-        // disk instead of the keyboard. For plain GET the defaults are
-        // already active and CLRCHN is a harmless no-op.
-        emit("    jsr \(KERNAL.CLRCHN)")
-        emit("    jmp _program_end")
+        // _rt_error restores the default channels first: a GET# reaches
+        // this with the input channel still redirected to a file/serial
+        // device, and warm-starting in that state leaves READY reading
+        // from the disk instead of the keyboard.
+        emit("    jmp _rt_err_syntax")
         emit("")
 
         emit("_rt_num_sep:")
@@ -3350,7 +3618,7 @@ struct BasicCodeGen {
             emit("    lda _div_d")
             emit("    ora _div_d+1")
             emit("    bne @dv")
-            emit("    jmp _program_end")  // ?DIVISION BY ZERO
+            emit("    jmp _rt_err_div0")
             emit("@dv:")
             emit("    lda #0")
             emit("    sta _div_r")
@@ -3389,14 +3657,30 @@ struct BasicCodeGen {
             emit("")
         }
 
+        if needsWideByteData || needsFloatData || dataHasString {
+            // 16-bit "_data_ptr < table size" check shared by every
+            // out-of-line DATA reader; falls into OUT OF DATA otherwise.
+            emit("_rt_data_check:")
+            emit("    lda _data_ptr")
+            emit("    cmp #<(_data_end - _data_table)")
+            emit("    lda _data_ptr+1")
+            emit("    sbc #>(_data_end - _data_table)")
+            emit("    bcs @ood")
+            emit("    rts")
+            emit("@ood:")
+            emit("    jmp _rt_err_out_of_data")
+            emit("")
+        }
+
         if needsWideByteData {
             // Byte-table fetch with full 16-bit indexing, for DATA
-            // tables longer than 256 bytes. Returns the item in A and
+            // tables of 256 bytes or more. Returns the item in A and
             // advances _data_ptr with carry into the high byte. The
-            // Y-indexed inline path can't be used past 256 entries
+            // Y-indexed inline path can't be used past 255 entries
             // because both ldy and inc only touch the pointer's low
             // byte, wrapping the read position back to item 0.
             emit("_rt_data_get_byte:")
+            emit("    jsr _rt_data_check")
             emit("    lda _data_ptr")
             emit("    clc")
             emit("    adc #<_data_table")
@@ -3414,9 +3698,36 @@ struct BasicCodeGen {
             emit("")
         }
 
+        if needsFloatData {
+            // 5-byte MFLPT table: item at _data_ptr -> FAC1, pointer += 5.
+            emit("_rt_data_get_float:")
+            emit("    jsr _rt_data_check")
+            emit("    lda _data_ptr+1")
+            emit("    clc")
+            emit("    adc #>_data_table")
+            emit("    tay")
+            emit("    lda _data_ptr")
+            emit("    clc")
+            emit("    adc #<_data_table")
+            emit("    bcc @ld")
+            emit("    iny")
+            emit("@ld:")
+            emit("    jsr \(ROM.MOVFM)")
+            emit("    lda _data_ptr")
+            emit("    clc")
+            emit("    adc #5")
+            emit("    sta _data_ptr")
+            emit("    bcc @dn")
+            emit("    inc _data_ptr+1")
+            emit("@dn:")
+            emit("    rts")
+            emit("")
+        }
+
         if dataHasString {
             emit("_rt_data_read_str:")
             emit("    sta $FB"); emit("    sty $FC")
+            emit("    jsr _rt_data_check")
             emit("    lda _data_ptr"); emit("    clc"); emit("    adc #<_data_table"); emit("    sta $FD")
             emit("    lda _data_ptr+1"); emit("    adc #>_data_table"); emit("    sta $FE")
             emit("    ldy #0"); emit("    lda ($FD),y"); emit("    cmp #$03"); emit("    bne @tymm")
@@ -3432,7 +3743,7 @@ struct BasicCodeGen {
             emit("    bcc @s2"); emit("    inc _data_ptr+1"); emit("@s2:")
             emit("    lda _data_ptr"); emit("    clc"); emit("    adc _str_tmp"); emit("    sta _data_ptr")
             emit("    bcc @s3"); emit("    inc _data_ptr+1"); emit("@s3:")
-            emit("    rts"); emit("@tymm:"); emit("    jmp _program_end")
+            emit("    rts"); emit("@tymm:"); emit("    jmp _rt_err_type")
             emit("")
 
             // Numeric READ from the tagged stream. Dispatches on the tag
@@ -3443,13 +3754,14 @@ struct BasicCodeGen {
             // Tag $03 (string) under a numeric READ is a type mismatch:
             // stop the program, same as _rt_data_read_str's @tymm.
             emit("_rt_data_read_num:")
+            emit("    jsr _rt_data_check")
             emit("    lda _data_ptr"); emit("    clc"); emit("    adc #<_data_table"); emit("    sta $FD")
             emit("    lda _data_ptr+1"); emit("    adc #>_data_table"); emit("    sta $FE")
             emit("    ldy #0"); emit("    lda ($FD),y")
             emit("    beq @byte")                       // tag $00
             emit("    cmp #$01"); emit("    beq @word") // tag $01
             emit("    cmp #$02"); emit("    beq @float")// tag $02
-            emit("    jmp _program_end")                // tag $03: mismatch
+            emit("    jmp _rt_err_type")                // tag $03: mismatch
             emit("@byte:")
             emit("    iny"); emit("    lda ($FD),y")    // value byte
             emit("    tay")                             // Y = lo
@@ -3487,11 +3799,17 @@ struct BasicCodeGen {
             emit("")
         }
 
+        if needsTiStr { emitTiStrRuntime() }
+
         for line in stringDataSection { emit(line) }
         for line in floatConstSection { emit(line) }
         emit("")
 
         emit("; ── Scratch storage ──")
+        if needsTiStr {
+            emit("_ti_div:     .res 3"); emit("_ti_tmp:     .res 3")
+            emit("_ti_pos:     .res 1"); emit("_ti_str_buf: .res 8")
+        }
         emit("_cmp_tmp:    .res 1"); emit("_cmp_lo:     .res 1"); emit("_cmp_hi:     .res 1")
         emit("_arith_tmp:  .res 1"); emit("_and_tmp:    .res 1"); emit("_xor_tmp:    .res 1")
         emit("_str_tmp:    .res 1")
@@ -3557,10 +3875,117 @@ struct BasicCodeGen {
         } else {
             emit("_data_table:")
         }
+        emit("_data_end:")
+    }
+
+    /// TI$ support: the jiffy clock ($A0-$A2, 60 Hz) rendered as "HHMMSS"
+    /// and parsed back from it. Pure 24-bit integer work: hours are how
+    /// many times 216000 jiffies fit, minutes 3600, seconds 60.
+    private mutating func emitTiStrRuntime() {
+        emit("_rt_ti_str:")
+        emit("    sei")
+        emit("    lda $A0"); emit("    sta _ti_buf+2")
+        emit("    lda $A1"); emit("    sta _ti_buf+1")
+        emit("    lda $A2"); emit("    sta _ti_buf")
+        emit("    cli")
+        emit("    lda #0"); emit("    sta _ti_pos")
+        emit("    lda #$C0"); emit("    sta _ti_div")        // 216000 = $034BC0
+        emit("    lda #$4B"); emit("    sta _ti_div+1")
+        emit("    lda #$03"); emit("    sta _ti_div+2")
+        emit("    jsr _rt_ti_digits")
+        emit("    lda #$10"); emit("    sta _ti_div")        // 3600 = $000E10
+        emit("    lda #$0E"); emit("    sta _ti_div+1")
+        emit("    lda #0");   emit("    sta _ti_div+2")
+        emit("    jsr _rt_ti_digits")
+        emit("    lda #60");  emit("    sta _ti_div")        // 60 = $00003C
+        emit("    lda #0");   emit("    sta _ti_div+1"); emit("    sta _ti_div+2")
+        emit("    jsr _rt_ti_digits")
+        emit("    ldx _ti_pos"); emit("    lda #0"); emit("    sta _ti_str_buf,x")
+        emit("    lda #<_ti_str_buf"); emit("    sta $FB")
+        emit("    lda #>_ti_str_buf"); emit("    sta $FC")
+        emit("    rts")
+        emit("")
+        // Counts how often _ti_div fits into _ti_buf (leaving the
+        // remainder) and appends the count as two ASCII digits.
+        emit("_rt_ti_digits:")
+        emit("    ldy #0")
+        emit("@dl:")
+        emit("    lda _ti_buf");   emit("    sec"); emit("    sbc _ti_div");   emit("    sta _ti_tmp")
+        emit("    lda _ti_buf+1"); emit("    sbc _ti_div+1"); emit("    sta _ti_tmp+1")
+        emit("    lda _ti_buf+2"); emit("    sbc _ti_div+2"); emit("    bcc @dd")
+        emit("    sta _ti_buf+2")
+        emit("    lda _ti_tmp+1"); emit("    sta _ti_buf+1")
+        emit("    lda _ti_tmp");   emit("    sta _ti_buf")
+        emit("    iny"); emit("    bne @dl")
+        emit("@dd:")
+        emit("    tya"); emit("    ldx #$30")
+        emit("@tens:")
+        emit("    cmp #10"); emit("    bcc @ones")
+        emit("    sbc #10"); emit("    inx"); emit("    bne @tens")
+        emit("@ones:")
+        emit("    ora #$30"); emit("    pha")
+        emit("    txa"); emit("    ldx _ti_pos"); emit("    sta _ti_str_buf,x"); emit("    inx")
+        emit("    pla"); emit("    sta _ti_str_buf,x"); emit("    inx")
+        emit("    stx _ti_pos")
+        emit("    rts")
+        emit("")
+        // TI$ = "HHMMSS" at ($FB): accumulate the jiffies and set the clock.
+        emit("_rt_ti_set:")
+        emit("    lda #0"); emit("    sta _ti_buf"); emit("    sta _ti_buf+1"); emit("    sta _ti_buf+2")
+        emit("    ldy #0")
+        emit("    lda #$C0"); emit("    sta _ti_div")
+        emit("    lda #$4B"); emit("    sta _ti_div+1")
+        emit("    lda #$03"); emit("    sta _ti_div+2")
+        emit("    jsr _rt_ti_acc")
+        emit("    lda #$10"); emit("    sta _ti_div")
+        emit("    lda #$0E"); emit("    sta _ti_div+1")
+        emit("    lda #0");   emit("    sta _ti_div+2")
+        emit("    jsr _rt_ti_acc")
+        emit("    lda #60");  emit("    sta _ti_div")
+        emit("    lda #0");   emit("    sta _ti_div+1"); emit("    sta _ti_div+2")
+        emit("    jsr _rt_ti_acc")
+        emit("    sei")
+        emit("    lda _ti_buf+2"); emit("    sta $A0")
+        emit("    lda _ti_buf+1"); emit("    sta $A1")
+        emit("    lda _ti_buf");   emit("    sta $A2")
+        emit("    cli")
+        emit("    rts")
+        emit("")
+        // Next digit of the string at ($FB),y in A; a short string reads
+        // as zeros without advancing.
+        emit("_rt_ti_digit:")
+        emit("    lda ($FB),y"); emit("    beq @end")
+        emit("    iny"); emit("    and #$0F"); emit("    rts")
+        emit("@end:"); emit("    lda #0"); emit("    rts")
+        emit("")
+        // Reads two digits (tens, ones) and adds _ti_div that many times.
+        emit("_rt_ti_acc:")
+        emit("    jsr _rt_ti_digit"); emit("    sta _ti_tmp")
+        emit("    asl"); emit("    asl"); emit("    clc"); emit("    adc _ti_tmp"); emit("    asl")
+        emit("    sta _ti_tmp")
+        emit("    jsr _rt_ti_digit"); emit("    clc"); emit("    adc _ti_tmp")
+        emit("    tax"); emit("    beq @done")
+        emit("@add:")
+        emit("    lda _ti_buf");   emit("    clc"); emit("    adc _ti_div");   emit("    sta _ti_buf")
+        emit("    lda _ti_buf+1"); emit("    adc _ti_div+1"); emit("    sta _ti_buf+1")
+        emit("    lda _ti_buf+2"); emit("    adc _ti_div+2"); emit("    sta _ti_buf+2")
+        emit("    dex"); emit("    bne @add")
+        emit("@done:"); emit("    rts")
+        emit("")
     }
 
     private var stringDataSection: [String] = []
     private var floatConstSection: [String] = []
+
+    /// Label of the PETSCII image for a string literal, shared between
+    /// every use of the same text.
+    private mutating func stringLiteralLabel(_ s: String) -> String {
+        if let existing = stringLitByValue[s] { return existing }
+        let lbl = newLabel("slit")
+        emitStringData(lbl, s)
+        stringLitByValue[s] = lbl
+        return lbl
+    }
 
     private mutating func emitStringData(_ label: String, _ s: String) {
         // Share the tokenizer's PETSCII mapping (Walleij table) instead of
@@ -3674,9 +4099,11 @@ struct BasicCodeGen {
         for line in lines {
             for stmt in line.stmts { collectForVars(stmt, into: &forVarNames) }
         }
-        let reservedNames: Set<String> = ["TI", "ST", "TI$"]
+        let reservedNames = Self.reservedNames
 
-        emit(""); emit("; ── Scalar variables ──")
+        emit("")
+        emit("_vars_start:   ; everything from here to _image_end is zeroed by RUN and CLR")
+        emit("; ── Scalar variables ──")
         for name in allVars where !reservedNames.contains(name) {
             let typ = table[name]
             switch typ {
@@ -3702,7 +4129,6 @@ struct BasicCodeGen {
                 default:    bytes = 5
                 }
                 if varType.width == .float {
-                    emit("_for_start_\(asm(name)): .res \(bytes)")
                     emit("_for_limit_\(asm(name)): .res \(bytes)")
                     emit("_for_step_\(asm(name)):  .res \(bytes)")
                 } else {
@@ -3720,11 +4146,19 @@ struct BasicCodeGen {
 
         if !arrayDims.isEmpty {
             emit(""); emit("; ── Array storage ──")
+            var arrayBytes = 0
             for (name, dims) in arrayDims {
                 let total = dims.reduce(1, *)
                 let bpe = Self.bytesPerElement(for: name)
                 let dimStr = dims.map { String($0 - 1) }.joined(separator: ",")
                 emit("arr_\(asm(name)): .res \(total * bpe)   ; \(name)(\(dimStr))")
+                arrayBytes += total * bpe
+            }
+            // $0801..$A000 is all the room a PRG has. String arrays cost
+            // 256 bytes per element, so DIM A$(200) alone is 51 KB; the
+            // linker error that produced ("range error") named nothing.
+            if arrayBytes > 0x9800 - 0x0801 {
+                warn("arrays need \(arrayBytes) bytes, more than fits below the BASIC ROM; the program will not link")
             }
         }
 

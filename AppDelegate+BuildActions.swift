@@ -342,6 +342,11 @@ extension AppDelegate {
         for error in result.parseErrors {
             wc.bottomPanelController.appendBuildOutput("⚠ \(error)", type: .warning)
         }
+        // Code-generation diagnostics (unsupported constructs, degraded
+        // semantics, dead jump targets) were collected but never shown.
+        for warning in result.warnings {
+            wc.bottomPanelController.appendBuildOutput("⚠ \(warning)", type: .warning)
+        }
 
         if result.success, let asm = result.assembly {
             let table      = result.symbolTable

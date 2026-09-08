@@ -293,7 +293,16 @@ enum BasicNameCanonicalizer {
 
     private static func rewrite(_ e: Expr) -> Expr {
         switch e {
-        case .floatVar(let n): return .floatVar(canonicalName(n))
+        case .floatVar(let n):
+            // The ROM's variable lookup checks the two significant
+            // characters against TI and ST after reading the whole name,
+            // so TIME and STATUS read the system variables on hardware.
+            // Resolve them here so every later pass sees .tiVar/.stVar
+            // and never allocates or reads a phantom var_TI.
+            let c = canonicalName(n)
+            if c == "TI" { return .tiVar }
+            if c == "ST" { return .stVar }
+            return .floatVar(c)
         case .strVar(let n):   return .strVar(canonicalName(n))
         case .intVar(let n):   return .intVar(canonicalName(n))
         case .arrayRead(let n, let idxs):

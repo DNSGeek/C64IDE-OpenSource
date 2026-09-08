@@ -26,8 +26,11 @@ final class BasicTypeAnalyserTests: XCTestCase {
     func test_lattice_byte_widens_to_word()   { XCTAssertEqual(VarType.byte.widened(to: .word),  .word)  }
     func test_lattice_word_widens_to_float()  { XCTAssertEqual(VarType.word.widened(to: .float), .float) }
     func test_lattice_float_does_not_shrink() { XCTAssertEqual(VarType.float.widened(to: .byte), .float) }
-    func test_lattice_byte_plus_sbyte_is_signed_byte() {
-        XCTAssertEqual(VarType.byte.widened(to: .sbyte), .sbyte)
+    func test_lattice_byte_plus_sbyte_is_signed_word() {
+        // 0..255 and -128..127 share no 1-byte representation: joining
+        // them as a signed byte read X=200 back as -56.
+        XCTAssertEqual(VarType.byte.widened(to: .sbyte), .sword)
+        XCTAssertEqual(VarType.sbyte.widened(to: .byte), .sword)
     }
     func test_lattice_string_absorbs_numeric() {
         XCTAssertEqual(VarType.string.widened(to: .byte), .string)
@@ -357,6 +360,75 @@ final class BasicTypeAnalyserTests: XCTestCase {
         let floatVars = t.types.filter { $0.value.width == .float }
         XCTAssertTrue(floatVars.isEmpty,
             "invader.bas needs ZERO float variables. Got: \(floatVars.keys.sorted())")
+    }
+
+    // ═══════════════════════════════════════════════════════
+    // MARK: 11. Signed-byte soundness and order independence
+    // ═══════════════════════════════════════════════════════
+    // Each of these mirrors a program that produced a wrong answer in
+    // VICE before the fix.
+
+    func test_byte_minus_byte_is_signed_word() {
+        // A=10:B=200:C=A-B printed 66 instead of -190 as a signed byte.
+        XCTAssertEqual(analyse("10 A=10:B=200:C=A-B")["C"], .sword)
+    }
+
+    func test_decrement_from_255_is_signed_word() {
+        // X=255:X=X-1 read back as -2 and IF X>0 failed.
+        XCTAssertEqual(analyse("10 X=255:X=X-1")["X"], .sword)
+    }
+
+    func test_negated_byte_var_is_signed_word() {
+        XCTAssertEqual(analyse("10 B=200:A=-B")["A"], .sword)
+    }
+
+    func test_countdown_loop_with_small_literals_stays_signed_byte() {
+        XCTAssertEqual(analyse("10 FOR I=10 TO 1 STEP -1:PRINT I:NEXT")["I"], .sbyte)
+    }
+
+    func test_countdown_loop_from_200_is_signed_word() {
+        // Ran exactly one iteration as a signed byte.
+        XCTAssertEqual(analyse("10 FOR I=200 TO 0 STEP -1:NEXT")["I"], .sword)
+    }
+
+    func test_for_step_variable_float_widens_loop_var() {
+        // S=0.5:FOR X=0 TO 2 STEP S looped forever with a byte step of 0.
+        XCTAssertEqual(analyse("10 S=0.5:FOR X=0 TO 2 STEP S:NEXT")["X"], .float)
+    }
+
+    func test_read_before_assignment_does_not_widen() {
+        XCTAssertEqual(analyse("10 PRINT X\n20 X=-1")["X"], .sbyte)
+    }
+
+    func test_copy_before_source_typed_does_not_widen() {
+        // Y=X is seen before X=ST; Y must still settle on X's exact type.
+        let t = analyse("10 Y=X\n20 X=ST")
+        XCTAssertEqual(t["X"], .sbyte)
+        XCTAssertEqual(t["Y"], .sbyte)
+    }
+
+    func test_read_only_variable_is_byte() {
+        XCTAssertEqual(analyse("10 PRINT Q")["Q"], .byte)
+    }
+
+    func test_unresolvable_cycle_falls_back_to_float() {
+        let t = analyse("10 A=B\n20 B=A")
+        XCTAssertEqual(t["A"], .float)
+        XCTAssertEqual(t["B"], .float)
+    }
+
+    func test_literal_arithmetic_folds() {
+        XCTAssertEqual(analyse("10 X=100+100")["X"], .byte)
+        XCTAssertEqual(analyse("10 X=256*256")["X"], .float)
+        XCTAssertEqual(analyse("10 X=65535+1")["X"], .float)
+    }
+
+    func test_large_negative_literal_is_float() {
+        XCTAssertEqual(analyse("10 X=-40000")["X"], .float)
+    }
+
+    func test_st_is_signed_byte() {
+        XCTAssertEqual(analyse("10 X=ST")["X"], .sbyte)
     }
 }
 

@@ -371,6 +371,26 @@ because that means no ROM float routines are emitted at all. Parse errors are
 reported as build diagnostics with line numbers. Run `⌘R` on the generated `.s`
 tab to assemble and run it.
 
+Code-generation warnings are listed alongside parse errors. They flag constructs
+the compiler cannot reproduce exactly (a `GOTO` to a line that does not exist, a
+recursive `DEF FN`, a second `DIM` of the same array, nested string concatenation
+inside a function argument) and are also left as `; WARNING:` comments in the
+generated assembly.
+
+Compiled programs behave like the interpreter in the following respects:
+`RUN` and `CLR` zero every variable and array and rewind `DATA`; `TI`, `TI$` and
+`ST` are the system clock and status (`TI$="HHMMSS"` sets the clock); `SYS`
+passes A/X/Y/P through locations 780–783; and reading past the end of `DATA`,
+integer division by zero, a `DATA` type mismatch, a non-digit key in a numeric
+`GET`, or a jump to a missing line prints the matching `?… ERROR` and returns to
+`READY.`. Numeric variables are stored as bytes, 16-bit words or floats
+according to the values the analyser can prove they hold; 16-bit arithmetic
+wraps at 65536 where the interpreter would carry on in floating point, so
+address and score math that can exceed that range should involve a float.
+`INPUT` reads one value per line, and `GOSUB` uses the hardware stack, so
+leaving a subroutine with `GOTO` instead of `RETURN` leaks two bytes of stack
+per call.
+
 This is also the route to source-level debugging for BASIC: compile to assembly
 first, then **Build & Debug** the generated file.
 

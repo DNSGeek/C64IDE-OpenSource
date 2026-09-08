@@ -137,6 +137,11 @@ public struct BasicParser {
         case .keyword("PRINT#"):  return parsePrintHash()
         case .keyword("POKE"):    return parsePoke()
         case .keyword("GOTO"):    return parseGoto()
+        case .keyword("GO"):
+            // GO TO (two words) is legal V2 and crunches as GO + TO.
+            advance()
+            consumeKeyword("TO", context: "GO")
+            return .gotoStmt(parseLineNumber(context: "GO TO"))
         case .keyword("GOSUB"):   return parseGosub()
         case .keyword("IF"):      return parseIf()
         case .keyword("FOR"):     return parseFor()
@@ -669,26 +674,31 @@ public struct BasicParser {
     }
 
     private mutating func parseMulDiv() -> Expr {
-        var left = parsePower()
+        var left = parseUnary()
         while case .op(let op) = peek, op == "*" || op == "/" {
             advance()
-            left = .binaryOp(op, left, parsePower())
+            left = .binaryOp(op, left, parseUnary())
         }
         return left
     }
 
-    private mutating func parsePower() -> Expr {
-        let base = parseUnary()
-        if case .op("^") = peek {
-            advance()
-            return .binaryOp("^", base, parsePower()) // right-associative
-        }
-        return base
-    }
-
+    /// Unary minus sits BETWEEN * and ^ in the ROM's precedence table
+    /// ($7D vs $7B and $7F), so -2^2 is -(2^2) = -4 on hardware. The old
+    /// order applied the minus first and printed 4.
     private mutating func parseUnary() -> Expr {
         if case .op("-") = peek { advance(); return .unaryMinus(parseUnary()) }
-        return parsePrimary()
+        return parsePower()
+    }
+
+    private mutating func parsePower() -> Expr {
+        let base = parsePrimary()
+        if case .op("^") = peek {
+            advance()
+            // Right-associative, and the exponent may carry its own sign
+            // (2^-2 is legal and evaluates to 0.25).
+            return .binaryOp("^", base, parseUnary())
+        }
+        return base
     }
 
     /// Per-line cap on expression primaries. Recursive descent has no other

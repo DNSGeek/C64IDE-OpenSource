@@ -689,5 +689,27 @@ final class BasicParserTests: XCTestCase {
         XCTAssertEqual(lines.count, 2)
         XCTAssertEqual(lines[1].stmts.first, .endStmt)
     }
+
+    // MARK: Unary minus precedence
+
+    func test_unary_minus_binds_looser_than_power() {
+        // PRINT -2^2 is -4 on hardware: ^ ($7F) outranks unary minus ($7D).
+        XCTAssertEqual(one("10 X=-2^2"),
+                       .letFloat("X", .unaryMinus(.binaryOp("^", .intLit(2), .intLit(2)))))
+    }
+
+    func test_power_exponent_may_be_negative() {
+        XCTAssertEqual(one("10 X=2^-2"),
+                       .letFloat("X", .binaryOp("^", .intLit(2), .unaryMinus(.intLit(2)))))
+    }
+
+    func test_unary_minus_binds_tighter_than_multiply() {
+        XCTAssertEqual(one("10 X=-2*3"),
+                       .letFloat("X", .binaryOp("*", .unaryMinus(.intLit(2)), .intLit(3))))
+    }
+
+    func test_go_to_two_words() {
+        XCTAssertEqual(one("10 GO TO 100"), .gotoStmt(100))
+    }
 }
 

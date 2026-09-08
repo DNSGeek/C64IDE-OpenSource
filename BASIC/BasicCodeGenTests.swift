@@ -137,9 +137,13 @@ final class BasicCodeGenTests: XCTestCase {
     }
 
     func test_poke_val_uses_byte_load() {
-        let out = compile("10 EX=120\n20 POKE 53248,EX")
+        // A constant address stores the byte straight from A; only a
+        // computed address needs the _poke_val cell and _rt_poke.
+        let out = programBody("10 EX=120\n20 POKE 53248,EX")
         XCTAssertTrue(out.contains("lda var_EX"))
-        XCTAssertTrue(out.contains("sta _poke_val"))
+        XCTAssertTrue(out.contains("sta $D000"))
+        XCTAssertFalse(out.contains("sta _poke_val"))
+        XCTAssertTrue(programBody("10 EX=120:A=53248\n20 POKE A,EX").contains("sta _poke_val"))
     }
 
     // MARK: - GET
@@ -334,9 +338,13 @@ final class BasicCodeGenTests: XCTestCase {
         XCTAssertTrue(out.contains("rts"))
     }
 
-    func test_dangling_goto_still_emits_jmp() {
-        let out = compile("10 GOTO 999")
-        XCTAssertTrue(out.contains("jmp line_999"))
+    func test_dangling_goto_stops_with_undefd_statement() {
+        // A jump to a line that does not exist used to emit `jmp line_999`
+        // and fail at assemble time with an undefined symbol; now it is a
+        // compile warning plus the runtime UNDEF'D STATEMENT stop.
+        let result = BasicCompilerV2.compile("10 GOTO 999")
+        XCTAssertTrue(result.assembly?.contains("jmp _rt_err_undef") ?? false)
+        XCTAssertTrue(result.warnings.contains(where: { $0.contains("999") }))
     }
 
     // MARK: - ON GOTO / GOSUB
@@ -576,10 +584,15 @@ final class BasicCodeGenTests: XCTestCase {
     }
 
     func test_small_byte_table_does_not_emit_wide_reader() {
-        let out = compile(byteDataProgram(count: 256, readLine: "READ B"))
+        // Up to 255 items keep the Y-indexed fast path; its inline
+        // OUT OF DATA check is an 8-bit `cpy #count`, so a 256-item
+        // table (count wraps to 0) takes the 16-bit reader instead.
+        let out = compile(byteDataProgram(count: 255, readLine: "READ B"))
         XCTAssertFalse(out.contains("_rt_data_get_byte"),
-                       "256 items or fewer must keep the Y-indexed fast path")
+                       "255 items or fewer must keep the Y-indexed fast path")
         XCTAssertTrue(out.contains("lda _data_table,y"))
+        XCTAssertTrue(out.contains("cpy #255"))
+        XCTAssertTrue(compile(byteDataProgram(count: 256, readLine: "READ B")).contains("_rt_data_get_byte"))
     }
 
     func test_large_byte_table_uses_16bit_pointer() {
@@ -609,6 +622,147 @@ final class BasicCodeGenTests: XCTestCase {
         XCTAssertTrue(out.contains("lda _data_table,y"), "fetch stays on the byte path")
         XCTAssertTrue(out.contains("jsr $B391"), "byte converts to FAC via GIVAYF")
         XCTAssertFalse(out.contains("adc #5"), "byte table must never advance by 5")
+    }
+
+    // MARK: - Review regressions (each verified against VICE)
+
+    func test_byte_subtraction_result_gets_word_storage() {
+        // A=10:B=200:C=A-B must print -190; a signed BYTE cannot hold it.
+        XCTAssertTrue(compile("10 A=10:B=200:C=A-B:PRINT C").contains("var_C: .res 2"))
+    }
+
+    func test_signed_byte_sign_extends_in_word_context() {
+        // X=-1 : Y=X+300 printed 555 (zero-extended) instead of 299.
+        XCTAssertTrue(programBody("10 X=-1:Y=X+300:PRINT Y").contains("cmp #$80"))
+    }
+
+    func test_float_variable_comparison_uses_fcomp() {
+        // A=300.5 : IF A>300 went through a truncating word compare.
+        let body = programBody("10 A=300.5\n20 IF A>300 THEN PRINT \"Y\"")
+        XCTAssertTrue(body.contains("jsr $BC5B"), "float operand must compare via FCOMP")
+        XCTAssertFalse(body.contains("_rt_fac_to_word"))
+    }
+
+    func test_integer_expression_comparison_stays_on_word_path() {
+        let body = programBody("10 X=300:Y=5\n20 IF X+1>Y THEN PRINT \"Y\"")
+        XCTAssertFalse(body.contains("jsr $BC5B"), "integer operands must not use FCOMP")
+    }
+
+    func test_word_context_float_conversion_accepts_high_addresses() {
+        // POKE INT(53280.4),0 stopped with ILLEGAL QUANTITY via AYINT.
+        let out = compile("10 POKE INT(53280.4),0")
+        XCTAssertTrue(out.contains("jsr _rt_fac_to_word"))
+        XCTAssertTrue(out.contains("jsr $B7F7"), "non-negative values convert through GETADR")
+    }
+
+    func test_float_for_assigns_variable_before_limit() {
+        // FOR X=1 TO X+2 must evaluate its limit with the NEW X.
+        let out = compile("10 X=0.5\n20 FOR X=1 TO X+2:NEXT")
+        let line20 = String(out[out.range(of: "; ── Line 20")!.lowerBound...])
+        let assign = line20.range(of: "ldx #<var_X")!.lowerBound
+        let limit  = line20.range(of: "ldx #<_for_limit_X")!.lowerBound
+        XCTAssertTrue(assign < limit)
+        XCTAssertFalse(out.contains("_for_start_"))
+    }
+
+    func test_second_next_for_closed_loop_reuses_the_for() {
+        let result = BasicCompilerV2.compile("""
+        10 FOR I=1 TO 5
+        20 IF I<3 THEN NEXT:GOTO 50
+        30 PRINT I
+        40 NEXT
+        50 END
+        """)
+        XCTAssertFalse(result.warnings.contains(where: { $0.contains("NEXT without") }))
+        XCTAssertEqual(result.assembly?.components(separatedBy: "jmp for_I_").count, 3,
+                       "both NEXTs jump back to the same loop body")
+    }
+
+    func test_recursive_def_fn_does_not_crash_compiler() {
+        let result = BasicCompilerV2.compile("10 DEF FN A(X)=FN A(X)+1\n20 PRINT FN A(1)")
+        XCTAssertTrue(result.warnings.contains(where: { $0.contains("recursive") }))
+    }
+
+    func test_goto_missing_line_warns_and_stops() {
+        let result = BasicCompilerV2.compile("10 GOTO 500")
+        XCTAssertTrue(result.warnings.contains(where: { $0.contains("500") }))
+        XCTAssertTrue(result.assembly?.contains("jmp _rt_err_undef") ?? false)
+        XCTAssertFalse(result.assembly?.contains("line_500") ?? true)
+    }
+
+    func test_st_reads_as_signed_byte() {
+        XCTAssertTrue(programBody("10 PRINT ST").contains("jsr $BC3C"))
+    }
+
+    func test_ti_string_read_and_assign() {
+        let out = compile("10 PRINT TI$\n20 TI$=\"000000\"")
+        XCTAssertTrue(out.contains("jsr _rt_ti_str"))
+        XCTAssertTrue(out.contains("jsr _rt_ti_set"))
+        XCTAssertFalse(out.contains("var_TI_str"))
+    }
+
+    func test_time_alias_reads_jiffy_clock() {
+        // TIME canonicalises to TI, which the ROM resolves to the clock.
+        let out = compile("10 PRINT TIME")
+        XCTAssertFalse(out.contains("var_TI"))
+        XCTAssertTrue(out.contains("lda $A2"))
+    }
+
+    func test_run_clears_variables_and_data_pointer() {
+        let out = compile("10 X=5")
+        XCTAssertTrue(out.contains("jsr _rt_clear_vars"))
+        XCTAssertTrue(out.contains("_vars_start:"))
+    }
+
+    func test_constant_poke_stores_directly_from_a() {
+        let body = programBody("10 POKE 53280,0")
+        XCTAssertTrue(body.contains("sta $D020"))
+        XCTAssertFalse(body.contains("_poke_val"))
+    }
+
+    func test_literal_arithmetic_folds_to_immediate() {
+        let body = programBody("10 POKE 53248+21,1")
+        XCTAssertTrue(body.contains("sta $D015"))
+        XCTAssertFalse(body.contains("adc"))
+    }
+
+    func test_string_literals_are_deduplicated() {
+        let out = compile("10 PRINT \"HELLO\"\n20 PRINT \"HELLO\"")
+        XCTAssertEqual(out.components(separatedBy: "$48, $45, $4C, $4C, $4F, $00").count, 2,
+                       "one PETSCII image shared by both uses")
+    }
+
+    func test_read_past_data_stops_with_out_of_data() {
+        let out = compile("10 DATA 1,2\n20 READ A,B,C")
+        XCTAssertTrue(out.contains("_rt_err_out_of_data"))
+        XCTAssertTrue(out.contains("cpy #2"))
+    }
+
+    func test_duplicate_dim_warns_instead_of_duplicate_label() {
+        let result = BasicCompilerV2.compile("10 DIM A(5)\n20 DIM A(5)")
+        XCTAssertTrue(result.warnings.contains(where: { $0.contains("already dimensioned") }))
+        XCTAssertEqual(result.assembly?.components(separatedBy: "arr_A:").count, 2)
+    }
+
+    func test_sys_passes_registers_through_780_to_783() {
+        let out = compile("10 SYS 65490")
+        XCTAssertTrue(out.contains("lda $030C"))
+        XCTAssertTrue(out.contains("sta $030C"))
+    }
+
+    func test_float_step_variable_makes_loop_float() {
+        // S=0.5 : FOR X=0 TO 2 STEP S hung forever as a byte loop.
+        XCTAssertTrue(compile("10 S=0.5:FOR X=0 TO 2 STEP S:NEXT").contains("var_X: .res 5"))
+    }
+
+    func test_countdown_from_200_runs_as_word_loop() {
+        XCTAssertTrue(compile("10 FOR I=200 TO 0 STEP -1:NEXT").contains("var_I: .res 2"))
+    }
+
+    func test_input_echoes_cr_for_keyboard_only() {
+        let out = compile("10 INPUT A$")
+        XCTAssertTrue(out.contains("lda $99"), "echo must depend on the input device")
+        XCTAssertFalse(out.contains("lda #$14"), "no space/delete cursor dance")
     }
 }
 
