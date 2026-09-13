@@ -13,6 +13,23 @@ import Foundation
 struct ParseError: Error, CustomStringConvertible {
     let line: Int       // BASIC line number (0 = unknown)
     let message: String
+
+    /// Where in the source text the error sits, for the editor's live
+    /// syntax checker. `sourceLine` is the 0-based index of the text line
+    /// (not the BASIC line number); `column`/`length` are UTF-16 offsets
+    /// within that line. All nil when the position is unknown.
+    let sourceLine: Int?
+    let column: Int?
+    let length: Int?
+
+    init(line: Int, message: String,
+         sourceLine: Int? = nil, column: Int? = nil, length: Int? = nil) {
+        self.line = line
+        self.message = message
+        self.sourceLine = sourceLine
+        self.column = column
+        self.length = length
+    }
     
     var description: String {
         line > 0 ? "Line \(line): \(message)" : message

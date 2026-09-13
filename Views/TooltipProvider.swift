@@ -83,6 +83,14 @@ class TooltipProvider {
             return
         }
 
+        // A syntax diagnostic under the pointer wins over keyword help.
+        if let diagnostic = diagnosticMessage(at: textPoint, in: textView) {
+            if diagnostic.key == lastTooltipWord { return }
+            lastTooltipWord = diagnostic.key
+            showTooltip(diagnostic.message, near: point, in: textView)
+            return
+        }
+
         // Extract the word under the cursor
         let text = textView.string as NSString
         let word = extractWord(from: text, at: charIndex)
@@ -107,6 +115,28 @@ class TooltipProvider {
     /// Dismisses the tooltip when the mouse exits the editor area.
     func handleMouseExited() {
         hideTooltip()
+    }
+
+    // MARK: - Diagnostics
+
+    /// The live syntax checker's message for the character under `point`,
+    /// if any, plus a key that identifies the mark so the panel is not
+    /// rebuilt on every mouse move across it.
+    private func diagnosticMessage(at point: NSPoint, in textView: NSTextView)
+        -> (key: String, message: String)? {
+        guard let layoutManager = textView.layoutManager,
+              let container = textView.textContainer else { return nil }
+        let inset = textView.textContainerInset
+        let adjusted = NSPoint(x: point.x - inset.width, y: point.y - inset.height)
+        var fraction: CGFloat = 0
+        let index = layoutManager.characterIndex(
+            for: adjusted, in: container, fractionOfDistanceBetweenInsertionPoints: &fraction)
+        guard index < layoutManager.numberOfGlyphs else { return nil }
+        var range = NSRange(location: 0, length: 0)
+        guard let message = layoutManager.temporaryAttribute(
+            .syntaxDiagnostic, atCharacterIndex: index, effectiveRange: &range) as? String
+        else { return nil }
+        return (key: "diagnostic@\(range.location):\(message)", message: "⚠ \(message)")
     }
 
     // MARK: - Word Extraction

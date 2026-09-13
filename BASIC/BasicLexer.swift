@@ -121,26 +121,59 @@ struct BasicLexer {
     )
 
     init(_ line: String) {
+        self.init(line, matcher: BasicLexer.v2Matcher)
+    }
+
+    /// Lexes with a caller-supplied keyword table. The compiler never uses
+    /// this: it exists for the editor's live syntax checker, which needs the
+    /// active dialect's keywords recognised as `.keyword` tokens instead of
+    /// being shredded into variable names. Build the matcher once per scan
+    /// (see `BasicKeywordMatcher.init`), not per line.
+    init(_ line: String, matcher: BasicKeywordMatcher) {
         self.source = line          // original case preserved; see header note
         self.idx = source.startIndex
-        self.matcher = BasicLexer.v2Matcher
+        self.matcher = matcher
+        self.tokenStart = source.startIndex
+    }
+
+    /// UTF-16 offset range of every token returned by `tokenize()`, parallel
+    /// to that array (the trailing `.eof` gets an empty range at the end of
+    /// the line). Offsets are relative to the string the lexer was given.
+    /// Used by the syntax checker to underline exactly the token a parse
+    /// error refers to; the compiler ignores it.
+    private(set) var spans: [Range<Int>] = []
+
+    /// Start of the token currently being scanned, for `emit`.
+    private var tokenStart: String.Index
+
+    private func offset(_ i: String.Index) -> Int {
+        source.utf16.distance(from: source.startIndex, to: i)
+    }
+
+    /// Appends `token` together with its source span, which runs from
+    /// `tokenStart` to the current cursor.
+    private mutating func emit(_ token: BasicToken, into tokens: inout [BasicToken]) {
+        tokens.append(token)
+        spans.append(offset(tokenStart)..<offset(idx))
     }
 
     /// Returns the complete token stream, including a trailing `.eof`.
     mutating func tokenize() -> [BasicToken] {
         var tokens: [BasicToken] = []
+        spans = []
 
         while !atEnd {
             skipSpaces()
             guard !atEnd else { break }
+            tokenStart = idx
 
             if current == "\"" {
-                tokens.append(scanString())
+                emit(scanString(), into: &tokens)
                 continue
             }
 
             if current.isNumber || (current == "." && nextChar?.isNumber == true) {
-                tokens.append(scanNumber())
+                emit(scanNumber(), into: &tokens)
                 continue
             }
 
@@ -148,8 +181,8 @@ struct BasicLexer {
             // the character a letter, so intercept it before the
             // identifier branch swallows it into a variable name.
             if current == "\u{03C0}" {
-                tokens.append(.float(Double.pi))
                 advance()
+                emit(.float(Double.pi), into: &tokens)
                 continue
             }
 
@@ -158,43 +191,45 @@ struct BasicLexer {
                     if kw == "REM" {
                         idx = source.endIndex
                     } else if kw == "DATA" {
-                        tokens.append(.keyword(kw))
+                        emit(.keyword(kw), into: &tokens)
                         scanDataItems(into: &tokens)
                     } else {
-                        tokens.append(.keyword(kw))
+                        emit(.keyword(kw), into: &tokens)
                     }
                 } else {
-                    tokens.append(scanIdentifier())
+                    emit(scanIdentifier(), into: &tokens)
                 }
                 continue
             }
 
             switch current {
             case "+", "-", "*", "/", "^":
-                tokens.append(.op(String(current))); advance()
+                let op = String(current); advance()
+                emit(.op(op), into: &tokens)
             case "=":
-                tokens.append(.op("=")); advance()
+                advance(); emit(.op("="), into: &tokens)
             case "<":
                 advance()
-                if !atEnd && current == "=" { tokens.append(.op("<=")); advance() }
-                else if !atEnd && current == ">" { tokens.append(.op("<>")); advance() }
-                else { tokens.append(.op("<")) }
+                if !atEnd && current == "=" { advance(); emit(.op("<="), into: &tokens) }
+                else if !atEnd && current == ">" { advance(); emit(.op("<>"), into: &tokens) }
+                else { emit(.op("<"), into: &tokens) }
             case ">":
                 advance()
-                if !atEnd && current == "=" { tokens.append(.op(">=")); advance() }
-                else { tokens.append(.op(">")) }
-            case "(": tokens.append(.lparen);    advance()
-            case ")": tokens.append(.rparen);    advance()
-            case ",": tokens.append(.comma);     advance()
-            case ";": tokens.append(.semicolon); advance()
-            case ":": tokens.append(.colon);     advance()
-            case "#": tokens.append(.hash);      advance()
+                if !atEnd && current == "=" { advance(); emit(.op(">="), into: &tokens) }
+                else { emit(.op(">"), into: &tokens) }
+            case "(": advance(); emit(.lparen,    into: &tokens)
+            case ")": advance(); emit(.rparen,    into: &tokens)
+            case ",": advance(); emit(.comma,     into: &tokens)
+            case ";": advance(); emit(.semicolon, into: &tokens)
+            case ":": advance(); emit(.colon,     into: &tokens)
+            case "#": advance(); emit(.hash,      into: &tokens)
             default:
                 advance() // Skip unknown characters
             }
         }
 
-        tokens.append(.eof)
+        tokenStart = idx
+        emit(.eof, into: &tokens)
         return tokens
     }
 
@@ -216,13 +251,14 @@ struct BasicLexer {
             skipSpaces()
             guard !atEnd else { return }
             if current == ":" { return }        // next statement; caller emits it
+            tokenStart = idx
             if current == "," {
-                tokens.append(.comma)
                 advance()
+                emit(.comma, into: &tokens)
                 continue
             }
             if current == "\"" {
-                tokens.append(scanString())
+                emit(scanString(), into: &tokens)
                 continue
             }
             // Unquoted item: raw text up to the next comma or colon.
@@ -234,13 +270,13 @@ struct BasicLexer {
             let item = String(raw.drop(while: { $0 == " " }))
             let trimmed = item.trimmingCharacters(in: .whitespaces)
             if trimmed.isEmpty {
-                tokens.append(.stringLiteral(""))
+                emit(.stringLiteral(""), into: &tokens)
             } else if let i = Int(trimmed) {
-                tokens.append(.integer(i))      // sign folded in: DATA -5 works
+                emit(.integer(i), into: &tokens)      // sign folded in: DATA -5 works
             } else if let d = Double(trimmed) {
-                tokens.append(.float(d))
+                emit(.float(d), into: &tokens)
             } else {
-                tokens.append(.stringLiteral(item))
+                emit(.stringLiteral(item), into: &tokens)
             }
         }
     }

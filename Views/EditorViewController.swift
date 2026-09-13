@@ -70,6 +70,11 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSTextStorageD
     var onExternalReload: (() -> Void)?
     /// Fired on the main queue with fresh scan results.
     var onVariablesUpdated: (([BasicVariableInfo]) -> Void)?
+    /// Fired on the main queue whenever the live syntax check finishes
+    /// (an empty list when the document is clean or checking is off).
+    var onDiagnosticsUpdated: (([SyntaxDiagnostic]) -> Void)?
+    /// The most recent syntax-check results for this document.
+    var syntaxDiagnostics: [SyntaxDiagnostic] = []
     
     /// Debounce state. Generation counter beats DispatchWorkItem
     /// cancellation checks: a stale scan that already started can't be
@@ -172,6 +177,23 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSTextStorageD
             name: .appThemeDidChange,
             object: nil
         )
+
+        // Re-run the live syntax check when its toggle flips or the BASIC
+        // dialect changes (a dialect keyword is an error under another).
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(analysisSettingsDidChange(_:)),
+            name: Self.syntaxCheckSettingDidChange,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(analysisSettingsDidChange(_:)),
+            name: .basicDialectDidChange,
+            object: nil
+        )
+    }
+
+    @objc private func analysisSettingsDidChange(_ note: Notification) {
+        scheduleVariableScan()
     }
 
     @objc private func editorFontDidChange(_ note: Notification) {
@@ -885,16 +907,27 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSTextStorageD
 
 extension EditorViewController {
 
+    /// Runs the document's background analysis after a short pause in
+    /// typing: the variable scan for the reference panel (BASIC only) and
+    /// the live syntax check (BASIC and assembly). One debounce serves both.
     func scheduleVariableScan() {
-        guard document.fileType.usesBasicHighlighting else {
+        guard let textView else { return }
+        let fileType = document.fileType
+        if !fileType.usesBasicHighlighting {
             onVariablesUpdated?([])   // clear panel for ASM/text files
+        }
+        guard fileType.usesBasicHighlighting || fileType.usesAssemblyHighlighting else {
+            applyDiagnostics([])
             return
         }
-        guard let textView else { return }
 
         variableScanGeneration += 1
         let generation = variableScanGeneration
         let source = textView.string   // immutable snapshot, main thread
+        let checkSyntax = Self.syntaxCheckEnabled
+        // BasicDialect is a value type: copying it here keeps the
+        // background work off the manager's mutable state.
+        let dialect = BasicDialectManager.shared.activeDialect
 
         // 400ms debounce: long enough to skip per-keystroke churn, short
         // enough that the panel feels live when you pause typing.
@@ -902,20 +935,32 @@ extension EditorViewController {
             // A newer edit superseded this scan before it started.
             guard let self, self.isCurrentGeneration(generation) else { return }
 
-            // BasicParser never throws - it accumulates errors and returns
-            // whatever parsed, so mid-keystroke garbage lines just drop out
-            // and the rest of the program still populates the panel.
-            var parser = BasicParser()
-            let lines = parser.parse(source)
-            let types = BasicTypeAnalyser().analyse(lines)
+            var vars: [BasicVariableInfo]? = nil
+            var diagnostics: [SyntaxDiagnostic] = []
 
-            var scanner = BasicVariableScanner()
-            scanner.honorsTwoCharNames = self.activeDialectUsesTwoCharNames()
-            let vars = scanner.scan(lines, types: types)
+            if fileType.usesBasicHighlighting {
+                // BasicParser never throws - it accumulates errors and returns
+                // whatever parsed, so mid-keystroke garbage lines just drop out
+                // and the rest of the program still populates the panel.
+                var parser = BasicParser()
+                let lines = parser.parse(source)
+                let types = BasicTypeAnalyser().analyse(lines)
+
+                var scanner = BasicVariableScanner()
+                scanner.honorsTwoCharNames = self.activeDialectUsesTwoCharNames()
+                vars = scanner.scan(lines, types: types)
+
+                if checkSyntax {
+                    diagnostics = BasicSyntaxChecker(dialect: dialect).check(source)
+                }
+            } else if checkSyntax {
+                diagnostics = AsmSyntaxChecker().check(source)
+            }
 
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.isCurrentGeneration(generation) else { return }
-                self.onVariablesUpdated?(vars)
+                if let vars { self.onVariablesUpdated?(vars) }
+                self.applyDiagnostics(diagnostics)
             }
         }
     }

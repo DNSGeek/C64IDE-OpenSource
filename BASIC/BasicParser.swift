@@ -28,6 +28,62 @@ public struct BasicParser {
     /// Collected parse errors. Never throws; errors are accumulated here.
     private(set) var errors: [ParseError] = []
 
+    // MARK: - Dialect Awareness (syntax checker only)
+
+    /// Keyword table the lexer uses: pure BASIC V2 for the compiler, V2
+    /// plus the active dialect's keywords for the editor's syntax checker.
+    private let matcher: BasicKeywordMatcher
+    /// Dialect keywords by uppercased name. Empty when compiling.
+    private let dialectKeywords: [String: BasicDialectKeyword]
+    /// True when a dialect was supplied. Some V2 syntax errors are
+    /// tolerated in this mode because extended BASICs accept them.
+    private var isDialectMode: Bool { !dialectKeywords.isEmpty }
+    /// True for the syntax checker's parser (with or without a dialect).
+    /// Direct-mode commands such as RUN and LIST are legal BASIC that the
+    /// compiler cannot translate; the checker accepts them, the compiler
+    /// reports them.
+    private let isLenient: Bool
+
+    /// UTF-16 span of each token in `tokens`, parallel to it.
+    private var spans: [Range<Int>] = []
+    /// 0-based index of the source text line being parsed.
+    private var currentSourceLine = 0
+    /// UTF-16 offset of the statement text within the raw source line
+    /// (past leading whitespace, the line number and the spaces after it).
+    private var contentOffset = 0
+    /// Set when the parser gives up on a statement it does not understand
+    /// (a dialect extension it has skipped). Follow-on errors from the
+    /// same statement would only be noise, so they are dropped until the
+    /// next statement starts.
+    private var suppressErrors = false
+
+    /// The compiler's parser: BASIC V2 only, regardless of the active dialect.
+    init() {
+        self.init(dialect: nil, lenient: false)
+    }
+
+    /// A parser that also recognises `dialect`'s keywords. Statements that
+    /// begin with a dialect keyword are skipped (with parenthesis balance
+    /// checked) rather than reported as errors, and dialect functions are
+    /// accepted inside expressions. This is what the live syntax checker
+    /// uses; the compiler never passes a dialect.
+    init(dialect: BasicDialect?, lenient: Bool = true) {
+        self.isLenient = lenient
+        var keywords = BasicKeywordMatcher.basicV2Keywords
+        var byName: [String: BasicDialectKeyword] = [:]
+        if let dialect {
+            let v2 = Set(keywords)
+            for kw in dialect.keywords {
+                let name = kw.keyword.uppercased()
+                guard !name.isEmpty else { continue }
+                byName[name] = kw
+                if !v2.contains(name) { keywords.append(name) }
+            }
+        }
+        self.matcher = BasicKeywordMatcher(keywords: keywords)
+        self.dialectKeywords = byName
+    }
+
     // MARK: - Entry Point
 
     /// Parses a complete BASIC program string into a list of parsed lines.
@@ -38,9 +94,14 @@ public struct BasicParser {
     mutating func parse(_ source: String) -> [ParsedLine] {
         var lines: [ParsedLine] = []
 
-        for rawLine in source.components(separatedBy: "\n") {
+        for (sourceIndex, rawLine) in source.components(separatedBy: "\n").enumerated() {
+            currentSourceLine = sourceIndex
             let trimmed = rawLine.trimmingCharacters(in: .whitespaces)
             guard !trimmed.isEmpty else { continue }
+
+            // UTF-16 offset of `trimmed` within `rawLine`, so error
+            // positions can be reported against the editor's text.
+            let leading = rawLine.prefix(while: { $0.isWhitespace }).utf16.count
 
             // Extract leading line number
             var numStr = ""
@@ -53,17 +114,25 @@ public struct BasicParser {
             guard let lineNum = Int(numStr), lineNum <= 63999 else {
                 // A numbered line whose number can't be represented used to
                 // vanish without a trace. 63999 is the hardware maximum.
-                recordError("Line number \(numStr) exceeds the maximum of 63999; line ignored")
+                currentLineNumber = 0
+                recordError("Line number \(numStr) exceeds the maximum of 63999; line ignored",
+                            column: leading, length: numStr.utf16.count)
                 continue
             }
             currentLineNumber = lineNum
 
             // Tokenize the statement content (after the line number)
-            let content = String(trimmed[charIdx...]).trimmingCharacters(in: .whitespaces)
-            tokens = tokenize(content)
+            let afterNumber = trimmed[charIdx...]
+            let gap = afterNumber.prefix(while: { $0.isWhitespace }).utf16.count
+            contentOffset = leading + numStr.utf16.count + gap
+            let content = String(afterNumber).trimmingCharacters(in: .whitespaces)
+            var lexer = BasicLexer(content, matcher: matcher)
+            tokens = lexer.tokenize()
+            spans = lexer.spans
             primaryBudget = 250
             pos = 0
             pendingStmts = []
+            suppressErrors = false
 
             let stmts = parseStatementList()
             lines.append(ParsedLine(number: lineNum, stmts: stmts))
@@ -121,6 +190,7 @@ public struct BasicParser {
 
     /// Parses a single statement. Returns `nil` only for `REM` (handled by lexer).
     private mutating func parseOneStatement() -> Stmt? {
+        suppressErrors = false
         switch peek {
         // ── Simple one-token statements ─────────────────
         case .keyword("RETURN"):  advance(); return .returnStmt
@@ -168,11 +238,87 @@ public struct BasicParser {
         case .identifier, .identifierStr, .identifierInt:
             return parseLet()
 
+        // ── Dialect extension statement ──────────────────
+        case .keyword(let kw) where dialectKeywords[kw] != nil:
+            return parseDialectStatement(kw)
+
+        // ── Direct-mode commands: legal in a program, but not compilable ──
+        case .keyword("RUN"), .keyword("LIST"), .keyword("CONT"),
+             .keyword("NEW"), .keyword("VERIFY"):
+            guard case .keyword(let kw) = peek else { return nil }
+            if isLenient { return parseDialectStatement(kw) }
+            recordError("\(kw) is not supported by the compiler")
+            advance()
+            return nil
+
+        case .keyword(let kw):
+            recordError("\(kw) cannot start a statement")
+            advance()
+            return nil
+
         default:
-            recordError("Expected statement, got \(peek)")
+            recordError("Unexpected \(describe(peek)); expected a statement")
             advance()
             return nil
         }
+    }
+
+    // MARK: - Dialect Extensions
+
+    /// Skips a statement that starts with a dialect keyword. The parser
+    /// knows nothing about the extension's grammar, so it only checks what
+    /// every BASIC agrees on: parentheses must balance before the next
+    /// `:` (or ELSE). The statement compiles to nothing, which is fine
+    /// because this path is never used for code generation.
+    private mutating func parseDialectStatement(_ kw: String) -> Stmt {
+        advance() // the keyword
+        var depth = 0
+        while !atEOF && peek != .colon && !peekIsElse {
+            if peek == .lparen { depth += 1 }
+            if peek == .rparen {
+                depth -= 1
+                if depth < 0 {
+                    recordError("Unexpected ')' in \(kw)")
+                    depth = 0
+                }
+            }
+            advance()
+        }
+        if depth > 0 { recordError("Missing ')' in \(kw)") }
+        return .remStmt
+    }
+
+    /// True for dialect keywords that produce a value (JOY(1), HEX$(n)...).
+    private func dialectKeywordIsFunction(_ kw: String) -> Bool {
+        guard let def = dialectKeywords[kw] else { return false }
+        switch def.type?.lowercased() {
+        case "function", "math", "string": return true
+        default: return kw.hasSuffix("$") || kw.hasSuffix("(")
+        }
+    }
+
+    /// A dialect function call in expression position. Arguments are
+    /// parsed as ordinary expressions when parenthesised; a bare keyword
+    /// (BASIC 7's `ERR$`, Vision's `JOY1`) is accepted as a no-argument call.
+    private mutating func parseDialectFunction(_ kw: String) -> Expr {
+        advance() // keyword
+        guard peek == .lparen else { return .funcCall(kw, []) }
+        advance() // (
+        var args: [Expr] = []
+        if peek != .rparen {
+            args = parseExprList(until: .rparen)
+        }
+        consumeRParen()
+        return .funcCall(kw, args)
+    }
+
+    /// A dialect keyword that is not a function turned up inside a V2
+    /// statement (`PRINT USING`, `GET KEY`, `OPEN ... FOR`). The rest of
+    /// the statement follows the extension's grammar, which this parser
+    /// does not know, so skip it and keep quiet about it.
+    private mutating func bailOutOfStatement() {
+        suppressErrors = true
+        skipToColon()
     }
 
     // MARK: - Statement Parsers
@@ -183,7 +329,7 @@ public struct BasicParser {
 
         while !atEOF && peek != .colon {
             // ELSE is not a keyword — stop here so IF parser can claim it.
-            if case .identifier("ELSE") = peek { break }
+            if peekIsElse { break }
             switch peek {
             case .semicolon:
                 advance()
@@ -204,7 +350,7 @@ public struct BasicParser {
         consumeComma()
         var items: [PrintItem] = []
         while !atEOF && peek != .colon {
-            if case .identifier("ELSE") = peek { break }
+            if peekIsElse { break }
             switch peek {
             case .semicolon: advance(); items.append(.noNewline)
             case .comma:     advance(); items.append(.tab)
@@ -246,8 +392,17 @@ public struct BasicParser {
         advance() // IF
         let cond = parseExpr()
 
-        // THEN is required in BASIC V2
-        if case .keyword("THEN") = peek { advance() }
+        // THEN is required in BASIC V2, except in the `IF cond GOTO line`
+        // form. Anything else after the condition is a ?SYNTAX ERROR on
+        // hardware, and the previous silent acceptance compiled
+        // `IF A=1 PRINT "X"` as if THEN had been typed.
+        if case .keyword("THEN") = peek {
+            advance()
+        } else if case .keyword("GOTO") = peek {
+            // handled below
+        } else if !suppressErrors {
+            recordError("Expected THEN (or GOTO) after IF condition")
+        }
 
         // THEN followed directly by a line number → ifGoto
         if case .integer(let n) = peek {
@@ -287,14 +442,24 @@ public struct BasicParser {
     /// `IF cond THEN 100 ELSE ...` still works.
     private mutating func skipUnreachableThenTail() {
         while !atEOF {
-            if case .identifier("ELSE") = peek { return }
+            if peekIsElse { return }
             advance()
+        }
+    }
+
+    /// ELSE is an identifier to the V2 lexer and a keyword once a dialect
+    /// that defines it (BASIC 7, Vision) is active. Both spellings mean
+    /// the same thing here.
+    private var peekIsElse: Bool {
+        switch peek {
+        case .identifier("ELSE"), .keyword("ELSE"): return true
+        default: return false
         }
     }
 
     /// Consume and parse an ELSE branch if present. Returns `nil` otherwise.
     private mutating func parseOptionalElse() -> [Stmt]? {
-        guard case .identifier("ELSE") = peek else { return nil }
+        guard peekIsElse else { return nil }
         advance() // ELSE
         if case .integer(let n) = peek {
             advance()
@@ -315,10 +480,10 @@ public struct BasicParser {
                 continue
             }
             if atEOF { break }
-            if case .identifier("ELSE") = peek { break }
+            if peekIsElse { break }
             if peek == .colon {
                 advance()
-                if case .identifier("ELSE") = peek { break }
+                if peekIsElse { break }
                 continue
             }
             if let s = parseOneStatement() { stmts.append(s) }
@@ -330,7 +495,15 @@ public struct BasicParser {
 
     private mutating func parseFor() -> Stmt {
         advance() // FOR
-        guard case .identifier(let varName) = peek else {
+        let varName: String
+        switch peek {
+        case .identifier(let name):
+            varName = name
+        case .identifierInt(let name) where isDialectMode:
+            // V2 rejects FOR I%=..., but compiled dialects (Vision BASIC)
+            // allow integer loop counters.
+            varName = name
+        default:
             recordError("Expected variable name after FOR")
             return skipToColon()
         }
@@ -367,6 +540,7 @@ public struct BasicParser {
     private mutating func parseLet() -> Stmt {
         switch peek {
         case .identifier(let name):
+            let nameIndex = pos
             advance()
             if peek == .lparen {
                 advance()
@@ -376,8 +550,18 @@ public struct BasicParser {
                 let rhs = parseExpr()
                 return .arrayWrite(name, indices, rhs)
             }
-            consumeOp("=", context: "LET")
-            return .letFloat(name, parseExpr())
+            if case .op("=") = peek {
+                advance()
+                return .letFloat(name, parseExpr())
+            }
+            // A bare word at statement start that is not followed by '='
+            // is almost always a misspelled keyword (PRNT, GOTTO), which
+            // the lexer turned into a variable name. Say so, rather than
+            // "Expected '='", and skip the rest of the statement: the
+            // tokens after a misspelling are not worth diagnosing.
+            recordError("Unknown statement \(name) (or missing '=')", at: nameIndex)
+            suppressErrors = true
+            return skipToColon()
 
         case .identifierStr(let name):
             advance()
@@ -726,7 +910,7 @@ public struct BasicParser {
         case .lparen:
             advance()
             let e = parseExpr()
-            if peek == .rparen { advance() }
+            consumeRParen()
             return e
         case .identifier(let name):
             advance()
@@ -756,13 +940,36 @@ public struct BasicParser {
             }
             return .intVar(name)
         case .keyword(let kw):
+            if dialectKeywords[kw] != nil && !Self.v2ExpressionKeywords.contains(kw) {
+                if dialectKeywordIsFunction(kw) {
+                    return parseDialectFunction(kw)
+                }
+                bailOutOfStatement()
+                return .intLit(0)
+            }
             return parseFuncOrSysVar(kw)
         default:
-            recordError("Expected expression, got \(peek)")
+            recordError("Expected a value, got \(describe(peek))")
             advance()
             return .intLit(0)
         }
     }
+
+    /// Every V2 keyword that can legally appear where a value is expected.
+    private static let v2ExpressionKeywords: Set<String> =
+        numericFunctions.union(stringFunctions).union(noArgFunctions)
+            .union(["TAB(", "SPC(", "FN"])
+
+    /// Argument counts the ROM accepts for each built-in function. Anything
+    /// else is a ?SYNTAX ERROR at run time, so it is worth flagging while
+    /// typing. FN is user-defined and always takes one argument.
+    private static let functionArity: [String: ClosedRange<Int>] = [
+        "ABS": 1...1, "ATN": 1...1, "COS": 1...1, "EXP": 1...1, "FRE": 1...1,
+        "INT": 1...1, "LOG": 1...1, "PEEK": 1...1, "POS": 1...1, "RND": 1...1,
+        "SGN": 1...1, "SIN": 1...1, "SQR": 1...1, "TAN": 1...1, "USR": 1...1,
+        "LEN": 1...1, "ASC": 1...1, "VAL": 1...1, "CHR$": 1...1, "STR$": 1...1,
+        "LEFT$": 2...2, "RIGHT$": 2...2, "MID$": 2...3,
+    ]
 
     private static let numericFunctions: Set<String> = [
         "ABS","ATN","COS","EXP","FRE","INT","LOG","PEEK",
@@ -781,7 +988,7 @@ public struct BasicParser {
         case "TAB(", "SPC(":
             advance()
             let arg = parseExpr()
-            if peek == .rparen { advance() }
+            consumeRParen()
             return .funcCall(kw, [arg])
         case "FN":
             advance() // FN
@@ -800,6 +1007,14 @@ public struct BasicParser {
             return .funcCall("FN\(fnName)", [arg])
         default:
             let name = kw
+            let nameIndex = pos
+            guard Self.v2ExpressionKeywords.contains(kw) else {
+                // A statement keyword (TO, THEN, GOTO...) where a value
+                // belongs: `PRINT TO` or `X = GOTO`.
+                recordError("Unexpected \(kw) in expression")
+                advance()
+                return .intLit(0)
+            }
             advance()
             guard peek == .lparen else {
                 recordError("Expected '(' after \(kw)")
@@ -811,6 +1026,13 @@ public struct BasicParser {
                 args = parseExprList(until: .rparen)
             }
             consumeRParen()
+            if let arity = Self.functionArity[name], !arity.contains(args.count) {
+                let want = arity.lowerBound == arity.upperBound
+                    ? "\(arity.lowerBound)"
+                    : "\(arity.lowerBound) or \(arity.upperBound)"
+                let noun = arity.upperBound == 1 ? "argument" : "arguments"
+                recordError("\(name) takes \(want) \(noun), not \(args.count)", at: nameIndex)
+            }
             return .funcCall(name, args)
         }
     }
@@ -900,8 +1122,48 @@ public struct BasicParser {
         return .remStmt
     }
 
+    /// Records an error at the current token.
     private mutating func recordError(_ message: String) {
-        errors.append(ParseError(line: currentLineNumber, message: message))
+        recordError(message, at: pos)
+    }
+
+    /// Records an error positioned on the token at `tokenIndex`. Errors
+    /// are dropped while `suppressErrors` is set (see `bailOutOfStatement`).
+    private mutating func recordError(_ message: String, at tokenIndex: Int) {
+        guard !suppressErrors else { return }
+        let span = spans[safe: tokenIndex] ?? spans.last ?? 0..<0
+        recordError(message,
+                    column: contentOffset + span.lowerBound,
+                    length: max(span.count, 1))
+    }
+
+    /// Records an error at an explicit position within the source line.
+    private mutating func recordError(_ message: String, column: Int, length: Int) {
+        errors.append(ParseError(line: currentLineNumber, message: message,
+                                 sourceLine: currentSourceLine,
+                                 column: column, length: length))
+    }
+
+    /// Human-readable name for a token in error messages, so the user
+    /// reads "number 5" rather than the debugging form "INT(5)".
+    private func describe(_ token: BasicToken) -> String {
+        switch token {
+        case .integer(let n):       return "number \(n)"
+        case .float(let f):         return "number \(f)"
+        case .stringLiteral:        return "string"
+        case .identifier(let s),
+             .identifierStr(let s),
+             .identifierInt(let s): return "variable \(s)"
+        case .keyword(let s):       return s
+        case .op(let s):            return "'\(s)'"
+        case .lparen:               return "'('"
+        case .rparen:               return "')'"
+        case .comma:                return "','"
+        case .semicolon:            return "';'"
+        case .colon:                return "':'"
+        case .hash:                 return "'#'"
+        case .eof:                  return "end of line"
+        }
     }
 }
 

@@ -27,6 +27,11 @@ class LineNumberGutter: NSView {
     /// Set of 1-indexed line numbers that have breakpoints.
     var breakpointLines: Set<Int> = []
 
+    /// 1-indexed lines flagged by the live syntax checker, with the worst
+    /// severity on each. Drawn as a coloured bar at the gutter's right edge
+    /// so it cannot collide with the breakpoint dot or the line number.
+    var diagnosticLines: [Int: DiagnosticSeverity] = [:]
+
     /// 1-indexed line number representing the current debug execution point.
     /// Drawing a yellow arrow and highlighting the line background.
     var debugExecutionLine: Int? {
@@ -152,10 +157,19 @@ class LineNumberGutter: NSView {
             dot.fill()
         }
 
+        // Syntax diagnostic: bar at the right edge, number tinted to match
+        var numberColor = current ? currentLineColor : lineNumberColor
+        if let severity = diagnosticLines[num] {
+            let color = EditorViewController.color(for: severity)
+            color.setFill()
+            NSRect(x: Self.gutterWidth - 5, y: y + 1, width: 3, height: max(height - 2, 1)).fill()
+            numberColor = color
+        }
+
         // Draw line number
         let attrs: [NSAttributedString.Key: Any] = [
             .font: lineNumberFont,
-            .foregroundColor: current ? currentLineColor : lineNumberColor,
+            .foregroundColor: numberColor,
         ]
         let s = "\(num)" as NSString
         let sz = s.size(withAttributes: attrs)

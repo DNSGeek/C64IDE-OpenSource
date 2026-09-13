@@ -393,6 +393,9 @@ extension AppDelegate: NSMenuItemValidation {
             // Only meaningful for a BASIC document in the active tab.
             return mainWindowController?.editorViewController.document
                 .fileType.usesBasicHighlighting == true
+        case #selector(toggleSyntaxCheck(_:)):
+            menuItem.state = EditorViewController.syntaxCheckEnabled ? .on : .off
+            return true
         default:
             return true
         }
@@ -410,6 +413,12 @@ extension AppDelegate {
     /// Toggles the bottom console panel.
     @objc func toggleConsole(_ sender: Any?) {
         mainWindowController?.toggleBottomPanel(sender)
+    }
+
+    /// Turns the live syntax checker on or off. Open editors observe the
+    /// setting and re-check (or clear their marks) on their own.
+    @objc func toggleSyntaxCheck(_ sender: Any?) {
+        EditorViewController.syntaxCheckEnabled.toggle()
     }
 
     /// Opens the build and emulator preferences sheet.

@@ -6,13 +6,15 @@ import Cocoa
 enum BottomPanelTab: Int, CaseIterable {
     case build = 0
     case messages = 1
-    case search = 2
-    case claude = 3
+    case problems = 2
+    case search = 3
+    case claude = 4
 
     var title: String {
         switch self {
         case .build:    return "Build"
         case .messages: return "Messages"
+        case .problems: return "Problems"
         case .search:   return "Search"
         case .claude:   return "AI"
         }
@@ -70,6 +72,11 @@ class BottomPanelController: NSViewController, NSTextFieldDelegate {
     private var messagesTextView: NSTextView!
     private var messagesScrollView: NSScrollView!
 
+    // Problems (live syntax check results for the active editor)
+    private var problemsTable: NSTableView!
+    private var problemsScrollView: NSScrollView!
+    private var problems: [SyntaxDiagnostic] = []
+
     // Search / Replace UI
     private var scopeControl: NSSegmentedControl!
     private var caseSensitiveCheckbox: NSButton!
@@ -98,6 +105,11 @@ class BottomPanelController: NSViewController, NSTextFieldDelegate {
 
     /// Called when the user clicks a highlighted error/warning line. Passes the source line number.
     var onErrorClicked: ((Int) -> Void)?
+
+    /// Called when a row in the Problems tab is double-clicked: 1-based
+    /// editor line, plus the UTF-16 column and length of the mark when the
+    /// diagnostic has one.
+    var onProblemSelected: ((_ line: Int, _ column: Int?, _ length: Int?) -> Void)?
 
     /// Provides content to search across tabs. Returns an array of (tabIndex, displayName, content).
     var onSearchRequested: ((_ currentOnly: Bool) -> [(tabIndex: Int, name: String, content: String)])?
@@ -153,6 +165,10 @@ class BottomPanelController: NSViewController, NSTextFieldDelegate {
             self.messagesTextView.backgroundColor  = bg
             self.messagesTextView.textColor        = text
             self.messagesScrollView.backgroundColor = bg
+            // Problems tab
+            self.problemsTable?.backgroundColor = bg
+            self.problemsScrollView?.backgroundColor = bg
+            self.problemsTable?.reloadData()
             self.view.subviews.forEach { $0.needsDisplay = true }
         }
     }
@@ -167,6 +183,7 @@ class BottomPanelController: NSViewController, NSTextFieldDelegate {
 
         tabView.addTabViewItem(makeBuildTab())
         tabView.addTabViewItem(makeMessagesTab())
+        tabView.addTabViewItem(makeProblemsTab())
         tabView.addTabViewItem(makeSearchTab())
         tabView.addTabViewItem(makeClaudeTab())
 
@@ -229,6 +246,56 @@ class BottomPanelController: NSViewController, NSTextFieldDelegate {
             messagesScrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             messagesScrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             messagesScrollView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ])
+        item.view = container
+        return item
+    }
+
+    private func makeProblemsTab() -> NSTabViewItem {
+        let item = NSTabViewItem(identifier: "Problems")
+        item.label = BottomPanelTab.problems.title
+
+        let table = NSTableView()
+        table.headerView = nil
+        table.rowHeight = 18
+        table.usesAlternatingRowBackgroundColors = false
+        table.backgroundColor = bgColor
+        table.selectionHighlightStyle = .regular
+        table.allowsEmptySelection = true
+        table.intercellSpacing = NSSize(width: 8, height: 2)
+        table.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
+
+        let severity = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("severity"))
+        severity.width = 60
+        let line = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("line"))
+        line.width = 56
+        let message = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("message"))
+        message.width = 600
+        table.addTableColumn(severity)
+        table.addTableColumn(line)
+        table.addTableColumn(message)
+
+        table.dataSource = self
+        table.delegate = self
+        table.target = self
+        table.doubleAction = #selector(problemDoubleClicked(_:))
+        problemsTable = table
+
+        problemsScrollView = NSScrollView()
+        problemsScrollView.documentView = table
+        problemsScrollView.hasVerticalScroller = true
+        problemsScrollView.autohidesScrollers = true
+        problemsScrollView.borderType = .noBorder
+        problemsScrollView.backgroundColor = bgColor
+        problemsScrollView.translatesAutoresizingMaskIntoConstraints = false
+
+        let container = NSView()
+        container.addSubview(problemsScrollView)
+        NSLayoutConstraint.activate([
+            problemsScrollView.topAnchor.constraint(equalTo: container.topAnchor),
+            problemsScrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            problemsScrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            problemsScrollView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
         ])
         item.view = container
         return item
@@ -717,6 +784,33 @@ class BottomPanelController: NSViewController, NSTextFieldDelegate {
         buildTextView.string = ""
     }
 
+    // MARK: - Problems
+
+    /// Replaces the Problems list with the active editor's diagnostics and
+    /// puts the count in the tab title. Does not switch tabs: the marks in
+    /// the editor are the primary signal, this list is the overview.
+    func showProblems(_ diagnostics: [SyntaxDiagnostic]) {
+        problems = diagnostics
+        problemsTable?.reloadData()
+        guard let tabView, BottomPanelTab.problems.rawValue < tabView.numberOfTabViewItems else { return }
+        let item = tabView.tabViewItem(at: BottomPanelTab.problems.rawValue)
+        let errors = diagnostics.filter { $0.severity == .error }.count
+        let warnings = diagnostics.count - errors
+        var parts: [String] = []
+        if errors > 0 { parts.append("\(errors) error\(errors == 1 ? "" : "s")") }
+        if warnings > 0 { parts.append("\(warnings) warning\(warnings == 1 ? "" : "s")") }
+        item.label = parts.isEmpty
+            ? BottomPanelTab.problems.title
+            : "\(BottomPanelTab.problems.title) (\(parts.joined(separator: ", ")))"
+    }
+
+    @objc private func problemDoubleClicked(_ sender: Any?) {
+        let row = problemsTable.clickedRow
+        guard row >= 0, row < problems.count else { return }
+        let p = problems[row]
+        onProblemSelected?(p.line + 1, p.column, p.length)
+    }
+
     func selectTab(_ tab: BottomPanelTab) {
         tabView.selectTabViewItem(at: tab.rawValue)
     }
@@ -730,3 +824,58 @@ class BottomPanelController: NSViewController, NSTextFieldDelegate {
     }
 }
 
+
+// MARK: - Problems Table
+
+extension BottomPanelController: NSTableViewDataSource, NSTableViewDelegate {
+
+    func numberOfRows(in tableView: NSTableView) -> Int {
+        problems.count
+    }
+
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        guard row < problems.count, let column = tableColumn else { return nil }
+        let p = problems[row]
+        let t = AppTheme.current
+        let severityColor = p.severity == .error ? t.logError : t.logWarning
+
+        let text: String
+        let color: NSColor
+        switch column.identifier.rawValue {
+        case "severity":
+            text = p.severity.label
+            color = severityColor
+        case "line":
+            text = "\(p.line + 1)"
+            color = t.panelText
+        default:
+            text = p.message
+            color = t.panelText
+        }
+
+        let identifier = NSUserInterfaceItemIdentifier("problemCell")
+        let cell: NSTableCellView
+        if let reused = tableView.makeView(withIdentifier: identifier, owner: nil) as? NSTableCellView,
+           let field = reused.textField {
+            cell = reused
+            field.stringValue = text
+            field.textColor = color
+        } else {
+            cell = NSTableCellView()
+            cell.identifier = identifier
+            let field = NSTextField(labelWithString: text)
+            field.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+            field.textColor = color
+            field.lineBreakMode = .byTruncatingTail
+            field.translatesAutoresizingMaskIntoConstraints = false
+            cell.addSubview(field)
+            cell.textField = field
+            NSLayoutConstraint.activate([
+                field.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 2),
+                field.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -2),
+                field.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            ])
+        }
+        return cell
+    }
+}

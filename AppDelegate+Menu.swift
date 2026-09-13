@@ -300,6 +300,11 @@ extension AppDelegate {
         let toggleBot = NSMenuItem(title: "Toggle Console", action: #selector(toggleConsole(_:)), keyEquivalent: "Y")
         toggleBot.keyEquivalentModifierMask = [.command, .shift]
         menu.addItem(toggleBot)
+        menu.addItem(.separator())
+
+        let syntaxCheck = NSMenuItem(title: "Check Syntax While Typing", action: #selector(toggleSyntaxCheck(_:)), keyEquivalent: "")
+        syntaxCheck.target = self
+        menu.addItem(syntaxCheck)
 
         return menuItem(submenu: menu)
     }

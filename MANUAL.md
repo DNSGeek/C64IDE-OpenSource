@@ -143,6 +143,9 @@ Seven tabs, searchable where relevant, that follow what you are typing:
 - **Build** — compiler and linker output, errors and warnings, disk bundling
   results. Click a diagnostic to jump to the offending line.
 - **Messages** — general IDE messages.
+- **Problems** — everything the live syntax checker found in the active tab,
+  with a count in the tab title. Double-click a row to jump to it. See
+  [Live syntax checking](#live-syntax-checking).
 - **Search** — find and replace across **Current Tab** or **All Tabs**, with a
   case-sensitive toggle, `↩` / `⇧↩` to step through matches, and Replace /
   Replace All.
@@ -221,6 +224,53 @@ dot. Clicking it offers **Commit** (with a message sheet), **Push** and
 - External changes are detected: if a file changes on disk underneath you, the
   IDE offers to reload it.
 - Non-BASIC files keep the previous line's indentation when you press Return.
+
+### Live syntax checking
+
+About half a second after you stop typing, the IDE checks the file and marks
+each problem with a dotted underline (red for errors, orange for warnings), a
+bar in the gutter next to the line number, and a row in the console's
+**Problems** tab. Hover over an underlined spot to read the message. The check
+never touches the text or the undo stack, and it runs in the background, so
+large files do not slow down typing. **View → Check Syntax While Typing**
+turns it off and on.
+
+**BASIC.** The checker uses the same parser as the compiler, so it reports
+the things that would be a `?SYNTAX ERROR` on the machine: misspelled
+keywords (`PRNT`), a missing `THEN`, unbalanced parentheses, the wrong number
+of arguments to a built-in function (`LEFT$(A$)`), stray text after a
+statement, and so on. On top of that it checks the program as a whole:
+`GOTO`, `GOSUB`, `THEN`, `ELSE`, `ON … GOTO` and `GO TO` targets must exist
+(`?UNDEF'D STATEMENT`), every non-blank line needs a line number, numbers
+above 63999 are rejected, and duplicate or out-of-order line numbers are
+warned about because the machine would silently replace or reorder them.
+
+The checker follows the active dialect (see
+[section 5](#5-basic-dialects-and-plugins)). A statement that starts with a
+dialect keyword is accepted without complaint — the IDE only knows the
+extension's keywords, not its grammar, so it just makes sure the parentheses
+balance. Dialect functions are accepted inside expressions, `ELSE` works when
+the dialect defines it, `FOR I%=` is allowed where the dialect allows it, and
+Vision BASIC's `ASSEM … BASIC` inline-assembly region is skipped entirely.
+Switch dialects and the file is re-checked, so `CIRCLE` is an error under
+plain V2 and fine under Simons' BASIC. `RUN`, `LIST`, `NEW`, `CONT` and
+`VERIFY` are legal in a program and are not flagged, although the compiler
+still refuses them.
+
+**Assembly.** For ca65 source the checker works one line at a time and does
+not evaluate expressions or resolve symbols, so it is deliberately
+conservative. It reports mnemonics used with an addressing mode they do not
+have (`STA #1`, `LDX ($10),Y`, `JSR ($1000)`, `INC A`), immediate values that
+do not fit in a byte, addresses beyond `$FFFF`, zero-page-only modes given a
+16-bit literal (`STX $D000,Y`), undocumented opcodes without
+`.setcpu "6502X"`, 65C02/65816/4510 mnemonics while the 6502 is selected,
+unknown `.directives`, unterminated strings, malformed `$`/`%` numbers,
+unbalanced parentheses, and ACME-style `* = $0801`. A word that is neither an
+instruction, a directive nor a macro defined in the file is reported — unless
+the file has an `.include` or `.macpack`, in which case the macro may live
+elsewhere and the checker stays quiet. Once a file selects another CPU with
+`.setcpu`, `.pc02`, `.p816` or `.p4510`, the addressing-mode checks are
+switched off, because those processors add modes the table does not model.
 
 ### BASIC-specific behaviour
 
@@ -820,6 +870,7 @@ Other appearance controls: the toolbar theme button (light/dark), and
 | `⌘0`        | Reset editor font size               |
 | `⌥⌘R`       | Toggle Reference Panel               |
 | `⇧⌘Y`       | Toggle Console                       |
+| —           | Check Syntax While Typing (toggle)   |
 
 ---
 

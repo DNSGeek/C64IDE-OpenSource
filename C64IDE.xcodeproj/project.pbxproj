@@ -101,6 +101,12 @@
 		AA000009 /* DocumentModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000009 /* DocumentModel.swift */; };
 		AA000010 /* TooltipProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000010 /* TooltipProvider.swift */; };
 		AA000012 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AB000012 /* Assets.xcassets */; };
+		13D1A6002FF7000100C64ADF /* BasicSyntaxChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13D1A6002FF7000100C64ADE /* BasicSyntaxChecker.swift */; };
+		13D1A6002FF7000100C64AE1 /* BasicSyntaxCheckerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13D1A6002FF7000100C64AE0 /* BasicSyntaxCheckerTests.swift */; };
+		13D1A6002FF7000100C64AE3 /* SyntaxDiagnostic.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13D1A6002FF7000100C64AE2 /* SyntaxDiagnostic.swift */; };
+		13D1A6002FF7000100C64AE5 /* AsmSyntaxChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13D1A6002FF7000100C64AE4 /* AsmSyntaxChecker.swift */; };
+		13D1A6002FF7000100C64AE7 /* AsmSyntaxCheckerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13D1A6002FF7000100C64AE6 /* AsmSyntaxCheckerTests.swift */; };
+		13D1A6002FF7000100C64AE9 /* EditorViewController+Diagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13D1A6002FF7000100C64AE8 /* EditorViewController+Diagnostics.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -211,6 +217,12 @@
 		AB000010 /* TooltipProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TooltipProvider.swift; sourceTree = "<group>"; };
 		AB000012 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		AB000099 /* C64IDE.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = C64IDE.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		13D1A6002FF7000100C64ADE /* BasicSyntaxChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BasicSyntaxChecker.swift"; sourceTree = "<group>"; };
+		13D1A6002FF7000100C64AE0 /* BasicSyntaxCheckerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BasicSyntaxCheckerTests.swift"; sourceTree = "<group>"; };
+		13D1A6002FF7000100C64AE2 /* SyntaxDiagnostic.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SyntaxDiagnostic.swift"; sourceTree = "<group>"; };
+		13D1A6002FF7000100C64AE4 /* AsmSyntaxChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AsmSyntaxChecker.swift"; sourceTree = "<group>"; };
+		13D1A6002FF7000100C64AE6 /* AsmSyntaxCheckerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AsmSyntaxCheckerTests.swift"; sourceTree = "<group>"; };
+		13D1A6002FF7000100C64AE8 /* EditorViewController+Diagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditorViewController+Diagnostics.swift"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -293,6 +305,8 @@
 		13651BE12F7211DB001749B5 /* BASIC */ = {
 			isa = PBXGroup;
 			children = (
+				13D1A6002FF7000100C64ADE /* BasicSyntaxChecker.swift */,
+				13D1A6002FF7000100C64AE0 /* BasicSyntaxCheckerTests.swift */,
 				13BA4FC32FAEF957003331E5 /* BasicAST.swift */,
 				13BA4FC42FAEF957003331E5 /* BasicCodeGen.swift */,
 				13BA4FC62FAEF957003331E5 /* BasicDialectPlugin.swift */,
@@ -448,6 +462,7 @@
 		AC000003 /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				13D1A6002FF7000100C64AE8 /* EditorViewController+Diagnostics.swift */,
 				1347C37C2FAEFBB900FC1CBB /* CharROMViewerWindowController.swift */,
 				1347C37D2FAEFBB900FC1CBB /* CharsetNotificationBridge.swift */,
 				1347C37E2FAEFBB900FC1CBB /* EditorFontManager.swift */,
@@ -477,6 +492,9 @@
 		AC000004 /* SyntaxHighlighting */ = {
 			isa = PBXGroup;
 			children = (
+				13D1A6002FF7000100C64AE2 /* SyntaxDiagnostic.swift */,
+				13D1A6002FF7000100C64AE4 /* AsmSyntaxChecker.swift */,
+				13D1A6002FF7000100C64AE6 /* AsmSyntaxCheckerTests.swift */,
 				AB000003 /* C64BasicSyntax.swift */,
 				AB000004 /* C64AssemblySyntax.swift */,
 				AB000005 /* SyntaxHighlighter.swift */,
@@ -632,6 +650,8 @@
 				133513E12F844A5500A98A29 /* BasicCodeGenTests.swift in Sources */,
 				133513E22F844A5500A98A29 /* BasicFixRegressionTests.swift in Sources */,
 				133513E32F844A5500A98A29 /* BasicLexerTests.swift in Sources */,
+				13D1A6002FF7000100C64AE1 /* BasicSyntaxCheckerTests.swift in Sources */,
+				13D1A6002FF7000100C64AE7 /* AsmSyntaxCheckerTests.swift in Sources */,
 				133513E42F844A5500A98A29 /* BasicParserTests.swift in Sources */,
 				133513E52F844A5500A98A29 /* BasicShortcutExpanderTests.swift in Sources */,
 				133513E62F844A5500A98A29 /* BasicTypeAnalyserTests.swift in Sources */,
@@ -653,6 +673,10 @@
 				13BA4FD62FAEF957003331E5 /* BasicKeywordMatcher.swift in Sources */,
 				13BA4FD82FAEF957003331E5 /* BasicShortcutExpander.swift in Sources */,
 				13BA4FD92FAEF957003331E5 /* BasicParser.swift in Sources */,
+				13D1A6002FF7000100C64ADF /* BasicSyntaxChecker.swift in Sources */,
+				13D1A6002FF7000100C64AE3 /* SyntaxDiagnostic.swift in Sources */,
+				13D1A6002FF7000100C64AE5 /* AsmSyntaxChecker.swift in Sources */,
+				13D1A6002FF7000100C64AE9 /* EditorViewController+Diagnostics.swift in Sources */,
 				13BA4FDB2FAEF957003331E5 /* BasicDialectPlugin.swift in Sources */,
 				13BA4FDC2FAEF957003331E5 /* BuildPipelineSupport.swift in Sources */,
 				13BA4FDE2FAEF957003331E5 /* BasicCodeGen.swift in Sources */,

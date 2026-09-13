@@ -130,6 +130,11 @@ class MainWindowController: NSWindowController, NSToolbarDelegate {
             self?.navigateToLine(lineNum)
         }
 
+        // Problems tab: jump to the diagnostic's exact range
+        bottomPanelController.onProblemSelected = { [weak self] line, column, length in
+            self?.navigateToLine(line, column: column, length: length)
+        }
+
         // Provide document content for search/replacement operations
         bottomPanelController.onSearchRequested = { [weak self] currentOnly in
             guard let self = self else { return [] }
@@ -306,6 +311,13 @@ class MainWindowController: NSWindowController, NSToolbarDelegate {
             // panel with another file's variables.
             guard editor === self.editorViewController else { return }
             self.referencePanelController.updateVariables(vars)
+        }
+        editor.onDiagnosticsUpdated = { [weak self, weak editor] diagnostics in
+            guard let self, let editor else { return }
+            // Same rule as the variable panel: only the visible tab's
+            // results belong in the Problems list.
+            guard editor === self.editorViewController else { return }
+            self.bottomPanelController.showProblems(diagnostics)
         }
         // Refresh the tab label and title bar after a silent external-change reload
         editor.onExternalReload = { [weak self] in
@@ -1065,6 +1077,12 @@ class MainWindowController: NSWindowController, NSToolbarDelegate {
 
     /// Navigates the active editor to a specific line number (1-based)
     func navigateToLine(_ line: Int) {
+        navigateToLine(line, column: nil, length: nil)
+    }
+
+    /// Selects and reveals a 1-based line, or just `length` characters from
+    /// UTF-16 `column` within it when both are given.
+    func navigateToLine(_ line: Int, column: Int?, length: Int?) {
         guard let editor = editorViewController,
               let textView = editor.textView,
               let text = textView.string as NSString? else { return }
@@ -1089,10 +1107,15 @@ class MainWindowController: NSWindowController, NSToolbarDelegate {
 
         guard currentLine == line else { return }
 
-        let range = NSRange(location: lineStart, length: lineEnd - lineStart)
+        var range = NSRange(location: lineStart, length: lineEnd - lineStart)
+        if let column, let length, column < range.length {
+            range = NSRange(location: lineStart + column,
+                            length: min(max(length, 1), range.length - column))
+        }
         textView.setSelectedRange(range)
         textView.scrollRangeToVisible(range)
         textView.showFindIndicator(for: range)
+        window?.makeFirstResponder(textView)
     }
 
     /// Opens the Search tab in the bottom panel and focuses the Find field.
@@ -1342,6 +1365,7 @@ extension MainWindowController: NSTabViewDelegate {
         updateWindowTitle()
         refreshGitStatus()
         refreshDiskHint()
+        bottomPanelController.showProblems(editorViewController?.syntaxDiagnostics ?? [])
         editorViewController?.scheduleVariableScan()
     }
 }
