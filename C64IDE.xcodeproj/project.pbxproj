@@ -7,6 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		13F0B0012FF9000100C64A00 /* ManualWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13F0B0002FF9000100C64A00 /* ManualWindowController.swift */; };
+		13F0B0032FF9000100C64A00 /* MANUAL.md in Resources */ = {isa = PBXBuildFile; fileRef = 13F0B0022FF9000100C64A00 /* MANUAL.md */; };
+		13F0B0052FF9000100C64A00 /* marked.umd.js in Resources */ = {isa = PBXBuildFile; fileRef = 13F0B0042FF9000100C64A00 /* marked.umd.js */; };
+		13F0B0072FF9000100C64A00 /* marked-LICENSE.txt in Resources */ = {isa = PBXBuildFile; fileRef = 13F0B0062FF9000100C64A00 /* marked-LICENSE.txt */; };
 		133513F12F844A5500A98A29 /* ReferencePanelDialectTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 133513F02F844A5500A98A29 /* ReferencePanelDialectTests.swift */; };
 		13AA10022F900002 /* OpcodeReferenceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13AA10012F900001 /* OpcodeReferenceTests.swift */; };
 		13AA10112F900011 /* DisassemblerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13AA10102F900010 /* DisassemblerTests.swift */; };
@@ -120,6 +124,10 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		13F0B0002FF9000100C64A00 /* ManualWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManualWindowController.swift; sourceTree = "<group>"; };
+		13F0B0022FF9000100C64A00 /* MANUAL.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = MANUAL.md; sourceTree = "<group>"; };
+		13F0B0042FF9000100C64A00 /* marked.umd.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = marked.umd.js; sourceTree = "<group>"; };
+		13F0B0062FF9000100C64A00 /* marked-LICENSE.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "marked-LICENSE.txt"; sourceTree = "<group>"; };
 		133513F02F844A5500A98A29 /* ReferencePanelDialectTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReferencePanelDialectTests.swift; sourceTree = "<group>"; };
 		13AA10012F900001 /* OpcodeReferenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpcodeReferenceTests.swift; sourceTree = "<group>"; };
 		13AA10102F900010 /* DisassemblerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisassemblerTests.swift; sourceTree = "<group>"; };
@@ -428,6 +436,7 @@
 				1379DD182FC39F6400A8AF78 /* VirtualC64 */,
 				1379DD0C2FC39F3500A8AF78 /* RunInEmulator */,
 				1347C3C52FAEFC5A00FC1CBB /* UpdateChecker.swift */,
+				13F0B0022FF9000100C64A00 /* MANUAL.md */,
 				1347C3C12FAEFC4E00FC1CBB /* U64 */,
 				1347C3BA2FAEFC4700FC1CBB /* TAP */,
 				1347C3B22FAEFC3800FC1CBB /* Project */,
@@ -462,6 +471,7 @@
 		AC000003 /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				13F0B0002FF9000100C64A00 /* ManualWindowController.swift */,
 				13D1A6002FF7000100C64AE8 /* EditorViewController+Diagnostics.swift */,
 				1347C37C2FAEFBB900FC1CBB /* CharROMViewerWindowController.swift */,
 				1347C37D2FAEFBB900FC1CBB /* CharsetNotificationBridge.swift */,
@@ -519,8 +529,18 @@
 				13DD98F22FC1749200AF4F9F /* Templates */,
 				13BA4FEA2FAEF99B003331E5 /* Plugins */,
 				AB000012 /* Assets.xcassets */,
+				13F0B0082FF9000100C64A00 /* Help */,
 			);
 			path = Resources;
+			sourceTree = "<group>";
+		};
+		13F0B0082FF9000100C64A00 /* Help */ = {
+			isa = PBXGroup;
+			children = (
+				13F0B0042FF9000100C64A00 /* marked.umd.js */,
+				13F0B0062FF9000100C64A00 /* marked-LICENSE.txt */,
+			);
+			path = Help;
 			sourceTree = "<group>";
 		};
 		AC000009 /* Products */ = {
@@ -630,6 +650,9 @@
 			files = (
 				138715D72FC38C6C009BEA31 /* Templates in Resources */,
 				AA000012 /* Assets.xcassets in Resources */,
+				13F0B0032FF9000100C64A00 /* MANUAL.md in Resources */,
+				13F0B0052FF9000100C64A00 /* marked.umd.js in Resources */,
+				13F0B0072FF9000100C64A00 /* marked-LICENSE.txt in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -696,6 +719,7 @@
 				1347C3822FAEFBB900FC1CBB /* CharsetNotificationBridge.swift in Sources */,
 				1347C3832FAEFBB900FC1CBB /* EditorFontManager.swift in Sources */,
 				1347C3842FAEFBB900FC1CBB /* MemoryMapWindowController.swift in Sources */,
+				13F0B0012FF9000100C64A00 /* ManualWindowController.swift in Sources */,
 				13A5C0042FF4B10000A8AF78 /* VariableListViewController.swift in Sources */,
 				1347C3862FAEFBB900FC1CBB /* CharROMViewerWindowController.swift in Sources */,
 				1347C37A2FAEFB6F00FC1CBB /* CfgFileParser.swift in Sources */,

@@ -43,6 +43,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var mapEditorController: MapEditorWindowController?
     /// Memory map viewer window.
     var memoryMapController: MemoryMapWindowController?
+    /// User manual viewer window.
+    var manualController: ManualWindowController?
 
     // MARK: - Internal State
 

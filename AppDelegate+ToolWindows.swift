@@ -146,6 +146,11 @@ extension AppDelegate {
     @objc func openMemoryMap(_ sender: Any?) {
         show(&memoryMapController) { MemoryMapWindowController() }
     }
+
+    /// Opens or focuses the user manual (Help → C64 IDE Help).
+    @objc func showManual(_ sender: Any?) {
+        show(&manualController) { ManualWindowController() }
+    }
 }
 
 // MARK: - File & Editor Actions

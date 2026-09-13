@@ -323,7 +323,7 @@ extension AppDelegate {
 
     private func makeHelpMenuItem() -> NSMenuItem {
         let menu = NSMenu(title: "Help")
-        menu.addItem(NSMenuItem(title: "C64 IDE Help", action: nil, keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "C64 IDE Help", action: #selector(showManual(_:)), keyEquivalent: "?"))
         NSApp.helpMenu = menu
         return menuItem(submenu: menu)
     }
