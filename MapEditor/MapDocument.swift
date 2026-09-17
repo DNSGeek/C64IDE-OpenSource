@@ -9,6 +9,9 @@ public final class MapLayer: Codable {
     public var isVisible: Bool = true
     public var opacity: Float = 1.0  // 0.0–1.0, for editor display only
 
+    /// The "empty" tile: a space. Upper layers treat it as transparent.
+    public static let emptyTile: UInt8 = 0x20
+
     /// Tile indices — one byte per cell (0–255 into the charset)
     public var tiles: [[UInt8]]
 

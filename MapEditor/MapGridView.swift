@@ -188,6 +188,15 @@ public protocol MapGridViewDelegate: AnyObject {
     /// The cursor moved over a cell (for status bar coordinate display).
     func mapGridView(_ view: MapGridView, cursorAt col: Int, row: Int)
 
+    /// The user right-clicked (or control-clicked) a cell.
+    func mapGridView(_ view: MapGridView, didRightClickAt col: Int, row: Int)
+
+    /// The user dragged across cells with the right (or control-held) button.
+    func mapGridView(_ view: MapGridView, didRightDragTo col: Int, row: Int)
+
+    /// A right-button gesture finished.
+    func mapGridViewDidEndRightClick(_ view: MapGridView)
+
     /// A paint gesture (mouse down to mouse up) finished.
     /// The delegate should commit the accumulated stroke as one undo action.
     func mapGridViewDidEndPaintStroke(_ view: MapGridView)
@@ -229,6 +238,9 @@ public final class MapGridView: NSView {
     /// Whether to draw grid lines between cells.
     public var showGrid: Bool = true { didSet { needsDisplay = true } }
 
+    /// The committed selection, outlined until it is replaced or cleared.
+    public var selection: MapRect? { didSet { if selection != oldValue { needsDisplay = true } } }
+
     /// Whether inactive layers are dimmed as an editing hint.
     public var showLayerDimming: Bool = true { didSet { needsDisplay = true } }
 
@@ -244,6 +256,10 @@ public final class MapGridView: NSView {
 
     /// Track last painted cell to avoid redundant paint events during drag.
     private var lastPaintedCell: MapPoint?
+
+    /// True while a control-click gesture is being routed as a right-click.
+    private var isControlClick = false
+    private var lastRightDragCell: MapPoint?
 
     // MARK: - Computed Properties
 
@@ -341,6 +357,21 @@ public final class MapGridView: NSView {
             ctx.strokePath()
         }
 
+        // Committed selection outline (hidden while a new one is dragged)
+        if let sel = selection, !(isDragging && currentTool == .select) {
+            let selRect = CGRect(
+                x: CGFloat(sel.origin.col) * cell.width,
+                y: CGFloat(sel.origin.row) * cell.height,
+                width: CGFloat(sel.width) * cell.width,
+                height: CGFloat(sel.height) * cell.height
+            ).insetBy(dx: 0.5, dy: 0.5)
+            ctx.setStrokeColor(NSColor.systemBlue.cgColor)
+            ctx.setLineWidth(1.0)
+            ctx.setLineDash(phase: 0, lengths: [4, 3])
+            ctx.stroke(selRect)
+            ctx.setLineDash(phase: 0, lengths: [])
+        }
+
         // Selection / fill preview overlay
         if isDragging, let origin = dragOrigin, let current = dragCurrent,
            (currentTool == .fill || currentTool == .select) {
@@ -376,6 +407,12 @@ public final class MapGridView: NSView {
     // MARK: - Mouse Events
 
     override public func mouseDown(with event: NSEvent) {
+        // Control-click is a right-click for one-button mice and trackpads.
+        if event.modifierFlags.contains(.control) {
+            isControlClick = true
+            rightMouseDown(with: event)
+            return
+        }
         guard let (col, row) = mapCoordinate(from: event) else { return }
 
         switch currentTool {
@@ -397,6 +434,10 @@ public final class MapGridView: NSView {
     }
 
     override public func mouseDragged(with event: NSEvent) {
+        if isControlClick {
+            rightMouseDragged(with: event)
+            return
+        }
         // Clamp instead of rejecting so dragging past the map edge keeps
         // painting/tracking the edge cells rather than going dead.
         guard let (col, row) = clampedMapCoordinate(from: event) else { return }
@@ -429,6 +470,11 @@ public final class MapGridView: NSView {
     }
 
     override public func mouseUp(with event: NSEvent) {
+        if isControlClick {
+            isControlClick = false
+            rightMouseUp(with: event)
+            return
+        }
         // Clamp here too: releasing the mouse just outside the view must not
         // silently cancel a fill/select drag or leave a paint stroke uncommitted.
         let coordinate = clampedMapCoordinate(from: event)
@@ -461,6 +507,34 @@ public final class MapGridView: NSView {
         case .floodFill, .eyedropper:
             break
         }
+    }
+
+    override public func rightMouseDown(with event: NSEvent) {
+        guard let (col, row) = mapCoordinate(from: event) else { return }
+        lastRightDragCell = MapPoint(col: col, row: row)
+        delegate?.mapGridView(self, didRightClickAt: col, row: row)
+    }
+
+    override public func rightMouseDragged(with event: NSEvent) {
+        guard let (col, row) = clampedMapCoordinate(from: event) else { return }
+        let current = MapPoint(col: col, row: row)
+        if let previous = lastRightDragCell {
+            if current != previous {
+                for point in MapGridView.line(from: previous, to: current) where point != previous {
+                    delegate?.mapGridView(self, didRightDragTo: point.col, row: point.row)
+                }
+            }
+        } else {
+            // The gesture began outside the map; start with this cell.
+            delegate?.mapGridView(self, didRightDragTo: col, row: row)
+        }
+        lastRightDragCell = current
+        delegate?.mapGridView(self, cursorAt: col, row: row)
+    }
+
+    override public func rightMouseUp(with event: NSEvent) {
+        lastRightDragCell = nil
+        delegate?.mapGridViewDidEndRightClick(self)
     }
 
     override public func mouseMoved(with event: NSEvent) {

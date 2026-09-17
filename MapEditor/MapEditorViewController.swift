@@ -554,6 +554,7 @@ public final class MapEditorViewController: NSViewController, MapGridViewDelegat
         undoMgr.clearHistory()
         currentSelection = nil
         resetPaintStroke()
+        resetEraseStroke()
         rasterRulerView?.rows = document.height
         mapGridView.invalidateIntrinsicContentSize()
         mapGridView.needsDisplay = true
@@ -623,6 +624,7 @@ public final class MapEditorViewController: NSViewController, MapGridViewDelegat
         colorPickerView?.multiColorHint = document.isMultiColorMode
         rasterRulerView?.rows = document.height
         resetPaintStroke()
+        resetEraseStroke()
         currentSelection = nil
         updateBankWarning()
     }
@@ -772,7 +774,9 @@ public final class MapEditorViewController: NSViewController, MapGridViewDelegat
     }
 
     private var tileClipboard: TileClipboard?
-    private var currentSelection: MapRect?   // track last selection
+    private var currentSelection: MapRect? {   // track last selection
+        didSet { mapGridView?.selection = currentSelection }
+    }
 
     // MARK: - Paint Stroke State
     //
@@ -816,7 +820,132 @@ public final class MapEditorViewController: NSViewController, MapGridViewDelegat
         updateBankWarning()
     }
 
+    // MARK: - Erase Gesture State
+    //
+    // A right-click (or control-click) inside the selection clears it;
+    // anywhere else it erases the cell under the cursor, and dragging keeps
+    // erasing. Like paint strokes, the whole gesture is one undo action.
+
+    private var eraseCells: [(col: Int, row: Int)] = []
+    private var eraseOldTiles: [UInt8] = []
+    private var eraseVisited = Set<Int>()
+    private var eraseLayerIndex = 0
+
+    /// Set when the gesture cleared the selection, so dragging afterwards
+    /// does not also erase the cells it passes over.
+    private var rightClickClearedSelection = false
+
+    private func resetEraseStroke() {
+        eraseCells.removeAll()
+        eraseOldTiles.removeAll()
+        eraseVisited.removeAll()
+    }
+
+    private func commitEraseStroke() {
+        guard !eraseCells.isEmpty else { return }
+        let action = MapEditAction.erase(layer: eraseLayerIndex,
+                                         cells: eraseCells,
+                                         oldTiles: eraseOldTiles)
+        resetEraseStroke()
+        undoMgr.perform(action)
+        updateBankWarning()
+    }
+
+    /// Erases one cell as part of the current erase gesture, applying it
+    /// live; commitEraseStroke() records the undo action.
+    private func eraseTile(at col: Int, row: Int) {
+        guard let layer = document.activeLayer,
+              row >= 0, row < document.height,
+              col >= 0, col < document.width else { return }
+        let key = row * document.width + col
+        guard !eraseVisited.contains(key) else { return }
+        let oldTile = layer.tiles[row][col]
+        guard oldTile != MapLayer.emptyTile else { return }
+
+        if eraseCells.isEmpty {
+            eraseLayerIndex = document.activeLayerIndex
+        }
+        eraseVisited.insert(key)
+        eraseCells.append((col: col, row: row))
+        eraseOldTiles.append(oldTile)
+        layer.tiles[row][col] = MapLayer.emptyTile
+
+        mapGridView.setNeedsDisplay(
+            NSRect(x: CGFloat(col) * 8.0 * mapGridView.zoom,
+                   y: CGFloat(row) * 8.0 * mapGridView.zoom,
+                   width: 8.0 * mapGridView.zoom,
+                   height: 8.0 * mapGridView.zoom)
+        )
+    }
+
+    /// Returns every cell of the current selection to the empty tile on the
+    /// active layer, as one undo action. The selection itself is kept so it
+    /// can still be pasted into.
+    private func clearSelection() {
+        guard let rect = currentSelection,
+              let layer = document.activeLayer else { return }
+        // The selection can outlive a layer or map change; clamp to the map.
+        let minCol = max(0, rect.origin.col), maxCol = min(document.width - 1, rect.maxCol)
+        let minRow = max(0, rect.origin.row), maxRow = min(document.height - 1, rect.maxRow)
+        guard minCol <= maxCol, minRow <= maxRow else { return }
+
+        var cells: [(col: Int, row: Int)] = []
+        var oldTiles: [UInt8] = []
+        for row in minRow...maxRow {
+            for col in minCol...maxCol where layer.tiles[row][col] != MapLayer.emptyTile {
+                cells.append((col: col, row: row))
+                oldTiles.append(layer.tiles[row][col])
+            }
+        }
+
+        coordLabel.stringValue = "Cleared: \(rect.width)×\(rect.height)"
+        guard !cells.isEmpty else { return }
+        undoMgr.perform(.erase(layer: document.activeLayerIndex, cells: cells, oldTiles: oldTiles))
+        updateBankWarning()
+        mapGridView.needsDisplay = true
+    }
+
+    // MARK: - Keyboard
+
+    override public func keyDown(with event: NSEvent) {
+        switch event.keyCode {
+        case 51, 117:   // Delete, Forward Delete
+            clearSelection()
+        default:
+            super.keyDown(with: event)
+        }
+    }
+
+    /// Edit ▸ Delete, if a menu or control sends it.
+    @objc public func delete(_ sender: Any?) {
+        clearSelection()
+    }
+
     // MARK: - MapGridViewDelegate
+
+    public func mapGridView(_ view: MapGridView, didRightClickAt col: Int, row: Int) {
+        commitPaintStroke()
+        commitEraseStroke()
+        if let sel = currentSelection,
+           (sel.origin.col...sel.maxCol).contains(col),
+           (sel.origin.row...sel.maxRow).contains(row) {
+            rightClickClearedSelection = true
+            clearSelection()
+        } else {
+            rightClickClearedSelection = false
+            eraseTile(at: col, row: row)
+        }
+    }
+
+    public func mapGridView(_ view: MapGridView, didRightDragTo col: Int, row: Int) {
+        guard !rightClickClearedSelection else { return }
+        eraseTile(at: col, row: row)
+    }
+
+    public func mapGridViewDidEndRightClick(_ view: MapGridView) {
+        rightClickClearedSelection = false
+        commitEraseStroke()
+    }
 
     public func mapGridView(_ view: MapGridView, didPaintAt col: Int, row: Int) {
         commitPaintStroke()  // safety net if a prior stroke never got a mouse-up
@@ -920,6 +1049,8 @@ public final class MapEditorViewController: NSViewController, MapGridViewDelegat
     public func mapGridView(_ view: MapGridView, didSelectFrom origin: MapPoint, to end: MapPoint) {
         let rect = normalizedRect(from: origin, to: end)
         currentSelection = rect
+        // Take key focus back (e.g. from a layer name field) so Delete works.
+        view.window?.makeFirstResponder(self)
         let tileCount = rect.width * rect.height
         coordLabel.stringValue = "Selected: \(rect.width)×\(rect.height) (\(tileCount) tiles)"
     }
@@ -936,6 +1067,9 @@ public final class MapEditorViewController: NSViewController, MapGridViewDelegat
 
     @objc public func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
         if item.action == #selector(copy(_:)) {
+            return currentSelection != nil
+        }
+        if item.action == #selector(delete(_:)) {
             return currentSelection != nil
         }
         if item.action == #selector(paste(_:)) {
@@ -1109,6 +1243,7 @@ public final class MapEditorViewController: NSViewController, MapGridViewDelegat
     @objc public func undo(_ sender: Any?) {
         undoMgr.undo()
         resetPaintStroke()
+        resetEraseStroke()
         updateBankWarning()
         mapGridView.needsDisplay = true
     }
@@ -1116,6 +1251,7 @@ public final class MapEditorViewController: NSViewController, MapGridViewDelegat
     @objc public func redo(_ sender: Any?) {
         undoMgr.redo()
         resetPaintStroke()
+        resetEraseStroke()
         updateBankWarning()
         mapGridView.needsDisplay = true
     }

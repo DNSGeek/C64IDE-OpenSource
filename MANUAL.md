@@ -640,6 +640,12 @@ and removal, a grid overlay, a raster overlay, and charset bank selection
 (Bank 0 / Bank 1) — the editor warns if a map mixes charset banks. **Fit** zooms
 the whole map into view, and **Dim** shades the layers that are not being edited.
 
+To erase, **right-click** (or control-click) a cell: it returns to the empty
+space tile (`$20`), which upper layers treat as transparent. Drag to keep
+erasing. Right-clicking inside the current selection — or pressing **Delete** —
+clears the whole selection instead. Erasing leaves colour RAM alone, and each
+gesture is a single undo step.
+
 The tile picker previews characters in the map's own colours, and the left panel
 carries both the paint colour and the map's background colour (`$D021`).
 

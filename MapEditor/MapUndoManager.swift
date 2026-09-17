@@ -25,6 +25,10 @@ public enum MapEditAction {
     case stroke(layer: Int, cells: [(col: Int, row: Int)],
                 oldTiles: [UInt8], oldColors: [UInt8],
                 newTile: UInt8, newColor: UInt8)
+
+    /// Cells returned to the empty tile ($20). Colour RAM is left untouched,
+    /// so undo only needs the old tiles.
+    case erase(layer: Int, cells: [(col: Int, row: Int)], oldTiles: [UInt8])
 }
 
 /// Simple point in map coordinates.
@@ -145,6 +149,14 @@ public final class MapUndoManager {
                 l.tiles[cell.row][cell.col] = newTile
                 l.colors[cell.row][cell.col] = newColor
             }
+
+        case let .erase(layer, cells, _):
+            guard layer >= 0, layer < doc.layers.count else { return }
+            let l = doc.layers[layer]
+            for cell in cells {
+                guard isValidCell(l, row: cell.row, col: cell.col) else { continue }
+                l.tiles[cell.row][cell.col] = MapLayer.emptyTile
+            }
         }
     }
 
@@ -184,6 +196,14 @@ public final class MapUndoManager {
                 guard isValidCell(l, row: cell.row, col: cell.col) else { continue }
                 l.tiles[cell.row][cell.col] = oldTiles[i]
                 l.colors[cell.row][cell.col] = oldColors[i]
+            }
+
+        case let .erase(layer, cells, oldTiles):
+            guard layer >= 0, layer < doc.layers.count else { return }
+            let l = doc.layers[layer]
+            for (i, cell) in cells.enumerated() {
+                guard isValidCell(l, row: cell.row, col: cell.col) else { continue }
+                l.tiles[cell.row][cell.col] = oldTiles[i]
             }
         }
     }
