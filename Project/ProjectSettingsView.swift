@@ -626,7 +626,7 @@ struct DiskDetailView: View {
                         TextField("MY DISK", text: $entry.cbmDiskName)
                             .textFieldStyle(.roundedBorder)
                             .font(.system(size: 12, design: .monospaced))
-                            .onChange(of: entry.cbmDiskName) { newValue in
+                            .onChange(of: entry.cbmDiskName) { _, newValue in
                                 entry.cbmDiskName = String(newValue.prefix(16)).uppercased()
                             }
                     }
@@ -636,7 +636,7 @@ struct DiskDetailView: View {
                             .textFieldStyle(.roundedBorder)
                             .font(.system(size: 12, design: .monospaced))
                             .frame(maxWidth: 60)
-                            .onChange(of: entry.cbmDiskID) { newValue in
+                            .onChange(of: entry.cbmDiskID) { _, newValue in
                                 entry.cbmDiskID = String(newValue.prefix(2)).uppercased()
                             }
                     }
@@ -659,7 +659,7 @@ struct DiskDetailView: View {
                     TextField("MYGAME", text: $entry.bootProgramName)
                         .textFieldStyle(.roundedBorder)
                         .font(.system(size: 12, design: .monospaced))
-                        .onChange(of: entry.bootProgramName) { newValue in
+                        .onChange(of: entry.bootProgramName) { _, newValue in
                             entry.bootProgramName = String(newValue.prefix(16)).uppercased()
                         }
                 }
@@ -751,7 +751,7 @@ struct BuildDiskPane: View {
                             .textFieldStyle(.roundedBorder)
                             .font(.system(size: 12, design: .monospaced))
                             .frame(maxWidth: 240)
-                            .onChange(of: viewModel.outputCBMName) { newValue in
+                            .onChange(of: viewModel.outputCBMName) { _, newValue in
                                 viewModel.outputCBMName = String(newValue.prefix(16)).uppercased()
                             }
                         Text("Max 16 chars, ASCII. This is the name LOAD will look for on disk.")

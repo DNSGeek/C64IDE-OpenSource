@@ -176,7 +176,9 @@ class BottomPanelController: NSViewController, NSTextFieldDelegate {
     // MARK: - Tab View Setup
 
     private func setupTabView() {
-        tabView = NSTabView(frame: .zero)
+        // A non-zero initial frame avoids "Invalid view geometry: width is negative"
+        // warnings while tab items are added; Auto Layout resizes it afterwards.
+        tabView = NSTabView(frame: NSRect(x: 0, y: 0, width: 400, height: 200))
         tabView.translatesAutoresizingMaskIntoConstraints = false
         tabView.tabViewType = .topTabsBezelBorder
         tabView.font = NSFont.monospacedSystemFont(ofSize: 10, weight: .medium)

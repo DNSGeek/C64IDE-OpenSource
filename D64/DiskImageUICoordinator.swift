@@ -239,7 +239,7 @@ struct NewDiskImageView: View {
                     Text("D64  (1541, 170KB)").tag(DiskFormat.d64)
                 }
                 .pickerStyle(.segmented)
-                .onChange(of: format) { f in
+                .onChange(of: format) { _, f in
                     // Keep the output path's extension in lockstep with the
                     // chosen format. Without this, a recovery-suggested URL
                     // like "game.d81" plus a D64 selection would create the
@@ -256,7 +256,7 @@ struct NewDiskImageView: View {
                     TextField("MY DISK", text: $diskName)
                         .textFieldStyle(.roundedBorder)
                         .font(.system(size: 12, design: .monospaced))
-                        .onChange(of: diskName) { v in
+                        .onChange(of: diskName) { _, v in
                             diskName = String(v.uppercased().prefix(16))
                         }
                     hint("Max 16 chars")
@@ -267,7 +267,7 @@ struct NewDiskImageView: View {
                         .textFieldStyle(.roundedBorder)
                         .font(.system(size: 12, design: .monospaced))
                         .frame(maxWidth: 60)
-                        .onChange(of: diskID) { v in
+                        .onChange(of: diskID) { _, v in
                             diskID = String(v.uppercased().prefix(2))
                         }
                     hint("2 chars")

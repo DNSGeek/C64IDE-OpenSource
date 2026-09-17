@@ -424,7 +424,8 @@ final class VICERunTarget: NSObject, @MainActor DebuggableTarget {
             let client = VICEMonitorClient(host: self.monitorHost, port: self.monitorPort)
             let ok = client.connect()
 
-            DispatchQueue.main.async {
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
                 if ok {
                     self.setupMonitorClient(client)
                     self.onMonitorConnected()
