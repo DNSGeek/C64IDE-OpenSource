@@ -603,6 +603,12 @@ public final class MapEditorViewController: NSViewController, MapGridViewDelegat
         isModified = false
     }
 
+    /// Marks the current edits as dismissed by the user ("Don't Save"), so
+    /// they are not prompted about again. The map itself is left as is.
+    public func discardChanges() {
+        isModified = false
+    }
+
     public func loadDocument(from url: URL) throws {
         document = try MapDocument.load(from: url)
         attachDocument()

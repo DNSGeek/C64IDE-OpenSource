@@ -604,9 +604,12 @@ per-character Copy/Paste. The arrow keys step through the character map. The
 editor opens on the C64 ROM character set — the same set the Map Editor falls
 back to — so a fresh charset can be edited a character at a time.
 
+The **Pen** control picks what the left mouse button paints: **FG** draws and
+**BG** erases. Right-click (or control-click) always erases, whatever the pen.
+
 **Multi-Color** switches the grid to four 2-bit pixel pairs per row, drawn with
-the `$D021`/`$D022`/`$D023` registers plus colour RAM; the **Pen** control picks
-which of the four values the mouse paints. The bytes are unchanged by the
+the `$D021`/`$D022`/`$D023` registers plus colour RAM, and enables the **MC1**
+and **MC2** pens so the mouse can paint all four values. The bytes are unchanged by the
 toggle — as on real hardware, multi-color simply reinterprets them. Flip H and
 horizontal shifts move whole pixel pairs in this mode, so colours survive.
 

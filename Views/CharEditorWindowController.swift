@@ -52,6 +52,9 @@ class CharEditorWindowController: NSWindowController, NSWindowDelegate {
         case .alertFirstButtonReturn:
             return editor?.exportCharsetBinaryModally() ?? false
         case .alertSecondButtonReturn:
+            // The user has decided about these changes; without this, quitting
+            // after closing the window asks about them a second time.
+            isModified = false
             return true
         default:
             return false
@@ -634,13 +637,18 @@ class CharEditorViewController: NSViewController, NSMenuItemValidation {
     private func syncMultiColorControls() {
         let mc = charData.isMultiColor
         multiColorToggle?.state = mc ? .on : .off
-        penSelector?.isHidden = !mc
-        penLabel?.isHidden = !mc
+        // The pen stays visible in hi-res so the left button can erase
+        // (BG) as well as draw (FG); only the multi-color pens are disabled.
+        penSelector?.setEnabled(mc, forSegment: 1)
+        penSelector?.setEnabled(mc, forSegment: 2)
+        if !mc, let pen = penSelector, pen.selectedSegment != 0 {
+            pen.selectedSegment = 3
+        }
         mc1Label?.isHidden = !mc
         mc2Label?.isHidden = !mc
         swatchRows[2]?.forEach { $0.isHidden = !mc }
         swatchRows[3]?.forEach { $0.isHidden = !mc }
-        gridView?.drawValue = mc ? UInt8(max(0, penSelector?.selectedSegment ?? 3)) : 1
+        syncDrawValue()
         refreshSwatchSelection()
     }
 
@@ -800,7 +808,19 @@ class CharEditorViewController: NSViewController, NSMenuItemValidation {
     }
 
     @objc private func penChanged(_ sender: NSSegmentedControl) {
-        gridView?.drawValue = UInt8(max(0, sender.selectedSegment))
+        syncDrawValue()
+    }
+
+    /// Maps the pen segment to the pixel value the left button paints.
+    /// Segments are BG/MC1/MC2/FG = values 0–3 in multi-color; in hi-res
+    /// only BG (0) and FG (1) are selectable.
+    private func syncDrawValue() {
+        let segment = max(0, penSelector?.selectedSegment ?? 3)
+        if charData.isMultiColor {
+            gridView?.drawValue = UInt8(segment)
+        } else {
+            gridView?.drawValue = segment == 0 ? 0 : 1
+        }
     }
 
     @objc private func fgColorClicked(_ sender: ColorSwatchBtn) {
@@ -1032,8 +1052,8 @@ class CharGridView: NSView {
     private let charData: CharSetData
     var charIndex: Int
 
-    /// Pixel value painted by the left mouse button. Always 1 in hi-res;
-    /// 0-3 in multi-color mode (selected with the pen control).
+    /// Pixel value painted by the left mouse button, selected with the pen
+    /// control: 0-1 in hi-res, 0-3 in multi-color mode.
     var drawValue: UInt8 = 1
 
     var onPixelChanged: (() -> Void)?
@@ -1048,6 +1068,10 @@ class CharGridView: NSView {
 
     private var strokeDidModify = false
     private var lastCell: (row: Int, col: Int)?
+
+    /// Control-click erases like a right-click (one-button mice, trackpads);
+    /// remembered for the drag since the key may be released mid-stroke.
+    private var controlClickErases = false
 
     init(charData: CharSetData, charIndex: Int) {
         self.charData = charData
@@ -1103,8 +1127,11 @@ class CharGridView: NSView {
 
     // MARK: - Mouse
 
-    override func mouseDown(with event: NSEvent) { beginStroke(event, erase: false) }
-    override func mouseDragged(with event: NSEvent) { continueStroke(event, erase: false) }
+    override func mouseDown(with event: NSEvent) {
+        controlClickErases = event.modifierFlags.contains(.control)
+        beginStroke(event, erase: controlClickErases)
+    }
+    override func mouseDragged(with event: NSEvent) { continueStroke(event, erase: controlClickErases) }
     override func rightMouseDown(with event: NSEvent) { beginStroke(event, erase: true) }
     override func rightMouseDragged(with event: NSEvent) { continueStroke(event, erase: true) }
 

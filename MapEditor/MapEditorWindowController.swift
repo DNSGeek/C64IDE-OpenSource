@@ -137,6 +137,9 @@ public final class MapEditorWindowController: NSWindowController {
             // save actually succeeded.
             return mapEditorVC.saveDocumentModally()
         case .alertSecondButtonReturn:
+            // The user has decided about these changes; without this, quitting
+            // after closing the window asks about them a second time.
+            mapEditorVC.discardChanges()
             return true
         default:
             return false
