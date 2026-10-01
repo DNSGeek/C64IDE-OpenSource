@@ -458,59 +458,49 @@ public class RenumberDialog {
         alert.addButton(withTitle: "Renumber")
         alert.addButton(withTitle: "Cancel")
 
-        // Accessory view with start/step fields using NSStackView for modern layout
-        let accessory = NSStackView()
-        accessory.orientation = .vertical
-        accessory.spacing = 8
-        accessory.alignment = .leading
-        accessory.translatesAutoresizingMaskIntoConstraints = false
+        // Accessory view with start/step fields. NSAlert sizes its accessory view
+        // from the view's frame, so lay it out with explicit frames rather than
+        // an unsized auto-layout stack (which collapses to zero size).
+        let rowHeight: CGFloat = 24
+        let rowSpacing: CGFloat = 8
+        let labelWidth: CGFloat = 50
+        let fieldWidth: CGFloat = 100
+        let width: CGFloat = 240
+        let noteHeight: CGFloat = hasSelection ? 18 : 0
+        let height = rowHeight * 2 + rowSpacing + (hasSelection ? rowSpacing + noteHeight : 0)
 
-        // Row 1: Start
-        let startRow = NSStackView()
-        startRow.alignment = .centerY
-        startRow.translatesAutoresizingMaskIntoConstraints = false
-        
-        let startLabel = NSTextField(labelWithString: "Start:")
-        startLabel.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)
-        startLabel.translatesAutoresizingMaskIntoConstraints = false
-        
-        let startField = NSTextField(string: "10")
-        startField.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
-        startField.translatesAutoresizingMaskIntoConstraints = false
-        startField.isBezeled = true
-        
-        startRow.addArrangedSubview(startLabel)
-        startRow.addArrangedSubview(startField)
+        let accessory = NSView(frame: NSRect(x: 0, y: 0, width: width, height: height))
 
-        // Row 2: Step
-        let stepRow = NSStackView()
-        stepRow.alignment = .centerY
-        stepRow.translatesAutoresizingMaskIntoConstraints = false
-        
-        let stepLabel = NSTextField(labelWithString: "Step:")
-        stepLabel.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)
-        stepLabel.translatesAutoresizingMaskIntoConstraints = false
-        
-        let stepField = NSTextField(string: "10")
-        stepField.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
-        stepField.translatesAutoresizingMaskIntoConstraints = false
-        stepField.isBezeled = true
-        
-        stepRow.addArrangedSubview(stepLabel)
-        stepRow.addArrangedSubview(stepField)
+        func makeRow(_ title: String, y: CGFloat) -> NSTextField {
+            let label = NSTextField(labelWithString: title)
+            label.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)
+            label.alignment = .right
+            label.frame = NSRect(x: 0, y: y + 3, width: labelWidth, height: 17)
+            accessory.addSubview(label)
 
-        accessory.addArrangedSubview(startRow)
-        accessory.addArrangedSubview(stepRow)
+            let field = NSTextField(string: "10")
+            field.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+            field.isBezeled = true
+            field.bezelStyle = .roundedBezel
+            field.frame = NSRect(x: labelWidth + 8, y: y, width: fieldWidth, height: rowHeight - 2)
+            accessory.addSubview(field)
+            return field
+        }
+
+        let startField = makeRow("Start:", y: height - rowHeight)
+        let stepField = makeRow("Step:", y: height - rowHeight * 2 - rowSpacing)
+        startField.nextKeyView = stepField
 
         if hasSelection {
             let note = NSTextField(labelWithString: "Only selected lines will be renumbered.")
-            note.font = NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
+            note.font = NSFont.systemFont(ofSize: 11)
             note.textColor = .secondaryLabelColor
-            note.translatesAutoresizingMaskIntoConstraints = false
-            accessory.addArrangedSubview(note)
+            note.frame = NSRect(x: 0, y: 0, width: width, height: noteHeight)
+            accessory.addSubview(note)
         }
 
         alert.accessoryView = accessory
+        alert.window.initialFirstResponder = startField
 
         guard let window = textView.window else {
             completion(nil)
