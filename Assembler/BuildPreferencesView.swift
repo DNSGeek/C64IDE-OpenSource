@@ -191,10 +191,7 @@ struct BuildPreferencesView: View {
 
                     // ── VIC-20 ───────────────────────────────────
                     sectionHeader("VIC-20")
-                    Text("The Super Expander is a cartridge: xvic needs its ROM image to "
-                       + "understand SE keywords. Leave blank and SE programs will load but "
-                       + "fail with ?SYNTAX ERROR. Expansion RAM is configured automatically "
-                       + "from the program's load address.")
+                    Text("The Super Expander is a cartridge: xvic needs its ROM image to understand SE keywords. Leave blank and SE programs will load but fail with ?SYNTAX ERROR. Expansion RAM is configured automatically from the program's load address.")
                         .font(.system(size: 10, design: .monospaced))
                         .foregroundColor(.gray.opacity(0.7))
                         .fixedSize(horizontal: false, vertical: true)
