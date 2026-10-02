@@ -292,6 +292,35 @@ active dialect plugin defines. Expansion is skipped inside string literals, in
 same expansion runs when a file is loaded and when text is pasted, so the buffer
 always contains canonical full keywords.
 
+**PETSCII control codes in strings.** Cursor movement, colors, reverse video
+and the other control keys can be typed into strings as names in braces:
+
+```
+10 PRINT "{clr}{down*3}{rvs on}{yel} HELLO {rvs off}{lblu}"
+```
+
+The tokenizer and the compiler turn each one into its single PETSCII byte, and
+the editor colors recognised codes so they stand out from the text around them.
+Names ignore case, spaces and hyphens (`{RVS ON}`, `{rvson}` and `{Rvs-On}` are
+the same). A repeat count goes after a `*` or before the name: `{down*3}` and
+`{3 down}` both move the cursor three lines. Any byte can still be given in hex
+as `{$93}`, and braces holding anything else are kept as literal text. The
+escapes work inside quoted strings and `DATA` items. Opening a `.prg` writes
+control codes back out by name.
+
+| Codes | Names |
+|---|---|
+| Screen | `{clr}` `{home}` `{del}` `{inst}` `{return}` `{sret}` |
+| Cursor | `{up}` `{down}` `{left}` `{right}` |
+| Reverse | `{rvs on}` `{rvs off}` |
+| Colors | `{blk}` `{wht}` `{red}` `{cyn}` `{pur}` `{grn}` `{blu}` `{yel}` `{orng}` `{brn}` `{lred}` `{gry1}` `{gry2}` `{lgrn}` `{lblu}` `{gry3}` |
+| Character set | `{lower}` `{upper}` `{dish}` (lock case) `{ensh}` (unlock) |
+| Function keys | `{f1}` – `{f8}` |
+
+Long forms such as `{clear}`, `{yellow}`, `{light blue}` and `{crsr down}` are
+accepted too. The **{ }** button in the PETSCII Map copies the escape for the
+selected code.
+
 **Renumbering.** **Edit → Renumber BASIC Lines…** (`⇧⌘L`) renumbers the whole
 program, or only the selection if there is one. Enter a start (1–63999) and a
 step; all `GOTO`, `GOSUB`, `THEN` and similar references are rewritten to match.
@@ -742,7 +771,8 @@ against a second operand, and a quick-preset row jumps to commonly used values.
 
 A 16×16 grid of the PETSCII character set showing each character's glyph,
 decimal/hex/binary code and screen code, with quick-copy buttons that produce
-the corresponding BASIC or assembly syntax.
+the corresponding BASIC or assembly syntax. **{ }** copies the string escape
+(`{clr}`, or `{$XX}` for codes without a name) to paste inside a BASIC string.
 
 ### Reference panel tabs
 

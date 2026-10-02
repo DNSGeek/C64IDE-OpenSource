@@ -1208,6 +1208,41 @@ struct C64BasicSyntax {
 
     // MARK: - Tokenization
 
+    /// Appends a string literal as `.string` tokens, splitting out each
+    /// brace escape the tokenizer understands (`{CLR}`, `{$93}`, `{DOWN*3}`)
+    /// as a `.systemVariable` token so it reads as a control code, not text.
+    /// Unknown braces stay part of the string, as they do in the PRG.
+    private static func appendStringTokens(_ nsLine: NSString, range: NSRange,
+                                           to tokens: inout [SyntaxToken]) {
+        let end = range.location + range.length
+        var runStart = range.location
+        var pos = range.location
+
+        func flush(upTo stop: Int) {
+            guard stop > runStart else { return }
+            let r = NSRange(location: runStart, length: stop - runStart)
+            tokens.append(SyntaxToken(range: r, type: .string, text: nsLine.substring(with: r)))
+        }
+
+        while pos < end {
+            guard nsLine.character(at: pos) == 0x7B else { pos += 1; continue } // {
+            let searchLen = min(end - pos - 1, PetsciiMnemonics.maxBodyLength + 1)
+            let close = searchLen > 0
+                ? nsLine.range(of: "}", range: NSRange(location: pos + 1, length: searchLen)).location
+                : NSNotFound
+            guard close != NSNotFound,
+                  PetsciiMnemonics.decode(nsLine.substring(with: NSRange(location: pos + 1, length: close - pos - 1))) != nil
+            else { pos += 1; continue }
+
+            flush(upTo: pos)
+            let r = NSRange(location: pos, length: close + 1 - pos)
+            tokens.append(SyntaxToken(range: r, type: .systemVariable, text: nsLine.substring(with: r)))
+            pos = close + 1
+            runStart = pos
+        }
+        flush(upTo: end)
+    }
+
     /// Tokenizes a line of C64 BASIC for syntax highlighting.
     /// - Parameter line: The raw source line to tokenize.
     /// - Returns: An array of `SyntaxToken` representing the line's structure.
@@ -1282,11 +1317,7 @@ struct C64BasicSyntax {
                     pos += 1
                 }
                 if pos < length { pos += 1 } // consume closing quote
-                tokens.append(SyntaxToken(
-                    range: NSRange(location: start, length: pos - start),
-                    type: .string,
-                    text: nsLine.substring(with: NSRange(location: start, length: pos - start))
-                ))
+                appendStringTokens(nsLine, range: NSRange(location: start, length: pos - start), to: &tokens)
                 continue
             }
 

@@ -225,4 +225,79 @@ final class BasicFixRegressionTests: XCTestCase {
         let prg = BasicTokenizer.tokenize("20 DATA 24,6,-1")
         XCTAssertEqual(BasicTokenizer.detokenize(prg), "20 DATA 24,6,-1")
     }
+
+    // ═══════════════════════════════════════════════════════
+    // MARK: PETSCII brace mnemonics
+    // ═══════════════════════════════════════════════════════
+
+    /// Bytes of the first line's content: skips the load address, link
+    /// pointer and line number, stops at the line's $00 terminator.
+    private func lineBytes(_ source: String) -> [UInt8] {
+        let bytes = [UInt8](BasicTokenizer.tokenize(source))
+        return Array(bytes[6...].prefix { $0 != 0 })
+    }
+
+    func test_named_control_code_in_string() {
+        XCTAssertEqual(lineBytes("10 PRINT \"{CLR}HI\""), [0x99, 0x20, 0x22, 0x93, 0x48, 0x49, 0x22])
+    }
+
+    func test_named_codes_ignore_case_spaces_and_hyphens() {
+        let expected: [UInt8] = [0x99, 0x22, 0x12, 0x12, 0x12, 0x92, 0x22]
+        XCTAssertEqual(lineBytes("10 PRINT\"{rvs on}{RVSON}{Rvs-On}{rvs off}\""), expected)
+    }
+
+    func test_color_aliases_agree() {
+        XCTAssertEqual(lineBytes("10 PRINT\"{RED}{LRED}{PINK}{GRY2}{GREY}\""),
+                       [0x99, 0x22, 0x1C, 0x96, 0x96, 0x98, 0x98, 0x22])
+    }
+
+    func test_repeat_counts() {
+        XCTAssertEqual(lineBytes("10 PRINT\"{DOWN*3}{2 RIGHT}{$20*2}\""),
+                       [0x99, 0x22, 0x11, 0x11, 0x11, 0x1D, 0x1D, 0x20, 0x20, 0x22])
+    }
+
+    func test_unknown_brace_stays_literal() {
+        let bytes = lineBytes("10 PRINT\"{HELLO}\"")
+        XCTAssertEqual(bytes.count, 2 + 7 + 1, "unknown name must pass through as seven characters")
+        XCTAssertFalse(lineBytes("10 PRINT\"{DOWN*0}\"").contains(0x11))
+        XCTAssertFalse(lineBytes("10 PRINT\"{DOWN*999}\"").contains(0x11))
+    }
+
+    func test_hex_escape_still_works() {
+        XCTAssertEqual(lineBytes("10 PRINT\"{$93}\""), [0x99, 0x22, 0x93, 0x22])
+    }
+
+    func test_named_code_in_data() {
+        XCTAssertEqual(lineBytes("10 DATA {CLR}"), [0x83, 0x20, 0x93])
+    }
+
+    func test_detokenize_writes_names() {
+        let prg = BasicTokenizer.tokenize("10 PRINT \"{$93}{$1C}A{$A6}\"")
+        XCTAssertEqual(BasicTokenizer.detokenize(prg), "10 PRINT \"{clr}{red}A{$A6}\"")
+    }
+
+    func test_mnemonic_roundtrip() {
+        let source = "10 PRINT \"{clr}{down}{rvs on}X{rvs off}{f1}{lblu}\""
+        let once = BasicTokenizer.tokenize(source)
+        let listing = BasicTokenizer.detokenize(once) ?? ""
+        XCTAssertEqual(BasicTokenizer.tokenize(listing), once)
+    }
+
+    func test_every_canonical_name_roundtrips() {
+        for (byte, _) in PetsciiMnemonics.table {
+            let text = PetsciiMnemonics.escape(byte)
+            XCTAssertEqual(PetsciiMnemonics.decode(String(text.dropFirst().dropLast())), [byte], text)
+        }
+    }
+
+    func test_no_alias_names_two_codes() {
+        var seen: [String: UInt8] = [:]
+        for (byte, names) in PetsciiMnemonics.table {
+            for name in names {
+                let key = name.uppercased().filter { $0 != " " && $0 != "-" }
+                if let other = seen[key], other != byte { XCTFail("\(name) maps to both $\(String(other, radix: 16)) and $\(String(byte, radix: 16))") }
+                seen[key] = byte
+            }
+        }
+    }
 }

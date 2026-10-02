@@ -186,15 +186,16 @@ class PETSCIIMapViewController: NSViewController {
             ("CHR$", #selector(copyCHR(_:)), "Copy CHR$(n)"),
             ("POKE", #selector(copyPOKE(_:)), "Copy POKE statement"),
             (".byte", #selector(copyByte(_:)), "Copy .byte $XX"),
+            ("{ }", #selector(copyBrace(_:)), "Copy the {name} escape for use inside a BASIC string"),
         ]
-        var bx: CGFloat = 310
+        var bx: CGFloat = 300
         for (title, action, tooltip) in copyBtns {
             let btn = NSButton(title: title, target: self, action: action)
-            btn.frame = NSRect(x: bx, y: y - 65, width: 50, height: 24)
+            btn.frame = NSRect(x: bx, y: y - 65, width: 44, height: 24)
             btn.font = NSFont.monospacedSystemFont(ofSize: 10, weight: .medium)
             btn.toolTip = tooltip
             view.addSubview(btn)
-            bx += 54
+            bx += 46
         }
 
         updateInfo()
@@ -274,6 +275,12 @@ class PETSCIIMapViewController: NSViewController {
 
     @objc private func copyByte(_ sender: Any?) {
         copyToClipboard(String(format: ".byte $%02X", selectedCode))
+    }
+
+    /// `{clr}`-style name when the code has one, `{$XX}` otherwise; both
+    /// are understood inside string literals by the tokenizer and compiler.
+    @objc private func copyBrace(_ sender: Any?) {
+        copyToClipboard(PetsciiMnemonics.escape(UInt8(selectedCode)))
     }
 
     private func copyToClipboard(_ str: String) {

@@ -499,6 +499,11 @@ final class BasicCodeGenTests: XCTestCase {
         XCTAssertFalse(asm.contains("$7B, $24"))
     }
 
+    func test_string_literal_decodes_named_petscii_escape() {
+        let asm = compile("10 PRINT \"{clr}{down*2}HI\"")
+        XCTAssertTrue(asm.contains("$93, $11, $11, $48, $49, $00"))
+    }
+
     func test_runtime_has_strcmp() {
         XCTAssertTrue(compile("10 GET K$: IF K$=\"\" THEN GOTO 10").contains("_rt_strcmp:"))
     }

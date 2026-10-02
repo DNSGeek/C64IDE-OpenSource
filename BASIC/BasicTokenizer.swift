@@ -279,7 +279,7 @@ public class BasicTokenizer {
                     continue
                 }
                 if let escaped = tryEscapeSequence(upper, at: pos) {
-                    result.append(escaped.byte)
+                    result.append(contentsOf: escaped.bytes)
                     pos = escaped.end
                     continue
                 }
@@ -312,7 +312,7 @@ public class BasicTokenizer {
             if inDATA {
                 if ch == ":" { inDATA = false }
                 if let escaped = tryEscapeSequence(upper, at: pos) {
-                    result.append(escaped.byte)
+                    result.append(contentsOf: escaped.bytes)
                     pos = escaped.end
                     continue
                 }
@@ -378,7 +378,7 @@ public class BasicTokenizer {
 
             // ── {$XX} raw byte escape ──────────────────────────────────
             if let escaped = tryEscapeSequence(upper, at: pos) {
-                result.append(escaped.byte)
+                result.append(contentsOf: escaped.bytes)
                 pos = escaped.end
                 continue
             }
@@ -533,24 +533,26 @@ public class BasicTokenizer {
         }
     }
 
-    /// Tries to match a `{$XX}` escape sequence at `pos`. Returns the byte value
-    /// and index after the closing `}`, or `nil` if no match.
+    /// Tries to match a brace escape at `pos`: either a raw byte `{$XX}` or
+    /// a named control code such as `{CLR}` or `{RVS ON}` (see
+    /// `PetsciiMnemonics`). Either form takes an optional repeat count,
+    /// written `{DOWN*5}` or `{5 DOWN}`. Returns the bytes and the index
+    /// after the closing `}`, or `nil` if the braces hold nothing we know --
+    /// the caller then emits the `{` literally, as before.
     private static func tryEscapeSequence(_ str: String, at pos: String.Index)
-        -> (byte: UInt8, end: String.Index)? {
+        -> (bytes: [UInt8], end: String.Index)? {
         guard str[pos] == "{" else { return nil }
-        let remaining = str[pos...]
-        guard remaining.count >= 5,
-              remaining.hasPrefix("{$") else { return nil }
-        let hexStart = str.index(pos, offsetBy: 2)
-        let hexEnd   = str.index(pos, offsetBy: 4)
-        guard hexEnd < str.endIndex, str[hexEnd] == "}" else { return nil }
-        let hexStr = String(str[hexStart..<hexEnd])
-        guard let byte = UInt8(hexStr, radix: 16) else { return nil }
-        return (byte: byte, end: str.index(after: hexEnd))
+        let bodyStart = str.index(after: pos)
+        // Bounded scan: the longest legal body is a few dozen characters,
+        // and an unmatched `{` must not cost a walk to end of line.
+        guard let close = str[bodyStart...].prefix(PetsciiMnemonics.maxBodyLength + 1)
+            .firstIndex(of: "}") else { return nil }
+        guard let bytes = PetsciiMnemonics.decode(String(str[bodyStart..<close])) else { return nil }
+        return (bytes: bytes, end: str.index(after: close))
     }
 
     /// Converts a source-level string literal to PETSCII bytes, honouring the
-    /// same `{$XX}` raw-byte escapes the tokenizer accepts.
+    /// same `{$XX}` / `{CLR}` brace escapes the tokenizer accepts.
     ///
     /// The compiler needs this too: emitting `s.map(asciiToPetscii)` sent the
     /// literal characters `{`, `$`, `9`, `3`, `}` to the screen instead of the
@@ -560,7 +562,7 @@ public class BasicTokenizer {
         var pos = str.startIndex
         while pos < str.endIndex {
             if let escaped = tryEscapeSequence(str, at: pos) {
-                result.append(escaped.byte)
+                result.append(contentsOf: escaped.bytes)
                 pos = escaped.end
                 continue
             }
@@ -707,7 +709,7 @@ public class BasicTokenizer {
                     if byte >= 0x20 && byte <= 0x7E && byte != 0x7B {
                         lineContent.append(Character(UnicodeScalar(byte)))
                     } else {
-                        lineContent.append(String(format: "{$%02X}", byte))
+                        lineContent.append(PetsciiMnemonics.escape(byte))
                     }
                     offset += 1
                     continue
@@ -720,7 +722,7 @@ public class BasicTokenizer {
                     } else if byte >= 0x20 && byte <= 0x7E && byte != 0x7B {
                         lineContent.append(Character(UnicodeScalar(byte)))
                     } else {
-                        lineContent.append(String(format: "{$%02X}", byte))
+                        lineContent.append(PetsciiMnemonics.escape(byte))
                     }
                     offset += 1
                     continue
@@ -741,7 +743,7 @@ public class BasicTokenizer {
                     } else if byte >= 0x20 && byte <= 0x7E && byte != 0x7B {
                         lineContent.append(Character(UnicodeScalar(byte)))
                     } else {
-                        lineContent.append(String(format: "{$%02X}", byte))
+                        lineContent.append(PetsciiMnemonics.escape(byte))
                     }
                     offset += 1
                     continue
@@ -754,7 +756,7 @@ public class BasicTokenizer {
                         if byte == 0x8F { inREM = true }   // REM: rest is literal
                         if byte == 0x83 { inDATA = true }  // DATA: literal until ':'
                     } else {
-                        lineContent.append(String(format: "{$%02X}", byte))
+                        lineContent.append(PetsciiMnemonics.escape(byte))
                     }
                     offset += 1
                     continue
@@ -800,7 +802,7 @@ public class BasicTokenizer {
                         // MEGA65 case is handled by the checks above.
                         lineContent.append("\u{03C0}")
                     } else {
-                        lineContent.append(String(format: "{$%02X}", byte))
+                        lineContent.append(PetsciiMnemonics.escape(byte))
                     }
                     offset += 1
                     continue
@@ -810,7 +812,7 @@ public class BasicTokenizer {
                 if byte < 0x20 {
                     // Control codes outside quotes cannot round-trip as
                     // raw text; escape them.
-                    lineContent.append(String(format: "{$%02X}", byte))
+                    lineContent.append(PetsciiMnemonics.escape(byte))
                 } else {
                     lineContent.append(petsciiToChar(byte))
                 }
@@ -838,3 +840,125 @@ public class BasicTokenizer {
     }
 }
 
+
+// MARK: - PETSCII Brace Mnemonics
+
+/// Named PETSCII control codes for string literals, so `10 PRINT "{CLR}"`
+/// can be typed instead of `{$93}` or `CHR$(147)`. The names follow the
+/// petcat / C64List conventions most listings in magazines and on the web
+/// use; each code has a few aliases because no two tools agree on them.
+///
+/// Matching ignores case, spaces and hyphens, so `{rvs on}`, `{RVSON}` and
+/// `{Rvs-On}` are the same code. A repeat count can follow a `*` or
+/// precede the name: `{DOWN*5}` and `{5 DOWN}` both emit five $11 bytes.
+enum PetsciiMnemonics {
+
+    /// (byte, names). The first name is the canonical one the detokenizer
+    /// writes back out.
+    static let table: [(UInt8, [String])] = [
+        (0x05, ["WHT", "WHITE"]),
+        (0x08, ["DISH", "DISABLESHIFT", "LOCK"]),
+        (0x09, ["ENSH", "ENABLESHIFT", "UNLOCK"]),
+        (0x0D, ["RETURN", "RET"]),
+        (0x0E, ["LOWER", "SWLC", "LOWERCASE"]),
+        (0x11, ["DOWN", "CD", "CRSRDOWN", "CRSRDN"]),
+        (0x12, ["RVS ON", "RVSON", "RVS", "REVERSEON", "RON"]),
+        (0x13, ["HOME", "HOM", "CRSRHOME"]),
+        (0x14, ["DEL", "DELETE", "INSTDEL"]),
+        (0x1C, ["RED"]),
+        (0x1D, ["RIGHT", "RGHT", "CRSRRIGHT", "CRSRRT"]),
+        (0x1E, ["GRN", "GREEN"]),
+        (0x1F, ["BLU", "BLUE"]),
+        (0x81, ["ORNG", "ORANGE", "ORG"]),
+        (0x85, ["F1"]),
+        (0x86, ["F3"]),
+        (0x87, ["F5"]),
+        (0x88, ["F7"]),
+        (0x89, ["F2"]),
+        (0x8A, ["F4"]),
+        (0x8B, ["F6"]),
+        (0x8C, ["F8"]),
+        (0x8D, ["SRET", "SHIFTRETURN", "SHIFTRET"]),
+        (0x8E, ["UPPER", "SWUC", "UPPERCASE"]),
+        (0x90, ["BLK", "BLACK"]),
+        (0x91, ["UP", "CU", "CRSRUP"]),
+        (0x92, ["RVS OFF", "RVSOFF", "REVERSEOFF", "ROFF", "OFF"]),
+        (0x93, ["CLR", "CLEAR", "CLS", "CLEARSCREEN"]),
+        (0x94, ["INST", "INSERT"]),
+        (0x95, ["BRN", "BROWN"]),
+        (0x96, ["LRED", "LIGHTRED", "PINK"]),
+        (0x97, ["GRY1", "DGRY", "DARKGRAY", "DARKGREY", "GREY1"]),
+        (0x98, ["GRY2", "GRY", "GRAY", "GREY", "MGRY", "MEDIUMGRAY", "GREY2"]),
+        (0x99, ["LGRN", "LIGHTGREEN"]),
+        (0x9A, ["LBLU", "LIGHTBLUE"]),
+        (0x9B, ["GRY3", "LGRY", "LIGHTGRAY", "LIGHTGREY", "GREY3"]),
+        (0x9C, ["PUR", "PURPLE", "PURP"]),
+        (0x9D, ["LEFT", "CL", "CRSRLEFT", "CRSRLF"]),
+        (0x9E, ["YEL", "YELLOW"]),
+        (0x9F, ["CYN", "CYAN"]),
+    ]
+
+    /// Longest brace body the scanner will look at, e.g. `MEDIUMGRAY*255`
+    /// with spaces. Anything longer is not an escape.
+    static let maxBodyLength = 24
+
+    /// Highest accepted repeat count. One string literal can hold 255
+    /// bytes at most, so a larger count is a typo, not a request.
+    static let maxRepeat = 255
+
+    private static let byName: [String: UInt8] = {
+        var map: [String: UInt8] = [:]
+        for (byte, names) in table {
+            for name in names { map[normalize(name)] = byte }
+        }
+        return map
+    }()
+
+    private static let canonical: [UInt8: String] = {
+        var map: [UInt8: String] = [:]
+        for (byte, names) in table { map[byte] = names[0].lowercased() }
+        return map
+    }()
+
+    private static func normalize(_ name: String) -> String {
+        String(name.uppercased().filter { $0 != " " && $0 != "-" && $0 != "_" })
+    }
+
+    /// Decodes the text between `{` and `}`. Returns `nil` for anything that
+    /// is neither `$XX` nor a known name, so unknown braces stay literal.
+    static func decode(_ body: String) -> [UInt8]? {
+        var name = body.trimmingCharacters(in: .whitespaces)
+        var count = 1
+
+        if let star = name.lastIndex(of: "*") {
+            guard let n = Int(name[name.index(after: star)...].trimmingCharacters(in: .whitespaces))
+            else { return nil }
+            count = n
+            name = name[..<star].trimmingCharacters(in: .whitespaces)
+        } else if let space = name.firstIndex(of: " "),
+                  let n = Int(name[..<space]) {
+            count = n
+            name = name[space...].trimmingCharacters(in: .whitespaces)
+        }
+        guard count >= 1, count <= maxRepeat, !name.isEmpty else { return nil }
+
+        let byte: UInt8
+        if name.hasPrefix("$") {
+            let hex = name.dropFirst()
+            guard hex.count == 2, let b = UInt8(hex, radix: 16) else { return nil }
+            byte = b
+        } else if let b = byName[normalize(name)] {
+            byte = b
+        } else {
+            return nil
+        }
+        return Array(repeating: byte, count: count)
+    }
+
+    /// Source text for a byte the detokenizer cannot show as itself:
+    /// the canonical name when there is one, `{$XX}` otherwise.
+    static func escape(_ byte: UInt8) -> String {
+        if let name = canonical[byte] { return "{\(name)}" }
+        return String(format: "{$%02X}", byte)
+    }
+}
