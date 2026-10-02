@@ -308,14 +308,14 @@ as `{$93}`, and braces holding anything else are kept as literal text. The
 escapes work inside quoted strings and `DATA` items. Opening a `.prg` writes
 control codes back out by name.
 
-| Codes | Names |
-|---|---|
-| Screen | `{clr}` `{home}` `{del}` `{inst}` `{return}` `{sret}` |
-| Cursor | `{up}` `{down}` `{left}` `{right}` |
-| Reverse | `{rvs on}` `{rvs off}` |
-| Colors | `{blk}` `{wht}` `{red}` `{cyn}` `{pur}` `{grn}` `{blu}` `{yel}` `{orng}` `{brn}` `{lred}` `{gry1}` `{gry2}` `{lgrn}` `{lblu}` `{gry3}` |
-| Character set | `{lower}` `{upper}` `{dish}` (lock case) `{ensh}` (unlock) |
-| Function keys | `{f1}` – `{f8}` |
+| Codes         | Names                                                                                                                                  |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Screen        | `{clr}` `{home}` `{del}` `{inst}` `{return}` `{sret}`                                                                                  |
+| Cursor        | `{up}` `{down}` `{left}` `{right}`                                                                                                     |
+| Reverse       | `{rvs on}` `{rvs off}`                                                                                                                 |
+| Colors        | `{blk}` `{wht}` `{red}` `{cyn}` `{pur}` `{grn}` `{blu}` `{yel}` `{orng}` `{brn}` `{lred}` `{gry1}` `{gry2}` `{lgrn}` `{lblu}` `{gry3}` |
+| Character set | `{lower}` `{upper}` `{dish}` (lock case) `{ensh}` (unlock)                                                                             |
+| Function keys | `{f1}` – `{f8}`                                                                                                                        |
 
 Long forms such as `{clear}`, `{yellow}`, `{light blue}` and `{crsr down}` are
 accepted too. The **{ }** button in the PETSCII Map copies the escape for the
