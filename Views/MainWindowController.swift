@@ -1018,8 +1018,15 @@ class MainWindowController: NSWindowController, NSToolbarDelegate {
             }
 
             if BasicTokenizer.isTokenizedBASIC(data) {
+                // A BASIC loader stub (`10 SYS2061`) with machine code behind
+                // it passes the BASIC check too. Detokenize only the BASIC
+                // lines, and send the rest to the disassembler afterwards.
+                let machineCode = BasicPrgLayout.analyze(data)
+                    .flatMap { $0.isBasicWithMachineCode ? $0 : nil }
+                let basicData = machineCode?.basicPortion(of: data) ?? data
+
                 // Tokenized BASIC PRG: detokenize and open as editable source.
-                guard let source = BasicTokenizer.detokenize(data) else {
+                guard let source = BasicTokenizer.detokenize(basicData) else {
                     let alert = NSAlert()
                     alert.messageText = "Could not detokenize \"\(url.lastPathComponent)\""
                     alert.informativeText = "The file appears to be a BASIC program but could not be detokenized."
@@ -1033,6 +1040,16 @@ class MainWindowController: NSWindowController, NSToolbarDelegate {
                                    .appendingPathComponent("\(baseName).bas")
                 try? source.write(to: tempURL, atomically: true, encoding: .utf8)
                 loadDocument(from: tempURL)     // re-enters with .bas, skips PRG block
+
+                if let layout = machineCode,
+                   let appDelegate = NSApp.delegate as? AppDelegate {
+                    bottomPanelController.appendBuildOutput(
+                        "\(url.lastPathComponent): \(layout.summary). " +
+                        "The BASIC stub is in the editor; the machine code is open in the disassembler.",
+                        type: .info)
+                    appDelegate.openDisassembler(machineCodeFollowing: layout, in: data,
+                                                 name: url.lastPathComponent)
+                }
             } else {
                 // Machine language PRG: open in the disassembler.
                 if let appDelegate = NSApp.delegate as? AppDelegate {

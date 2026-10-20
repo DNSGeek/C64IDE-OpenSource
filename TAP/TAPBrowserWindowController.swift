@@ -930,7 +930,13 @@ class TAPBrowserViewController: NSViewController,
         let tempDir = FileManager.default.temporaryDirectory
         // External dependency: BasicTokenizer
         if BasicTokenizer.isTokenizedBASIC(prgData) {
-            if let source = BasicTokenizer.detokenize(prgData) {
+            // A loader stub with machine code behind it: show the BASIC
+            // lines here and the code in the disassembler.
+            let machineCode = BasicPrgLayout.analyze(prgData)
+                .flatMap { $0.isBasicWithMachineCode ? $0 : nil }
+            let basicData = machineCode?.basicPortion(of: prgData) ?? prgData
+
+            if let source = BasicTokenizer.detokenize(basicData) {
                 let tempURL = tempDir.appendingPathComponent("\(sanitizeForMacOS(entry.name.lowercased())).bas")
                 do {
                     // Was a `try?`, which handed a nonexistent path to the
@@ -940,10 +946,19 @@ class TAPBrowserViewController: NSViewController,
                     statusLabel.stringValue = "Could not stage \"\(entry.name)\": \(error.localizedDescription)"
                     return
                 }
-                (NSApp.delegate as? AppDelegate)?.mainWindowController?.loadDocument(from: tempURL)
-                statusLabel.stringValue = source.contains("{$")
-                    ? "Opened \"\(entry.name)\" — some tokens unrecognized."
-                    : "Opened \"\(entry.name)\" as BASIC source."
+                let appDelegate = NSApp.delegate as? AppDelegate
+                appDelegate?.mainWindowController?.loadDocument(from: tempURL)
+                if let layout = machineCode {
+                    appDelegate?.openDisassembler(machineCodeFollowing: layout, in: prgData,
+                                                  name: entry.name)
+                }
+                if source.contains("{$") {
+                    statusLabel.stringValue = "Opened \"\(entry.name)\" — some tokens unrecognized."
+                } else if let layout = machineCode {
+                    statusLabel.stringValue = "Opened \"\(entry.name)\": \(layout.summary). BASIC stub in the editor, machine code in the disassembler."
+                } else {
+                    statusLabel.stringValue = "Opened \"\(entry.name)\" as BASIC source."
+                }
                 return
             }
         }

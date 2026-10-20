@@ -72,6 +72,23 @@ extension AppDelegate {
         }
     }
 
+    /// Opens the disassembler on the machine code stored behind a BASIC
+    /// program -- the `10 SYS2061` loader case, where the file is really a
+    /// machine language program with a one-line stub in front of it.
+    ///
+    /// The listing starts at the first byte after the program's last line and
+    /// labels the stub's `SYS` target, so the entry point is easy to find even
+    /// when alignment padding sits in front of it.
+    func openDisassembler(machineCodeFollowing layout: BasicPrgLayout, in prg: Data, name: String) {
+        openDisassembler(nil)
+        guard let vc = disassemblerController?.window?.contentViewController as? DisassemblerViewController else { return }
+        let code = Array(layout.machineCode(in: prg).prefix(Disassembler6502.addressSpaceSize))
+        vc.loadMachineCode(code, at: layout.trailingAddress,
+                           entryPoint: layout.sysTargetsTrailingBytes ? layout.sysAddress : nil,
+                           source: "\(name) (machine code after BASIC)",
+                           baseName: (name as NSString).deletingPathExtension)
+    }
+
     /// Opens or focuses the D64 Disk Image Browser window.
     @objc func openD64Browser(_ sender: Any?) {
         show(&diskBrowserController) { D64BrowserWindowController() }

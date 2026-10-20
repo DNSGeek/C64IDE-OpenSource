@@ -552,6 +552,18 @@ to see its cycle count. **Export ASM…** writes a source file, **Edit in IDE**
 opens the disassembly in an editor tab, and **Copy All** copies everything.
 The disk and tape browsers can send a file straight here.
 
+Opening a `.prg` with **File → Open…** routes it by content: a tokenized BASIC
+program is detokenized into an editor tab, and a machine language program
+comes here. A program that is a BASIC loader stub with machine code stored
+behind it (`10 SYS2061` followed by the real program) gets both — the stub
+opens as BASIC source, and the bytes after the last BASIC line open in the
+disassembler, based at their true address with the `SYS` target labelled
+(constant expressions such as `SYS 12*256+13` or `SYS π*656` are worked out
+the way the ROM does it).
+The Build panel notes the split (`1 BASIC line, then 6131 bytes of machine
+code at $080D-$2003 (SYS 2061 = $080D)`). A handful of bytes after a program
+that no `SYS` points into are treated as padding and left alone.
+
 ### Memory map
 
 **Tools → Memory Map** shows the 64K address space twice, side by side and to
@@ -729,7 +741,8 @@ Works with **D64** (1541) and **D81** (1581) images.
 - **Add File…** writes a PRG into the image; **Extract PRG…** pulls one out;
   **Rename…** and **Delete** operate on the selected entry.
 - **Open in IDE** loads a file into an editor tab; **Disassemble** sends it to
-  the disassembler.
+  the disassembler. A BASIC stub with machine code behind it opens in both,
+  as described under [Disassembler](#disassembler).
 - **Save**, **Save As…** and **Reload** manage the image itself; the browser
   warns about unsaved changes and about overwriting an existing filename.
 

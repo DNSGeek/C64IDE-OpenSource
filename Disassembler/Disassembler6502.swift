@@ -368,7 +368,12 @@ class Disassembler6502 {
     ///   - data: Raw machine code bytes.
     ///   - startAddress: Memory address where the data is loaded.
     /// - Returns: Array of `DisassembledLine` objects.
-    func disassemble(data: [UInt8], startAddress: UInt16) -> [DisassembledLine] {
+    /// - Parameter entryPoints: addresses the block is entered at from
+    ///   outside, such as the target of a BASIC stub's `SYS`. They are
+    ///   labelled like branch targets when they land on an instruction
+    ///   boundary, so the entry is easy to find even behind padding.
+    func disassemble(data: [UInt8], startAddress: UInt16,
+                     entryPoints: Set<UInt16> = []) -> [DisassembledLine] {
         var lines: [DisassembledLine] = []
         branchTargets.removeAll()
         referencedLabels.removeAll()
@@ -379,7 +384,7 @@ class Disassembler6502 {
         // as a label if it lands on a boundary this walk actually reached --
         // otherwise the exported source would define `L_xxxx` nowhere and the
         // operand referencing it would not resolve.
-        var rawTargets: Set<UInt16> = []
+        var rawTargets: Set<UInt16> = entryPoints
         var instructionStarts: Set<UInt16> = []
         var offset = 0
         while offset < data.count {

@@ -45,6 +45,10 @@ class DisassemblerViewController: NSViewController {
     private var startAddress: UInt16 = 0
     private var lastLoadedFilename: String?
     private var currentSourceName: String = ""
+    /// Addresses the block is entered at from outside -- a BASIC stub's `SYS`
+    /// target -- labelled in the listing alongside the branch targets found
+    /// in the code itself.
+    private var entryPoints: Set<UInt16> = []
 
     private var textView: NSTextView!
     private var scrollView: NSScrollView!
@@ -332,10 +336,28 @@ class DisassemblerViewController: NSViewController {
         disassembleFile(url)
     }
 
+    /// Shows a block of machine code that was found behind a BASIC program
+    /// (can be called externally).
+    ///
+    /// - Parameters:
+    ///   - code: the bytes after the BASIC lines.
+    ///   - address: where the first of them lives in memory.
+    ///   - entryPoint: the stub's `SYS` target, when it lands in the block.
+    ///   - source: what to call the listing in the info line.
+    ///   - baseName: file name without extension, for exports and Edit in IDE.
+    func loadMachineCode(_ code: [UInt8], at address: UInt16, entryPoint: UInt16?,
+                         source: String, baseName: String) {
+        lastLoadedFilename = baseName
+        entryPoints = entryPoint.map { [$0] } ?? []
+        present(data: code, at: address, source: source)
+    }
+
     private func disassembleFile(_ url: URL) {
         do {
             let file = try Disassembler6502.load(from: url)
             lastLoadedFilename = url.deletingPathExtension().lastPathComponent
+            // A whole file has no entry other than its start.
+            entryPoints = []
 
             if let loadAddress = file.loadAddress {
                 present(data: file.data, at: loadAddress, source: url.lastPathComponent)
@@ -360,7 +382,8 @@ class DisassemblerViewController: NSViewController {
         currentData = data
         currentSourceName = source
 
-        let lines = disassembler.disassemble(data: data, startAddress: address)
+        let lines = disassembler.disassemble(data: data, startAddress: address,
+                                             entryPoints: entryPoints)
         currentLines = lines
 
         addressField.isEnabled = true
