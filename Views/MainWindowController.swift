@@ -191,8 +191,16 @@ class MainWindowController: NSWindowController, NSToolbarDelegate {
             self.updateWindowTitle()
         }
 
+        // ── Calculate initial sizes ──────────────────────────
+        let topHeight = height - bottomDefaultHeight
+        let editorWidth = width - rightPanelDefaultWidth
+
         // ── Create tab view for editors ───────────────────────
-        editorTabView = NSTabView()
+        // Created with its real initial frame: a zero-sized NSTabView has a
+        // negative content area (frame minus bezel), which trips the
+        // "Invalid view geometry: width is negative" runtime issue as soon
+        // as it is configured or a tab item is added.
+        editorTabView = NSTabView(frame: NSRect(x: 0, y: 0, width: editorWidth, height: topHeight))
         editorTabView.tabViewType = .topTabsBezelBorder
         editorTabView.font = NSFont.monospacedSystemFont(ofSize: 10, weight: .medium)
         editorTabView.delegate = self
@@ -201,18 +209,12 @@ class MainWindowController: NSWindowController, NSToolbarDelegate {
         // Create initial tab
         addNewTab(with: nil)
 
-        // ── Calculate initial sizes ──────────────────────────
-        let topHeight = height - bottomDefaultHeight
-        let editorWidth = width - rightPanelDefaultWidth
-
         // ── Inner split (horizontal): Tabs+Editor | Reference ──
         innerSplitView = NSSplitView(frame: NSRect(x: 0, y: 0, width: width, height: topHeight))
         innerSplitView.isVertical = true
         innerSplitView.dividerStyle = .thin
         innerSplitView.delegate = self
         innerSplitView.autoresizingMask = [.width, .height]
-
-        editorTabView.frame = NSRect(x: 0, y: 0, width: editorWidth, height: topHeight)
 
         let referenceView = referencePanelController.view
         referenceView.frame = NSRect(x: editorWidth, y: 0, width: rightPanelDefaultWidth, height: topHeight)
