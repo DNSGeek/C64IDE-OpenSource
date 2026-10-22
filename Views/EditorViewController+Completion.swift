@@ -131,7 +131,7 @@ extension EditorViewController {
         panel.show(items: result.items,
                    anchor: NSPoint(x: anchorRect.minX, y: anchorRect.minY),
                    lineHeight: lineHeight,
-                   font: textView.font ?? SyntaxHighlighter.codeFont,
+                   font: EditorFontManager.shared.codeFont,
                    parent: window)
         return true
     }

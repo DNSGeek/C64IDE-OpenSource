@@ -17,6 +17,7 @@
 		13AA20022FD00002 /* MemoryMapParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13AA20012FD00001 /* MemoryMapParserTests.swift */; };
 		13AA20042FD00004 /* MemoryMapColumnViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13AA20032FD00003 /* MemoryMapColumnViewTests.swift */; };
 		13AA10042F900004 /* ROMSymbolReferenceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13AA10032F900003 /* ROMSymbolReferenceTests.swift */; };
+		13C0DE0C2FF8000100C64A02 /* DiagnosticUnderlineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13C0DE0C2FF8000100C64A01 /* DiagnosticUnderlineTests.swift */; };
 		133513E02F844A5500A98A29 /* BasicAutoArrangeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 133513D02F844A5500A98A29 /* BasicAutoArrangeTests.swift */; };
 		133513E12F844A5500A98A29 /* BasicCodeGenTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 133513D12F844A5500A98A29 /* BasicCodeGenTests.swift */; };
 		133513E22F844A5500A98A29 /* BasicFixRegressionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 133513D22F844A5500A98A29 /* BasicFixRegressionTests.swift */; };
@@ -140,6 +141,7 @@
 		13AA20012FD00001 /* MemoryMapParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryMapParserTests.swift; sourceTree = "<group>"; };
 		13AA20032FD00003 /* MemoryMapColumnViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryMapColumnViewTests.swift; sourceTree = "<group>"; };
 		13AA10032F900003 /* ROMSymbolReferenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ROMSymbolReferenceTests.swift; sourceTree = "<group>"; };
+		13C0DE0C2FF8000100C64A01 /* DiagnosticUnderlineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticUnderlineTests.swift; sourceTree = "<group>"; };
 		133513D02F844A5500A98A29 /* BasicAutoArrangeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BasicAutoArrangeTests.swift; sourceTree = "<group>"; };
 		133513D12F844A5500A98A29 /* BasicCodeGenTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BasicCodeGenTests.swift; sourceTree = "<group>"; };
 		133513D22F844A5500A98A29 /* BasicFixRegressionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BasicFixRegressionTests.swift; sourceTree = "<group>"; };
@@ -498,6 +500,7 @@
 				133513F02F844A5500A98A29 /* ReferencePanelDialectTests.swift */,
 				13AA10012F900001 /* OpcodeReferenceTests.swift */,
 				13AA10032F900003 /* ROMSymbolReferenceTests.swift */,
+				13C0DE0C2FF8000100C64A01 /* DiagnosticUnderlineTests.swift */,
 				13651BE32F7215E2001749B5 /* SpriteEditorWindowController.swift */,
 				131C45962F757F5700835980 /* NumberConverterWindowController.swift */,
 				138715032FF18B0D0048F245 /* NSTextField+Shake.swift */,
@@ -688,6 +691,7 @@
 				13AA20022FD00002 /* MemoryMapParserTests.swift in Sources */,
 				13AA20042FD00004 /* MemoryMapColumnViewTests.swift in Sources */,
 				13AA10042F900004 /* ROMSymbolReferenceTests.swift in Sources */,
+				13C0DE0C2FF8000100C64A02 /* DiagnosticUnderlineTests.swift in Sources */,
 				133513E12F844A5500A98A29 /* BasicCodeGenTests.swift in Sources */,
 				133513E22F844A5500A98A29 /* BasicFixRegressionTests.swift in Sources */,
 				133513E32F844A5500A98A29 /* BasicLexerTests.swift in Sources */,

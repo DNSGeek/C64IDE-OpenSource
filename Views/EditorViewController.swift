@@ -162,7 +162,22 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSTextStorageD
         sv.borderType = .noBorder
         sv.backgroundColor = editorBackground
 
-        let tv = TooltipTextView(frame: NSRect(origin: .zero, size: sv.contentSize))
+        // Build the text system by hand so the editor gets its own layout
+        // manager (see DiagnosticLayoutManager); this is the TextKit 1 stack
+        // the diagnostics and tooltips already rely on.
+        let textStorage = NSTextStorage()
+        let layoutManager = DiagnosticLayoutManager()
+        textStorage.addLayoutManager(layoutManager)
+        let textContainer = NSTextContainer(size: NSSize(width: sv.contentSize.width,
+                                                         height: CGFloat.greatestFiniteMagnitude))
+        textContainer.widthTracksTextView = true
+        layoutManager.addTextContainer(textContainer)
+
+        let tv = TooltipTextView(frame: NSRect(origin: .zero, size: sv.contentSize), textContainer: textContainer)
+        tv.minSize = NSSize(width: 0, height: sv.contentSize.height)
+        tv.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        tv.isVerticallyResizable = true
+        tv.isHorizontallyResizable = false
         tv.autoresizingMask = [.width, .height]
         tv.isEditable = true
         tv.isSelectable = true

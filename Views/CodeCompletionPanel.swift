@@ -50,6 +50,7 @@ final class CodeCompletionPanel: NSPanel {
         column.resizingMask = .autoresizingMask
         table.addTableColumn(column)
         table.headerView = nil
+        table.style = .plain   // no inset padding around the rows
         table.intercellSpacing = NSSize(width: 0, height: 0)
         table.rowHeight = 20
         table.allowsEmptySelection = false
@@ -97,12 +98,18 @@ final class CodeCompletionPanel: NSPanel {
         table.rowHeight = max(20, lineHeight + 6)
         applyColors()
         table.reloadData()
+        table.tile()
         if !items.isEmpty {
             table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
             table.scrollRowToVisible(0)
         }
 
-        let size = preferredSize()
+        // Size from the rows as the table actually lays them out, so any
+        // padding the table adds of its own is included. (The table's own
+        // frame is no use here: it always fills the viewport.)
+        let visibleRows = min(items.count, Self.maxVisibleRows)
+        let contentHeight = visibleRows > 0 ? table.rect(ofRow: visibleRows - 1).maxY : 0
+        let size = preferredSize(contentHeight: contentHeight)
         var origin = NSPoint(x: anchor.x - Self.padding, y: anchor.y - 2 - size.height)
         if let screen = owner.screen ?? NSScreen.main {
             let visible = screen.visibleFrame
@@ -167,7 +174,7 @@ final class CodeCompletionPanel: NSPanel {
 
     // MARK: - Layout
 
-    private func preferredSize() -> NSSize {
+    private func preferredSize(contentHeight: CGFloat) -> NSSize {
         let detailFont = Self.detailFont
         var width: CGFloat = 0
         for item in items {
@@ -178,9 +185,7 @@ final class CodeCompletionPanel: NSPanel {
             width = max(width, w)
         }
         width = min(Self.maxWidth, max(Self.minWidth, width + 24 + 2 * Self.padding))
-        let rows = min(items.count, Self.maxVisibleRows)
-        let height = CGFloat(rows) * table.rowHeight + 2 * Self.padding
-        return NSSize(width: width, height: height)
+        return NSSize(width: width, height: contentHeight + 2 * Self.padding)
     }
 
     private static var detailFont: NSFont { NSFont.systemFont(ofSize: NSFont.smallSystemFontSize) }
