@@ -23,6 +23,9 @@ available from [gopherbrokesoftware.com](https://gopherbrokesoftware.com/).
 - Line-numbered gutter, PETSCII-aware editing, configurable editor fonts, and
   inline reference tooltips.
 - BASIC utilities: renumbering, shortcut expansion, and tokenization support.
+- Optional offline **code completion**: BASIC keywords, in-file variables and
+  line-number targets; assembly mnemonics, ca65 directives, in-file labels and
+  C64 ROM symbols. No network, no AI model.
 
 ### Build & run
 

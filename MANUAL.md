@@ -272,6 +272,44 @@ elsewhere and the checker stays quiet. Once a file selects another CPU with
 `.setcpu`, `.pc02`, `.p816` or `.p4510`, the addressing-mode checks are
 switched off, because those processors add modes the table does not model.
 
+### Code completion
+
+**View → Code Completion** turns on a completion list in the editor. It is
+off by default. Everything it offers comes from tables the IDE already has
+and from the file you are editing; nothing is sent anywhere and no AI model
+is involved (for that, see [section 12](#12-the-ai-assistant)).
+
+Type two characters of a word and pause for a moment and the list appears
+under the caret. Press `⌃Space` (or `⌥Esc`) to open it on demand at any
+point, including on an empty word to see everything that fits there. `↑` /
+`↓` move through the list, `Return` or `Tab` accepts the highlighted entry,
+`Esc` closes the list, and typing on simply continues your word. Accepting
+replaces only the partial word in front of the caret: the rest of the line,
+auto line numbering and shortcut expansion are untouched, and the insertion
+is a single undo step.
+
+**BASIC.** The list holds the keywords, functions and system variables of
+BASIC V2 plus those of the active dialect (always in uppercase), the
+variables already used in the program with their `$` / `%` suffix, and,
+after `GOTO`, `GOSUB`, `THEN`, `ELSE` or `GO TO`, the program's line numbers
+with a preview of each target line. Leading digits are not part of the word,
+so `10PR` completes `PRINT`.
+
+**Assembly.** At the start of a statement (or after a label) the list holds
+the 6502 mnemonics, undocumented ones marked, and the macros defined in the
+file; after a `.` it holds the ca65 directives. Inside an operand it holds
+the labels, `.proc` names, assigned symbols (`screen = $0400`), imports and
+`.feature labels_without_colons` labels defined in the file, the C64 ROM
+symbol names (`CHROUT`, `GETIN`, …) with their addresses, and after a `.`
+the ca65 pseudo functions (`.lobyte`, `.sizeof`, …). Mnemonics, directives
+and ROM names follow the case you type; labels keep the case they were
+defined with.
+
+The list never opens inside a string, after `REM` or in a `DATA` statement,
+after a `;` comment, in a number (`$D020`, `%1010`, `532`), in the middle of
+a word, or over a word you have already typed in full, so a quick `Return`
+after `PRINT` still just ends the line.
+
 ### BASIC-specific behaviour
 
 **Auto line numbering.** Press Return on a numbered line and the IDE inserts the
@@ -923,6 +961,8 @@ Other appearance controls: the toolbar theme button (light/dark), and
 | `⌥⌘R`       | Toggle Reference Panel               |
 | `⇧⌘Y`       | Toggle Console                       |
 | —           | Check Syntax While Typing (toggle)   |
+| —           | Code Completion (toggle)             |
+| `⌃Space`    | Open the completion list             |
 
 ---
 

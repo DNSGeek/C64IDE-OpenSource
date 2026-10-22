@@ -11,10 +11,39 @@ private class GutterAwareScrollView: NSScrollView {
     }
 }
 
-/// A text view that tracks mouse movement and forwards hover events to a TooltipProvider.
+/// A text view that tracks mouse movement and forwards hover events to a TooltipProvider,
+/// and hands the keys of the editor's completion list to its controller.
 private final class TooltipTextView: NSTextView {
     weak var tooltipProvider: TooltipProvider?
     private var hoverTrackingArea: NSTrackingArea?
+
+    /// Keys the editor's completion list claims while it is open.
+    var completionKeyHandler: ((NSEvent) -> Bool)?
+    /// Control-Space, F5 and Option-Escape: open the completion list.
+    var onManualCompletion: (() -> Void)?
+
+    override func keyDown(with event: NSEvent) {
+        if let completionKeyHandler, completionKeyHandler(event) { return }
+        // Control-Space (key code 49 is the space bar).
+        if event.keyCode == 49,
+           event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .control,
+           let onManualCompletion {
+            onManualCompletion()
+            return
+        }
+        super.keyDown(with: event)
+    }
+
+    /// F5 and Option-Escape are bound to complete(_:) by the standard key
+    /// bindings; route them to the editor's list while it is enabled and
+    /// leave AppKit's own completion alone otherwise.
+    override func complete(_ sender: Any?) {
+        if EditorViewController.codeCompletionEnabled, let onManualCompletion {
+            onManualCompletion()
+        } else {
+            super.complete(sender)
+        }
+    }
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -75,6 +104,22 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSTextStorageD
     var onDiagnosticsUpdated: (([SyntaxDiagnostic]) -> Void)?
     /// The most recent syntax-check results for this document.
     var syntaxDiagnostics: [SyntaxDiagnostic] = []
+
+    // Code completion state; the logic lives in EditorViewController+Completion.swift.
+
+    /// The latest variable scan, so completion can offer names already in the file.
+    var latestVariables: [BasicVariableInfo] = []
+    /// The pending automatic-completion trigger; any later edit cancels it.
+    var completionWorkItem: DispatchWorkItem?
+    /// Completions computed for the word at the caret, shown in `completionPanel`.
+    var pendingCompletion: CodeCompletionProvider.Result?
+    /// The completion list, created on first use.
+    var completionPanel: CodeCompletionPanel?
+    /// True while handling an edit that typed a single identifier character.
+    var lastEditWasTyping = false
+    /// Set when an edit is announced and cleared when it has landed, so the
+    /// caret movement inside the edit does not close the completion list.
+    var completionEditInProgress = false
     
     /// Debounce state. Generation counter beats DispatchWorkItem
     /// cancellation checks: a stale scan that already started can't be
@@ -157,7 +202,11 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSTextStorageD
 
         highlighter = SyntaxHighlighter(textStorage: textView.textStorage!, fileType: document.fileType)
         tooltipProvider = TooltipProvider(textView: textView, fileType: document.fileType)
-        (textView as? TooltipTextView)?.tooltipProvider = tooltipProvider
+        if let tv = textView as? TooltipTextView {
+            tv.tooltipProvider = tooltipProvider
+            tv.completionKeyHandler = { [weak self] event in self?.handleCompletionKey(event) ?? false }
+            tv.onManualCompletion = { [weak self] in self?.requestManualCompletion() }
+        }
 
         loadTextIntoEditor()
 
@@ -366,9 +415,11 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSTextStorageD
         gutter?.updateCurrentLine(for: textView)
         gutter?.needsDisplay = true
         notifyReferencePanel()
+        completionSelectionDidChange()
     }
 
     func textView(_ textView: NSTextView, shouldChangeTextIn range: NSRange, replacementString: String?) -> Bool {
+        noteEditForCompletion(range: range, replacement: replacementString)
         guard let replacement = replacementString, replacement == "\n" else { return true }
         
         let text = textView.string as NSString
@@ -914,6 +965,7 @@ extension EditorViewController {
         guard let textView else { return }
         let fileType = document.fileType
         if !fileType.usesBasicHighlighting {
+            latestVariables = []
             onVariablesUpdated?([])   // clear panel for ASM/text files
         }
         guard fileType.usesBasicHighlighting || fileType.usesAssemblyHighlighting else {
@@ -959,7 +1011,10 @@ extension EditorViewController {
 
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.isCurrentGeneration(generation) else { return }
-                if let vars { self.onVariablesUpdated?(vars) }
+                if let vars {
+                    self.latestVariables = vars
+                    self.onVariablesUpdated?(vars)
+                }
                 self.applyDiagnostics(diagnostics)
             }
         }
