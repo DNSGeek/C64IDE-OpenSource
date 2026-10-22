@@ -305,6 +305,9 @@ extension AppDelegate {
         let syntaxCheck = NSMenuItem(title: "Check Syntax While Typing", action: #selector(toggleSyntaxCheck(_:)), keyEquivalent: "")
         syntaxCheck.target = self
         menu.addItem(syntaxCheck)
+        let completion = NSMenuItem(title: "Code Completion", action: #selector(toggleCodeCompletion(_:)), keyEquivalent: "")
+        completion.target = self
+        menu.addItem(completion)
 
         return menuItem(submenu: menu)
     }

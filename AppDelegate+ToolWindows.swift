@@ -418,6 +418,9 @@ extension AppDelegate: NSMenuItemValidation {
         case #selector(toggleSyntaxCheck(_:)):
             menuItem.state = EditorViewController.syntaxCheckEnabled ? .on : .off
             return true
+        case #selector(toggleCodeCompletion(_:)):
+            menuItem.state = EditorViewController.codeCompletionEnabled ? .on : .off
+            return true
         default:
             return true
         }
@@ -441,6 +444,12 @@ extension AppDelegate {
     /// setting and re-check (or clear their marks) on their own.
     @objc func toggleSyntaxCheck(_ sender: Any?) {
         EditorViewController.syntaxCheckEnabled.toggle()
+    }
+
+    /// Turns the offline code completion popup on or off. The setting is
+    /// read on every keystroke, so open editors follow it at once.
+    @objc func toggleCodeCompletion(_ sender: Any?) {
+        EditorViewController.codeCompletionEnabled.toggle()
     }
 
     /// Opens the build and emulator preferences sheet.
