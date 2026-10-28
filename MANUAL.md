@@ -667,6 +667,12 @@ Neither hardware target supports the source-level debugger.
 Background, Multi-Color 1 and Multi-Color 2 roles. Tools: Draw, Clear, Flip
 Horizontal, Flip Vertical, and pixel shifting in all four directions.
 
+**Multi-Color Mode** is set per frame, as the VIC-II's `$D01C` bit is per
+sprite, so an animation can mix hi-res and multi-colour frames. Option-click the
+checkbox to convert every frame at once. Onion-skin ghosts line up across modes,
+since a multi-colour pixel is exactly two hi-res pixels wide, and the export
+header lists which frames need their `$D01C` bit set when the modes differ.
+
 Animation is built in: add, duplicate, copy, paste, delete and reorder frames,
 with playback (adjustable FPS, ping-pong mode) and onion-skinning at adjustable
 opacity.

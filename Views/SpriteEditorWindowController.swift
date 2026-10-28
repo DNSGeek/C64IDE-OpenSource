@@ -395,6 +395,7 @@ class SpriteEditorViewController: NSViewController, NSMenuItemValidation {
         multiColorToggle.autoresizingMask = [.minYMargin]
         multiColorToggle.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)
         multiColorToggle.contentTintColor = AppTheme.current.defaultText
+        multiColorToggle.toolTip = "Applies to this frame only. Option-click to convert every frame."
         view.addSubview(multiColorToggle)
 
         let colorLabel = makeLabel("COLORS", x: rightX, y: rightTop + 252, bold: true)
@@ -671,11 +672,14 @@ class SpriteEditorViewController: NSViewController, NSMenuItemValidation {
 
     // MARK: - Actions
 
+    /// Colour mode is a per-sprite bit on the VIC-II ($D01C), so the checkbox changes only
+    /// the current frame. Option-click converts every frame at once.
     @objc private func toggleMultiColor(_ sender: NSButton) {
         stopAnimation()
-        pushUndo("Toggle Multi-Color")
         let newMode = sender.state == .on
-        for frame in frames where frame.isMultiColor != newMode {
+        let allFrames = NSApp.currentEvent?.modifierFlags.contains(.option) ?? false
+        pushUndo(allFrames ? "Toggle Multi-Color (All Frames)" : "Toggle Multi-Color")
+        for frame in (allFrames ? frames : [spriteData]) where frame.isMultiColor != newMode {
             frame.convertPixels(toMultiColor: newMode)
             frame.isMultiColor = newMode
         }
@@ -967,17 +971,40 @@ class SpriteEditorViewController: NSViewController, NSMenuItemValidation {
         return C64Reference.colorPalette[index].name
     }
 
+    /// True when the animation mixes hi-res and multi-color frames.
+    private var hasMixedModes: Bool {
+        frames.contains { $0.isMultiColor != frames[0].isMultiColor }
+    }
+
+    /// Mode label appended to a frame's heading in the export. Empty while every frame
+    /// shares one mode, since then the header already says which.
+    private func frameModeTag(_ index: Int) -> String {
+        guard hasMixedModes, index < frames.count else { return "" }
+        return frames[index].isMultiColor ? " (MULTI-COLOR)" : " (HI-RES)"
+    }
+
     /// Describes the VIC-II colour registers the exported bytes expect. Multi-color sprite
     /// data is unusable without them: bit-pair 01 -> $D025, 10 -> $D027+n, 11 -> $D026,
     /// and 00 is transparent — three visible colours per sprite, two of them shared.
     private func colorRegisterNotes(_ prefix: String) -> [String] {
         let s = spriteData
-        var lines = ["\(prefix) \(s.isMultiColor ? "MULTI-COLOR" : "HI-RES") sprite, 24x21"]
+        let mixed = hasMixedModes
+        let mode = mixed ? "MIXED HI-RES / MULTI-COLOR" : (s.isMultiColor ? "MULTI-COLOR" : "HI-RES")
+        var lines = ["\(prefix) \(mode) sprite, 24x21"]
         lines.append("\(prefix) $D027+n sprite color  = \(s.spriteColor) (\(colorName(s.spriteColor)))")
-        if s.isMultiColor {
+        if frames.contains(where: { $0.isMultiColor }) {
+            // $D025/$D026 are VIC-wide, so every frame carries the same two values.
             lines.append("\(prefix) $D025 multi-color 1 = \(s.multiColor1) (\(colorName(s.multiColor1))) [bit-pair 01]")
             lines.append("\(prefix) $D026 multi-color 2 = \(s.multiColor2) (\(colorName(s.multiColor2))) [bit-pair 11]")
-            lines.append("\(prefix) set this sprite's bit in $D01C (53276) to enable multi-color")
+            if mixed {
+                let multiFrames = frames.enumerated()
+                    .filter { $0.element.isMultiColor }
+                    .map { String($0.offset + 1) }
+                    .joined(separator: ", ")
+                lines.append("\(prefix) set this sprite's bit in $D01C (53276) for frames \(multiFrames); clear it for the hi-res frames")
+            } else {
+                lines.append("\(prefix) set this sprite's bit in $D01C (53276) to enable multi-color")
+            }
         }
         return lines
     }
@@ -990,7 +1017,7 @@ class SpriteEditorViewController: NSViewController, NSMenuItemValidation {
             lineNum += 10
         }
         for (fi, bytes) in allBytes.enumerated() {
-            lines.append("\(lineNum) REM FRAME \(fi + 1)")
+            lines.append("\(lineNum) REM FRAME \(fi + 1)\(frameModeTag(fi))")
             lineNum += 10
             for i in stride(from: 0, to: bytes.count, by: 8) {
                 let chunk = bytes[i..<min(i + 8, bytes.count)]
@@ -1012,7 +1039,7 @@ class SpriteEditorViewController: NSViewController, NSMenuItemValidation {
             lines.append("    .byte " + (0..<allBytes.count).map { ">sprite_frame_\($0)" }.joined(separator: ", "))
             lines.append("")
             for (fi, bytes) in allBytes.enumerated() {
-                lines.append("sprite_frame_\(fi):  ; frame \(fi + 1)")
+                lines.append("sprite_frame_\(fi):  ; frame \(fi + 1)\(frameModeTag(fi))")
                 for row in 0..<21 {
                     let start = row * 3
                     let vals = bytes[start..<start+3].map { String(format: "$%02X", $0) }.joined(separator: ", ")
@@ -1037,7 +1064,7 @@ class SpriteEditorViewController: NSViewController, NSMenuItemValidation {
         var lines = colorRegisterNotes("//")
         lines.append("const unsigned char sprite_data[\(n)][63] = {")
         for (fi, bytes) in allBytes.enumerated() {
-            lines.append("    {  /* frame \(fi + 1) */")
+            lines.append("    {  /* frame \(fi + 1)\(frameModeTag(fi)) */")
             for row in 0..<21 {
                 let start = row * 3
                 let vals = bytes[start..<start+3].map { String(format: "0x%02X", $0) }.joined(separator: ", ")
@@ -1053,7 +1080,7 @@ class SpriteEditorViewController: NSViewController, NSMenuItemValidation {
     private func exportAsHex(_ allBytes: [[UInt8]]) -> String {
         let header = colorRegisterNotes(";").joined(separator: "\n")
         let body = allBytes.enumerated().map { fi, bytes in
-            "; frame \(fi + 1)\n" + bytes.map { String(format: "%02X", $0) }.joined(separator: " ")
+            "; frame \(fi + 1)\(frameModeTag(fi))\n" + bytes.map { String(format: "%02X", $0) }.joined(separator: " ")
         }.joined(separator: "\n")
         return header + "\n" + body
     }
@@ -1521,16 +1548,19 @@ class SpriteGridView: NSView {
                 ? NSColor(red: 1.0, green: 0.3, blue: 0.3, alpha: alpha)
                 : NSColor(red: 0.3, green: 0.5, blue: 1.0, alpha: alpha)
 
+            // A ghost may be in the other colour mode. Both modes cover the same 24-unit-wide
+            // sprite (one multi-color pixel is exactly two hi-res pixels), so size the ghost's
+            // cells from its own mode and it lands in the right place over the current frame.
             let ghostCols = ghost.isMultiColor ? 12 : 24
-            let effectiveCols = min(cols, ghostCols)
+            let ghostCellW = bounds.width / CGFloat(ghostCols)
 
             for row in 0..<21 {
-                for col in 0..<effectiveCols {
+                for col in 0..<ghostCols {
                     let value = ghost.pixels[row][col]
                     guard value != 0 else { continue }
                     tint.setFill()
-                    let rect = NSRect(x: CGFloat(col) * cell.width, y: CGFloat(row) * cell.height,
-                                      width: cell.width, height: cell.height)
+                    let rect = NSRect(x: CGFloat(col) * ghostCellW, y: CGFloat(row) * cell.height,
+                                      width: ghostCellW, height: cell.height)
                     rect.fill()
                 }
             }
