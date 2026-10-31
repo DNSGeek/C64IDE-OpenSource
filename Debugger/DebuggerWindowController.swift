@@ -649,8 +649,18 @@ class DebuggerViewController: NSViewController {
     @objc private func listBP(_ sender: Any?) {
         guard let t = requireTarget() else { return }
         appendConsole("Breakpoints:", color: warnYellow)
-        // Both monitors spell the listing the same way. This used to be a
-        // placeholder string that told the user to go look at the gutter.
+        // RetroShell's output never reaches this console, and its 'break'
+        // listing is a debugger-console command the shell isn't in, so
+        // VirtualC64's list comes straight from the bridge. VICE's monitor
+        // replies with its own listing.
+        if let vc64 = t as? VC64RunTarget {
+            let addresses = vc64.breakpointAddresses
+            if addresses.isEmpty { appendConsole("  (none)", color: .gray) }
+            for addr in addresses {
+                appendConsole(String(format: "  $%04X", addr), color: consoleGreen)
+            }
+            return
+        }
         sendMonitorCommand("break", to: t)
     }
 

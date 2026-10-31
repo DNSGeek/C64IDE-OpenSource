@@ -452,6 +452,9 @@ typedef NS_ENUM(NSInteger, VC64Standard) {
 /// Returns YES if a breakpoint is set at addr.
 - (BOOL)hasBreakpointAt:(uint16_t)address;
 
+/// Addresses of all breakpoints, in the order they were set.
+- (NSArray<NSNumber *> *)breakpointAddresses;
+
 /// Set a memory watchpoint at the given address.
 - (void)setWatchpointAt:(uint16_t)address;
 - (void)deleteWatchpointAt:(uint16_t)address;

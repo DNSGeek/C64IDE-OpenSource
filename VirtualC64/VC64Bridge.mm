@@ -13,6 +13,8 @@
 // ── VirtualC64 C++ headers ──────────────────────────────────
 // Adjust this path to match where you've placed the VC64 library headers.
 #include "VirtualC64.h"
+// Internal header, for Memory::poke() in -writeByte:toAddress:.
+#include "Memory.h"
 // ────────────────────────────────────────────────────────────
 
 #include <string>
@@ -729,11 +731,16 @@ static vc64::C64Key mapKey(VC64KeyCode key)
 
 - (void)writeByte:(uint8_t)value toAddress:(uint16_t)address
 {
-    // VirtualC64 doesn't expose a direct mem.writeByte() in the public API,
-    // so we go through RetroShell which is available and safe.
-    // Alternative: call the non-public Memory::poke() if you link the full source.
-    NSString *cmd = [NSString stringWithFormat:@"m %04X %02X", address, value];
-    [self retroShellExec:cmd];
+    // VirtualC64 doesn't expose a memory write in the public API. RetroShell's
+    // 'w' command is only known to the debugger console, which the shell
+    // isn't in (entering it switches on track mode and prints into the
+    // console), and the "m <addr> <value>" sent before only dumps memory.
+    // 'w' calls Memory::poke(), so do the same on the emulator thread via
+    // call(). The byte lands where a CPU write would: RAM, or the I/O
+    // registers while they are banked in.
+    guarded("writeByte", [&]{
+        _emu->call([&]{ _emu->getMemory().poke(address, value); });
+    });
 }
 
 - (NSString *)disassembleAt:(uint16_t)address
@@ -794,6 +801,16 @@ static vc64::C64Key mapKey(VC64KeyCode key)
 - (BOOL)hasBreakpointAt:(uint16_t)address
 {
     return _emu->cpu.breakpoints.guardAt(address).has_value();
+}
+
+- (NSArray<NSNumber *> *)breakpointAddresses
+{
+    NSMutableArray<NSNumber *> *result = [NSMutableArray array];
+    const vc64::GuardsAPI &breakpoints = _emu->cpu.breakpoints;
+    for (utl::isize i = 0, n = breakpoints.elements(); i < n; i++) {
+        if (auto info = breakpoints.guardNr(i)) [result addObject:@((uint16_t)info->addr)];
+    }
+    return result;
 }
 
 - (void)setWatchpointAt:(uint16_t)address

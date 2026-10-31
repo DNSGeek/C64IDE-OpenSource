@@ -271,8 +271,7 @@ final class VC64RunTarget: NSObject, @MainActor DebuggableTarget {
     }
 
     func writeByte(_ value: UInt8, to address: UInt16) {
-        // VC64Bridge routes writes through RetroShell.
-        bridge.retroShellExec(String(format: "m %04X %02X", address, value))
+        bridge.writeByte(value, toAddress: address)
     }
 
     func disassemble(count: Int, from address: UInt16) -> [String] {
@@ -316,6 +315,8 @@ final class VC64RunTarget: NSObject, @MainActor DebuggableTarget {
     /// Send a RetroShell command. Used by the debugger console's free-entry field.
     func retroShellExec(_ command: String)    { bridge.retroShellExec(command) }
     func hasBreakpoint(at address: UInt16) -> Bool { bridge.hasBreakpoint(at: address) }
+    /// Addresses of the breakpoints VCCore holds, in the order they were set.
+    var breakpointAddresses: [UInt16] { bridge.breakpointAddresses().map { $0.uint16Value } }
 
     func setWatchpoint(at address: UInt16)    { bridge.setWatchpointAt(address) }
     func deleteWatchpoint(at address: UInt16) { bridge.deleteWatchpoint(at: address) }
