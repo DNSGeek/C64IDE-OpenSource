@@ -52,7 +52,6 @@ VCCORE_INCLUDE_FLAGS = \
     -I$(BASE)/VCCore/rvlib/Images/IMG \
     -I$(BASE)/VCCore/rvlib/Images/ST \
     -I$(BASE)/VCCore/rvlib/ThirdParty/xdms \
-    -I$(BASE)/VCCore/ThirdParty \
     -I$(BASE)/VCCore/utlib/include/utl \
     -I$(BASE)/VCCore/utlib/include/utl/abilities \
     -I$(BASE)/VCCore/utlib/include/utl/chrono \

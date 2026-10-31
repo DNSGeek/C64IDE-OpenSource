@@ -311,7 +311,7 @@ final class VC64RunTarget: NSObject, @MainActor DebuggableTarget {
 
     func setBreakpoint(at address: UInt16)    { bridge.setBreakpointAt(address) }
     func deleteBreakpoint(at address: UInt16) { bridge.deleteBreakpoint(at: address) }
-    func deleteAllBreakpoints()               { bridge.retroShellExec("break delete") }
+    func deleteAllBreakpoints()               { bridge.deleteAllBreakpoints() }
 
     /// Send a RetroShell command. Used by the debugger console's free-entry field.
     func retroShellExec(_ command: String)    { bridge.retroShellExec(command) }
