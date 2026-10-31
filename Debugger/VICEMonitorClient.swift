@@ -213,13 +213,16 @@ class VICEMonitorClient {
         let (prompts, rest) = Self.splitPrompts(line)
         prompts.forEach { onResponse?($0) }
 
-        let trimmed = rest.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        // Only the end is trimmed: leading spaces line up the caret VICE
+        // puts under a syntax error. The parsers trim for themselves.
+        var text = String(rest)
+        while text.last?.isWhitespace == true { text.removeLast() }
+        guard !text.allSatisfy(\.isWhitespace) else { return }
 
-        if Self.isBreakpointHit(trimmed) {
-            onBreakpoint?(trimmed)
+        if VICEResponseParser.isCheckpointHit(text) {
+            onBreakpoint?(text.trimmingCharacters(in: .whitespaces))
         }
-        onResponse?(trimmed)
+        onResponse?(text)
     }
 
     /// VICE ends every reply with its prompt, `(C:$0821) `, and sends no
@@ -237,16 +240,5 @@ class VICEMonitorClient {
             rest = rest[match.range.upperBound...]
         }
         return (prompts, rest)
-    }
-
-    /// True only for VICE's "the CPU stopped here" announcement, which looks
-    /// like `#1 (Stop on  exec 0810)   0810`.
-    ///
-    /// Deliberately does *not* match `BREAK: 1  C:$0810  (Stop on exec)` —
-    /// that's a row of `break`'s breakpoint *listing*. Treating those as hits
-    /// made every `refreshBreakpointMap()` fire a phantom breakpoint event for
-    /// each breakpoint that existed.
-    private static func isBreakpointHit(_ line: String) -> Bool {
-        line.hasPrefix("#") && line.contains("(Stop")
     }
 }

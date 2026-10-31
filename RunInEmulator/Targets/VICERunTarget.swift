@@ -64,14 +64,43 @@ final class VICERunTarget: NSObject, @MainActor DebuggableTarget {
         get { registerLock.lock(); defer { registerLock.unlock() }; return _cachedRegisters }
         set { registerLock.lock(); _cachedRegisters = newValue; registerLock.unlock() }
     }
-    private var breakpointMap: [UInt16: Int] = [:]     // addr → VICE BP number
+    private var breakpointMap: [UInt16: Int] = [:]     // addr → VICE checkpoint number
+    private var watchpointMap: [UInt16: Int] = [:]     // addr → VICE checkpoint number
+    /// `break`/`watch` commands still waiting for their reply, so a second
+    /// request for the same address doesn't set a duplicate.
+    private var pendingCheckpoints: Set<String> = []
     private var pendingDebugOptions: DebugOptions?
+    /// True when this run's `debug.mon` sets the breakpoints, before the
+    /// program starts. The monitor connection then only learns their numbers.
+    private var monitorFileSetsBreakpoints = false
 
-    // MARK: - Response Routing
+    // MARK: - Monitor Command Queue
+    //
+    // VICE answers one command at a time, and its reply carries nothing that
+    // names the command it answers. So commands go out one at a time, each
+    // only once the previous reply has ended, and every reply line goes to the
+    // command in flight. Where a reply ends depends on where VICE is:
+    //
+    //   in the monitor   reply, prompt
+    //   running          the prompt VICE prints on entering the monitor (it
+    //                    stops for every command), reply, prompt
+    //
+    // `x`, `g` and `reset` leave the monitor and print nothing, so they are
+    // done once sent. A stop VICE makes by itself (a breakpoint, a step that
+    // finishes late) ends with a prompt while nothing is in flight.
+    // Everything here is touched on `responseQueue` only.
 
     private nonisolated let responseQueue = DispatchQueue(label: "vc64ide.vice.response", qos: .userInitiated)
-    private nonisolated(unsafe) var pendingRequest: VICEPendingRequest?
-    private let responseTimeout: TimeInterval = 2.0
+    private nonisolated(unsafe) var commandQueue: [MonitorCommand] = []
+    private nonisolated(unsafe) var inFlight: MonitorCommand?
+    private nonisolated(unsafe) var machineState: MonitorState = .unknown
+    private nonisolated(unsafe) var nextCommandID = 0
+    /// A reply normally takes milliseconds. Past this the command is given up,
+    /// so a reply that never comes (a `ret` whose routine doesn't return)
+    /// can't hold up the commands behind it.
+    private nonisolated let commandTimeout: TimeInterval = 1.5
+    /// How long a blocking request waits, its time in the queue included.
+    private let responseTimeout: TimeInterval = 3.0
 
     // MARK: - Init
 
@@ -159,31 +188,42 @@ final class VICERunTarget: NSObject, @MainActor DebuggableTarget {
         process  = nil
         isRunning = false
         breakpointMap.removeAll()
+        watchpointMap.removeAll()
+        pendingCheckpoints.removeAll()
         pendingDebugOptions = nil
+        monitorFileSetsBreakpoints = false
     }
 
     // MARK: - EmulatorTarget
 
-    func pause()  { sendRaw("") }        // empty → VICE enters monitor
-    func resume() { sendRaw("x") }       // x = exit monitor / continue
-    func reset()  { sendRaw("reset") }
+    /// `r`, not an empty line: VICE stops for any command, and an empty line
+    /// typed while it is already in the monitor repeats the last command,
+    /// which made Pause take a step after a step. The register reply also
+    /// refreshes the debugger through `onPause`.
+    func pause()  { requestRegisters() }
+    func resume() { enqueue("x", reply: .none) }
+    func reset()  { enqueue("reset", reply: .none) }
+
+    // The requests below are the IDE's own: if VICE had to stop for one, it
+    // is resumed afterwards (resumesRun), so reading memory or editing a
+    // breakpoint doesn't pause a running program.
 
     func readMemory(from start: UInt16, to end: UInt16) -> Data {
         let cmd  = String(format: "m %04x %04x", start, end)
-        let bytes: [UInt8] = synchronousRequest(kind: .memory, command: cmd) { lines in
+        let bytes: [UInt8] = synchronousRequest(cmd, resumesRun: true) { lines in
             VICEResponseParser.parseMemoryDump(lines: lines, start: start, end: end)
         } ?? []
         return Data(bytes)
     }
 
     func writeByte(_ value: UInt8, to address: UInt16) {
-        sendRaw(String(format: "> %04x %02x", address, value))
+        enqueue(String(format: "> %04x %02x", address, value), resumesRun: true)
     }
 
     func disassemble(count: Int, from address: UInt16) -> [String] {
         let end  = address &+ UInt16(count * 3)
         let cmd  = String(format: "d %04x %04x", address, end)
-        return synchronousRequest(kind: .disassemble, command: cmd) { lines in
+        return synchronousRequest(cmd, resumesRun: true) { lines in
             Array(lines.filter { VICEResponseParser.isDisassemblyLine($0) }.prefix(count))
         } ?? []
     }
@@ -194,49 +234,48 @@ final class VICERunTarget: NSObject, @MainActor DebuggableTarget {
     // MARK: - DebuggableTarget
 
     var registers: RegisterState {
-        synchronousRequest(kind: .registers, command: "r") { lines in
+        synchronousRequest("r") { lines in
             lines.compactMap { RegisterState.parse($0) }.first
         } ?? cachedRegisters
     }
 
-    func stepInto()  { sendRaw("z"); requestRegisters() }
-    func stepOver()  { sendRaw("n"); requestRegisters() }
-    func stepCycle() { sendRaw("z"); requestRegisters() }   // VICE: no single-cycle step
+    func stepInto()  { enqueue("z"); requestRegisters() }
+    func stepOver()  { enqueue("n"); requestRegisters() }
+    func stepCycle() { enqueue("z"); requestRegisters() }   // VICE: no single-cycle step
 
     /// Runs to the return from the current subroutine. `ret`, not `n` — `n`
     /// is step-over, which made Step Out and Step Over the same button.
-    func finishLine() { sendRaw("ret"); requestRegisters() }
+    func finishLine() { enqueue("ret"); requestRegisters() }
 
     /// Sets the program counter to `address` and resumes execution from
     /// there (VICE monitor `g`). The remote monitor accepts this whether
     /// the machine is paused in the monitor or running.
     func goto(address: UInt16) {
-        sendRaw(String(format: "g %04x", address))
+        enqueue(String(format: "g %04x", address), reply: .none)
     }
 
     func setBreakpoint(at address: UInt16) {
         guard breakpointMap[address] == nil else { return }
-        sendRaw(String(format: "break %04x", address))
-        // Refresh map after VICE has processed the command.
-        // VICE processes monitor commands sequentially; 0.1s provides margin.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-            self?.refreshBreakpointMap()
+        setCheckpoint(String(format: "break %04x", address), at: address, prefix: "BREAK:") {
+            $0.breakpointMap[address] = $1
         }
     }
 
     func deleteBreakpoint(at address: UInt16) {
-        // The map only tracks breakpoints set via setBreakpoint(at:).
-        // Breakpoints created by the debug.mon file or a console command
-        // won't be in it, so on a miss, re-list before giving up.
+        // The map only tracks breakpoints set via setBreakpoint(at:) and the
+        // ones debug.mon set. A breakpoint typed into the console won't be in
+        // it, so on a miss, re-list before giving up.
         if breakpointMap[address] == nil { refreshBreakpointMap() }
         guard let num = breakpointMap[address] else { return }
-        sendRaw("delete \(num)")
+        enqueue("delete \(num)", resumesRun: true)
         breakpointMap.removeValue(forKey: address)
     }
 
+    /// VICE's `delete` removes every checkpoint, watchpoints included.
     func deleteAllBreakpoints() {
-        sendRaw("delete")
+        enqueue("delete", resumesRun: true)
         breakpointMap.removeAll()
+        watchpointMap.removeAll()
     }
 
     func hasBreakpoint(at address: UInt16) -> Bool {
@@ -244,14 +283,40 @@ final class VICERunTarget: NSObject, @MainActor DebuggableTarget {
     }
 
     func setWatchpoint(at address: UInt16) {
-        sendRaw(String(format: "watch %04x", address))
+        guard watchpointMap[address] == nil else { return }
+        setCheckpoint(String(format: "watch %04x", address), at: address, prefix: "WATCH:") {
+            $0.watchpointMap[address] = $1
+        }
     }
 
+    /// VICE deletes a watchpoint by its checkpoint number, like a breakpoint;
+    /// the `watch delete <addr>` sent before is a syntax error.
     func deleteWatchpoint(at address: UInt16) {
-        // Find the watchpoint's guard number and delete by number.
-        // VICE watch list: "WATCH: N  C:$XXXX  ..."
-        // We don't cache these separately — just re-list and delete by number.
-        sendRaw(String(format: "watch delete %04x", address))
+        guard let num = watchpointMap[address] else { return }
+        enqueue("delete \(num)", resumesRun: true)
+        watchpointMap.removeValue(forKey: address)
+    }
+
+    func hasWatchpoint(at address: UInt16) -> Bool {
+        watchpointMap[address] != nil
+    }
+
+    /// Sends `command` (`break`/`watch` at `address`) and records the
+    /// checkpoint number VICE answers with ("BREAK: 3  C:$0810 ...").
+    private func setCheckpoint(_ command: String, at address: UInt16, prefix: String,
+                               record: @escaping (VICERunTarget, Int) -> Void) {
+        guard !pendingCheckpoints.contains(command) else { return }
+        pendingCheckpoints.insert(command)
+        enqueue(command, resumesRun: true) { [weak self] reply in
+            let num = VICEResponseParser.parseCheckpoints(lines: reply.lines, prefix: prefix)[address]
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.pendingCheckpoints.remove(command)
+                    if let num { record(self, num) }
+                }
+            }
+        }
     }
 
     // MARK: - Private — Argument Building
@@ -385,6 +450,7 @@ final class VICERunTarget: NSObject, @MainActor DebuggableTarget {
 
         do {
             try content.write(to: monFile, atomically: true, encoding: .utf8)
+            monitorFileSetsBreakpoints = true
             return monFile
         } catch {
             log("Warning: could not write debug.mon: \(error.localizedDescription)", .warning)
@@ -444,7 +510,7 @@ final class VICERunTarget: NSObject, @MainActor DebuggableTarget {
     private func setupMonitorClient(_ client: VICEMonitorClient) {
         client.onConnectionChanged = { [weak self] up in
             guard let self = self, !up else { return }
-            self.responseQueue.async { self.pendingRequest = nil }
+            self.responseQueue.async { self.dropCommands() }
         }
         client.onResponse = { [weak self] line in
             self?.responseQueue.async { self?.routeLine(line) }
@@ -459,24 +525,57 @@ final class VICERunTarget: NSObject, @MainActor DebuggableTarget {
         log("Connected to \(runTarget.displayName) monitor.", .success)
         guard let dbg = pendingDebugOptions else { return }
 
-        // Set entry breakpoint then continue — program will stop there.
-        setBreakpoint(at: dbg.entryPoint)
-        for bp in dbg.breakpoints where bp != dbg.entryPoint {
-            setBreakpoint(at: bp)
+        if monitorFileSetsBreakpoints {
+            // debug.mon set the breakpoints before the program started;
+            // setting them again here made VICE hold each one twice. List
+            // them to learn their numbers instead. The listing resumes VICE
+            // if it stopped for it. If VICE was already stopped, the program
+            // reached a breakpoint before the IDE was listening.
+            enqueue("break", resumesRun: true) { [weak self] reply in
+                let map = VICEResponseParser.parseBreakpointList(lines: reply.lines)
+                DispatchQueue.main.async { [weak self] in
+                    MainActor.assumeIsolated {
+                        guard let self else { return }
+                        self.breakpointMap = map
+                        if !reply.interruptedRun { self.reportStopAtConnect() }
+                    }
+                }
+            }
+        } else {
+            setBreakpoint(at: dbg.entryPoint)
+            for bp in dbg.breakpoints where bp != dbg.entryPoint {
+                setBreakpoint(at: bp)
+            }
         }
-        resume()
+        // No resume() here. VICE stops for every command, and the old
+        // `break`-list refresh that followed setBreakpoint went out after
+        // this resume, so the program sat stopped in the boot code for good.
         log(String(format: "Breakpoints set. Waiting for $%04X…", dbg.entryPoint), .info)
     }
 
-    /// Fire-and-forget register request. The response router parses the
-    /// reply into `cachedRegisters` and fires `onPause`, so callers on the
-    /// main thread get a refresh without blocking on a round trip.
+    /// VICE was already stopped when the monitor connected. Ask where, and
+    /// report it if that is a breakpoint: the IDE missed VICE's announcement.
+    private func reportStopAtConnect() {
+        enqueue("r") { [weak self] reply in
+            guard let pc = reply.lines.compactMap({ RegisterState.parse($0) }).first?.pc else { return }
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self, self.breakpointMap[pc] != nil else { return }
+                    self.onBreakpoint?(pc)
+                }
+            }
+        }
+    }
+
+    /// Non-blocking register request. The response router parses the reply
+    /// into `cachedRegisters` and fires `onPause`, so callers on the main
+    /// thread get a refresh without waiting on a round trip.
     func requestRegisters() {
-        monitorClient?.send("r")
+        enqueue("r")
     }
 
     private func refreshBreakpointMap() {
-        let map: [UInt16: Int]? = synchronousRequest(kind: .breakpointList, command: "break") { lines in
+        let map: [UInt16: Int]? = synchronousRequest("break", resumesRun: true) { lines in
             VICEResponseParser.parseBreakpointList(lines: lines)
         }
         if let map = map { breakpointMap = map }
@@ -485,61 +584,116 @@ final class VICERunTarget: NSObject, @MainActor DebuggableTarget {
     // MARK: - Private — Send
 
     /// Send a raw command string to the VICE monitor. Used by the debugger
-    /// console's free-entry command field. The reply, up to the next prompt,
-    /// goes to `onConsoleOutput`. A command that leaves the monitor (`x`, `g`)
-    /// gets no prompt, so its request also collects whatever VICE prints
-    /// next, such as the stop at the next breakpoint.
+    /// console's free-entry command field. The reply goes to
+    /// `onConsoleOutput`, prompts left out. Unlike the IDE's own requests, a
+    /// typed command leaves VICE wherever it put it, as VICE's own monitor
+    /// does: `m` stops a running program until `x`.
     func sendRawMonitorCommand(_ command: String) {
-        responseQueue.async { [weak self] in
-            guard let self else { return }
-            if let stale = self.pendingRequest { stale.cont(stale.lines) }
-            self.pendingRequest = VICEPendingRequest(kind: .generic) { [weak self] lines in
-                let reply = lines.filter { !VICEResponseParser.isPromptLine($0) }
-                guard !reply.isEmpty else { return }
-                DispatchQueue.main.async { [weak self] in
-                    MainActor.assumeIsolated { reply.forEach { self?.onConsoleOutput?($0) } }
-                }
+        let word = command.split(separator: " ").first?.lowercased() ?? ""
+        let leavesMonitor = ["x", "exit", "g", "goto", "reset", "quit"].contains(word)
+        enqueue(command, reply: leavesMonitor ? .none : .lines) { [weak self] reply in
+            let lines = reply.lines.filter { !VICEResponseParser.isPromptLine($0) }
+            guard !lines.isEmpty else { return }
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated { lines.forEach { self?.onConsoleOutput?($0) } }
             }
-            self.monitorClient?.send(command)
         }
     }
 
-    private func sendRaw(_ command: String) {
-        monitorClient?.send(command)
-    }
-
-    // MARK: - Private — Synchronous Request
-
-    /// Sends a command to the VICE monitor and blocks the caller until a
-    /// matching response arrives. Must be called on a thread that can safely
-    /// wait, as it synchronously blocks until `responseTimeout` is reached.
+    /// Queues a command and blocks the caller until its reply has arrived.
+    /// Must be called on a thread that can safely wait, as it blocks until
+    /// `responseTimeout` is reached.
     private func synchronousRequest<T>(
-        kind:    VICEPendingRequest.Kind,
-        command: String,
-        transform: @escaping ([String]) -> T?
+        _ command:  String,
+        resumesRun: Bool = false,
+        transform:  @escaping ([String]) -> T?
     ) -> T? {
         guard monitorClient != nil else { return nil }
 
         let semaphore = DispatchSemaphore(value: 0)
         var result: T?
 
+        enqueue(command, resumesRun: resumesRun) { reply in
+            result = transform(reply.lines)
+            semaphore.signal()
+        }
+        _ = semaphore.wait(timeout: .now() + responseTimeout)
+        return result
+    }
+
+    // MARK: - Private — Command Queue
+
+    /// Queues a monitor command (see "Monitor Command Queue" above).
+    /// `reply: .none` is for the commands that leave the monitor and print
+    /// nothing. `resumesRun` lets VICE run on after the reply if it stopped
+    /// for the command and not at a checkpoint meanwhile. `done` runs on
+    /// `responseQueue`.
+    private nonisolated func enqueue(_ text: String,
+                                     reply: MonitorCommand.Reply = .lines,
+                                     resumesRun: Bool = false,
+                                     done: ((MonitorReply) -> Void)? = nil) {
         responseQueue.async { [weak self] in
-            guard let self = self else { semaphore.signal(); return }
-            // A request already in flight would be orphaned by the assignment
-            // below and leave its caller waiting out the full timeout. Close
-            // it out with whatever it collected so that caller returns now.
-            if let stale = self.pendingRequest { stale.cont(stale.lines) }
-            self.pendingRequest = VICEPendingRequest(kind: kind) { lines in
-                result = transform(lines)
-                semaphore.signal()
+            guard let self, self.monitorClient != nil else {
+                done?(MonitorReply(lines: [], interruptedRun: false))
+                return
             }
-            self.monitorClient?.send(command)
+            self.nextCommandID += 1
+            self.commandQueue.append(MonitorCommand(id: self.nextCommandID, text: text, reply: reply,
+                                                    resumesRun: resumesRun, done: done))
+            self.sendNextCommand()
+        }
+    }
+
+    private nonisolated func sendNextCommand() {
+        guard inFlight == nil, !commandQueue.isEmpty else { return }
+        var command = commandQueue.removeFirst()
+        command.startedIn = machineState
+        monitorClient?.send(command.text)
+
+        if command.reply == .none {
+            machineState = .running
+            command.done?(MonitorReply(lines: [], interruptedRun: false))
+            sendNextCommand()
+            return
         }
 
-        if semaphore.wait(timeout: .now() + responseTimeout) == .timedOut {
-            responseQueue.async { [weak self] in self?.pendingRequest = nil }
+        inFlight = command
+        let id = command.id
+        responseQueue.asyncAfter(deadline: .now() + commandTimeout) { [weak self] in
+            guard let self, let stuck = self.inFlight, stuck.id == id else { return }
+            // Give up on it. Anything VICE still prints for it arrives with
+            // nothing in flight, so it can't be taken for the next reply.
+            self.inFlight = nil
+            let lastWasPrompt = stuck.lines.last.map(VICEResponseParser.isPromptLine) ?? false
+            self.machineState = lastWasPrompt ? .inMonitor : .unknown
+            stuck.done?(MonitorReply(lines: stuck.lines, interruptedRun: false))
+            self.sendNextCommand()
         }
-        return result
+    }
+
+    private nonisolated func complete(_ command: MonitorCommand) {
+        inFlight = nil
+        machineState = .inMonitor
+        let interrupted = command.interruptedRun
+        command.done?(MonitorReply(lines: command.lines, interruptedRun: interrupted))
+
+        if command.resumesRun, interrupted,
+           !command.lines.contains(where: VICEResponseParser.isCheckpointHit) {
+            // VICE only stopped to answer: let it run on, before anything
+            // else queued meanwhile.
+            nextCommandID += 1
+            commandQueue.insert(MonitorCommand(id: nextCommandID, text: "x", reply: .none), at: 0)
+        }
+        sendNextCommand()
+    }
+
+    /// The connection is gone: finish every command with what it has.
+    private nonisolated func dropCommands() {
+        let dropped = (inFlight.map { [$0] } ?? []) + commandQueue
+        inFlight = nil
+        commandQueue = []
+        machineState = .unknown
+        dropped.forEach { $0.done?(MonitorReply(lines: $0.lines, interruptedRun: false)) }
     }
 
     // MARK: - Private — Response Routing
@@ -554,31 +708,28 @@ final class VICERunTarget: NSObject, @MainActor DebuggableTarget {
             }
         }
 
-        guard var req = pendingRequest else { return }
-        req.lines.append(line)
-
-        if isTerminalLine(line, for: req) {
-            pendingRequest = nil
-            req.cont(req.lines)
-        } else {
-            pendingRequest = req
+        let isPrompt = VICEResponseParser.isPromptLine(line)
+        guard var command = inFlight else {
+            // VICE stopped by itself: a breakpoint or watchpoint, or a step
+            // that finished after its command was given up.
+            if isPrompt { machineState = .inMonitor }
+            return
         }
-    }
+        command.lines.append(line)
+        inFlight = command
+        guard isPrompt else { return }
 
-    /// `request.lines` already holds `line`.
-    private nonisolated func isTerminalLine(_ line: String, for request: VICEPendingRequest) -> Bool {
-        switch request.kind {
-        case .registers:     return line.hasPrefix(".;")
-        case .memory,
-             .disassemble,
-             .breakpointList,
-             .generic:
-            // A command that reaches VICE while the machine runs is answered
-            // by the prompt it prints on entering the monitor first, then the
-            // reply, then the reply's own prompt. Only that last one ends it.
-            return VICEResponseParser.isPromptLine(line)
-                && request.lines.contains { !VICEResponseParser.isPromptLine($0) }
+        let ended: Bool
+        switch command.startedIn {
+        case .inMonitor:
+            ended = true
+        case .running:
+            ended = command.lines.filter(VICEResponseParser.isPromptLine).count >= 2
+        case .unknown:
+            // The entry prompt, if any, comes before the reply.
+            ended = command.lines.contains { !VICEResponseParser.isPromptLine($0) }
         }
+        if ended { complete(command) }
     }
 
     /// Called on the monitor client's read thread, like `routeLine`, so it
@@ -599,21 +750,37 @@ final class VICERunTarget: NSObject, @MainActor DebuggableTarget {
     }
 }
 
-// MARK: - VICEPendingRequest
+// MARK: - Monitor Commands
 
-private struct VICEPendingRequest {
+/// Where VICE is, as far as its replies so far tell.
+private enum MonitorState { case unknown, inMonitor, running }
 
-    enum Kind {
-        case registers
-        case memory
-        case disassemble
-        case breakpointList
-        case generic
-    }
+private struct MonitorReply {
+    let lines: [String]
+    /// VICE was running when the command arrived, and stopped to answer it.
+    let interruptedRun: Bool
+}
 
-    let kind:  Kind
-    let cont:  ([String]) -> Void
+private struct MonitorCommand {
+    enum Reply { case none, lines }
+
+    let id:   Int
+    let text: String
+    var reply:      Reply = .lines
+    var resumesRun: Bool  = false
+    var done:       ((MonitorReply) -> Void)?
+
+    /// Set when the command is sent.
+    var startedIn: MonitorState = .unknown
     var lines: [String] = []
+
+    var interruptedRun: Bool {
+        switch startedIn {
+        case .running:   return true
+        case .inMonitor: return false
+        case .unknown:   return lines.first.map(VICEResponseParser.isPromptLine) ?? false
+        }
+    }
 }
 
 // MARK: - VICEResponseParser
@@ -660,12 +827,31 @@ enum VICEResponseParser {
         return result
     }
 
+    /// True only for VICE's "the CPU stopped here" announcement, which looks
+    /// like `#1 (Stop on  exec 0810)   0810` (watchpoints alike).
+    ///
+    /// Deliberately does *not* match `BREAK: 1  C:$0810  (Stop on exec)` —
+    /// that's a row of `break`'s breakpoint *listing*. Treating those as hits
+    /// made every breakpoint refresh fire a phantom breakpoint event for each
+    /// breakpoint that existed.
+    static func isCheckpointHit(_ line: String) -> Bool {
+        let t = line.trimmingCharacters(in: .whitespaces)
+        return t.hasPrefix("#") && t.contains("(Stop")
+    }
+
     static func parseBreakpointList(lines: [String]) -> [UInt16: Int] {
+        parseCheckpoints(lines: lines, prefix: "BREAK:")
+    }
+
+    /// Address → checkpoint number from the rows VICE prints when it lists
+    /// or sets checkpoints: `BREAK: 1  C:$0810  (Stop on exec)`, or with
+    /// `prefix` "WATCH:" `WATCH: 3  C:$0400  (Stop on load store)`.
+    static func parseCheckpoints(lines: [String], prefix: String) -> [UInt16: Int] {
         var map: [UInt16: Int] = [:]
         for line in lines {
             let t = line.trimmingCharacters(in: .whitespaces)
-            guard t.uppercased().hasPrefix("BREAK:") else { continue }
-            let after = t.dropFirst("BREAK:".count).trimmingCharacters(in: .whitespaces)
+            guard t.uppercased().hasPrefix(prefix) else { continue }
+            let after = t.dropFirst(prefix.count).trimmingCharacters(in: .whitespaces)
             let numStr = after.prefix(while: { $0.isNumber })
             guard let num = Int(numStr), let pc = parseBreakpointPC(t) else { continue }
             map[pc] = num
