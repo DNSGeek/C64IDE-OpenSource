@@ -219,7 +219,8 @@ dot. Clicking it offers **Commit** (with a message sheet), **Push** and
 
 - Syntax highlighting for BASIC and 6502 assembly.
 - Line-number gutter; click the left edge of the gutter to toggle a breakpoint.
-- Inline tooltips for keywords and addresses when you hover.
+- Inline tooltips for keywords and addresses when you hover. **View → Hover
+  Tooltips** turns them off and on.
 - Find panel (`⌘F`), plus the richer Search tab in the console panel.
 - External changes are detected: if a file changes on disk underneath you, the
   IDE offers to reload it.
@@ -230,7 +231,8 @@ dot. Clicking it offers **Commit** (with a message sheet), **Push** and
 About half a second after you stop typing, the IDE checks the file and marks
 each problem with a dotted underline (red for errors, orange for warnings), a
 bar in the gutter next to the line number, and a row in the console's
-**Problems** tab. Hover over an underlined spot to read the message. The check
+**Problems** tab. Hover over an underlined spot to read the message (with
+**View → Hover Tooltips** off, read it in the Problems tab instead). The check
 never touches the text or the undo stack, and it runs in the background, so
 large files do not slow down typing. **View → Check Syntax While Typing**
 turns it off and on.
@@ -968,6 +970,7 @@ Other appearance controls: the toolbar theme button (light/dark), and
 | `⇧⌘Y`       | Toggle Console                       |
 | —           | Check Syntax While Typing (toggle)   |
 | —           | Code Completion (toggle)             |
+| —           | Hover Tooltips (toggle)              |
 | `⌃Space`    | Open the completion list             |
 
 ---
