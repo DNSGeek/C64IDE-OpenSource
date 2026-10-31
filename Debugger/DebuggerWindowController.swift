@@ -68,6 +68,7 @@ class DebuggerViewController: NSViewController {
                 old.onPause      = nil
                 old.onLog        = chainedForwardLog
                 chainedForwardLog = nil
+                old.onConsoleOutput = nil
             }
             bindToTarget()
         }
@@ -495,6 +496,16 @@ class DebuggerViewController: NSViewController {
         } else {
             commandField.placeholderString = "Type a RetroShell command…"
         }
+
+        // Replies to the commands typed below.
+        t.onConsoleOutput = { [weak self] line in
+            guard let self else { return }
+            self.appendConsole(line, color: self.consoleGreen)
+        }
+        if t is VC64RunTarget {
+            appendConsole("RetroShell: 'help' lists its commands, 'debugger' switches to its debug console.",
+                          color: .gray)
+        }
     }
 
     // MARK: - Connection
@@ -521,7 +532,8 @@ class DebuggerViewController: NSViewController {
         let cmd = sender.stringValue.trimmingCharacters(in: .whitespaces)
         guard !cmd.isEmpty else { return }
         guard let t = requireTarget() else { return }
-        appendConsole("(C:$) \(cmd)", color: promptCyan)
+        // RetroShell echoes the command itself, after its prompt.
+        if !(t is VC64RunTarget) { appendConsole("(C:$) \(cmd)", color: promptCyan) }
         sendMonitorCommand(cmd, to: t)
         sender.stringValue = ""
     }
@@ -605,8 +617,8 @@ class DebuggerViewController: NSViewController {
     }
 
     /// Routes a raw command to whichever console the target speaks: VICE's
-    /// text monitor or VirtualC64's RetroShell. Replies stream back into our
-    /// console through the target's normal log path.
+    /// text monitor or VirtualC64's RetroShell. Replies come back through the
+    /// target's onConsoleOutput (see bindToTarget).
     private func sendMonitorCommand(_ cmd: String, to target: any DebuggableTarget) {
         if let vice = target as? VICERunTarget {
             vice.sendRawMonitorCommand(cmd)
@@ -649,8 +661,18 @@ class DebuggerViewController: NSViewController {
     @objc private func listBP(_ sender: Any?) {
         guard let t = requireTarget() else { return }
         appendConsole("Breakpoints:", color: warnYellow)
-        // Both monitors spell the listing the same way. This used to be a
-        // placeholder string that told the user to go look at the gutter.
+        // RetroShell's output never reaches this console, and its 'break'
+        // listing is a debugger-console command the shell isn't in, so
+        // VirtualC64's list comes straight from the bridge. VICE's monitor
+        // replies with its own listing.
+        if let vc64 = t as? VC64RunTarget {
+            let addresses = vc64.breakpointAddresses
+            if addresses.isEmpty { appendConsole("  (none)", color: .gray) }
+            for addr in addresses {
+                appendConsole(String(format: "  $%04X", addr), color: consoleGreen)
+            }
+            return
+        }
         sendMonitorCommand("break", to: t)
     }
 

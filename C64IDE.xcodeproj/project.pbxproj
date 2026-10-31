@@ -251,7 +251,7 @@
 		13876BAF2FC3C93B008C4470 /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			additionalCompilerFlagsByRelativePath = {
-				VC64Bridge.mm = "-fno-modules -I$(SRCROOT)/../virtualc64/VCCore -I$(SRCROOT)/../virtualc64/VCCore/Components -I$(SRCROOT)/../virtualc64/VCCore/Components/CIA -I$(SRCROOT)/../virtualc64/VCCore/Components/CPU -I$(SRCROOT)/../virtualc64/VCCore/Components/CPU/Peddle -I$(SRCROOT)/../virtualc64/VCCore/Components/Memory -I$(SRCROOT)/../virtualc64/VCCore/Components/SID -I$(SRCROOT)/../virtualc64/VCCore/Components/SID/resid -I$(SRCROOT)/../virtualc64/VCCore/Components/VICII -I$(SRCROOT)/../virtualc64/VCCore/Infrastructure -I$(SRCROOT)/../virtualc64/VCCore/Media -I$(SRCROOT)/../virtualc64/VCCore/Media/Cartridges -I$(SRCROOT)/../virtualc64/VCCore/Media/Cartridges/CustomCartridges -I$(SRCROOT)/../virtualc64/VCCore/Misc/RegressionTester -I$(SRCROOT)/../virtualc64/VCCore/Misc/RemoteServers -I$(SRCROOT)/../virtualc64/VCCore/Misc/RetroShell -I$(SRCROOT)/../virtualc64/VCCore/Peripherals/Datasette -I$(SRCROOT)/../virtualc64/VCCore/Peripherals/Drive -I$(SRCROOT)/../virtualc64/VCCore/Peripherals/Joystick -I$(SRCROOT)/../virtualc64/VCCore/Peripherals/Keyboard -I$(SRCROOT)/../virtualc64/VCCore/Peripherals/Monitor -I$(SRCROOT)/../virtualc64/VCCore/Peripherals/Mouse -I$(SRCROOT)/../virtualc64/VCCore/Peripherals/Network -I$(SRCROOT)/../virtualc64/VCCore/Peripherals/Paddle -I$(SRCROOT)/../virtualc64/VCCore/Ports -I$(SRCROOT)/../virtualc64/VCCore/rvlib -I$(SRCROOT)/../virtualc64/VCCore/rvlib/Devices -I$(SRCROOT)/../virtualc64/VCCore/rvlib/FileSystems/CBM -I$(SRCROOT)/../virtualc64/VCCore/rvlib/Images -I$(SRCROOT)/../virtualc64/VCCore/rvlib/Images/ADF -I$(SRCROOT)/../virtualc64/VCCore/rvlib/Images/D64 -I$(SRCROOT)/../virtualc64/VCCore/rvlib/Images/DMS -I$(SRCROOT)/../virtualc64/VCCore/rvlib/Images/Encoders -I$(SRCROOT)/../virtualc64/VCCore/rvlib/Images/EXE -I$(SRCROOT)/../virtualc64/VCCore/rvlib/Images/IMG -I$(SRCROOT)/../virtualc64/VCCore/rvlib/Images/ST -I$(SRCROOT)/../virtualc64/VCCore/ThirdParty -I$(SRCROOT)/../virtualc64/VCCore/utlib/include -I$(SRCROOT)/../virtualc64/VCCore/utlib/include/utl -I$(SRCROOT)/../virtualc64/VCCore/utlib/include/utl/abilities -I$(SRCROOT)/../virtualc64/VCCore/utlib/thirdparty";
+				VC64Bridge.mm = "-fno-modules -I$(SRCROOT)/../virtualc64/VCCore -I$(SRCROOT)/../virtualc64/VCCore/Components -I$(SRCROOT)/../virtualc64/VCCore/Components/CIA -I$(SRCROOT)/../virtualc64/VCCore/Components/CPU -I$(SRCROOT)/../virtualc64/VCCore/Components/CPU/Peddle -I$(SRCROOT)/../virtualc64/VCCore/Components/Memory -I$(SRCROOT)/../virtualc64/VCCore/Components/SID -I$(SRCROOT)/../virtualc64/VCCore/Components/SID/resid -I$(SRCROOT)/../virtualc64/VCCore/Components/VICII -I$(SRCROOT)/../virtualc64/VCCore/Infrastructure -I$(SRCROOT)/../virtualc64/VCCore/Media -I$(SRCROOT)/../virtualc64/VCCore/Media/Cartridges -I$(SRCROOT)/../virtualc64/VCCore/Media/Cartridges/CustomCartridges -I$(SRCROOT)/../virtualc64/VCCore/Misc/RegressionTester -I$(SRCROOT)/../virtualc64/VCCore/Misc/RemoteServers -I$(SRCROOT)/../virtualc64/VCCore/Misc/RetroShell -I$(SRCROOT)/../virtualc64/VCCore/Peripherals/Datasette -I$(SRCROOT)/../virtualc64/VCCore/Peripherals/Drive -I$(SRCROOT)/../virtualc64/VCCore/Peripherals/Joystick -I$(SRCROOT)/../virtualc64/VCCore/Peripherals/Keyboard -I$(SRCROOT)/../virtualc64/VCCore/Peripherals/Monitor -I$(SRCROOT)/../virtualc64/VCCore/Peripherals/Mouse -I$(SRCROOT)/../virtualc64/VCCore/Peripherals/Network -I$(SRCROOT)/../virtualc64/VCCore/Peripherals/Paddle -I$(SRCROOT)/../virtualc64/VCCore/Ports -I$(SRCROOT)/../virtualc64/VCCore/rvlib -I$(SRCROOT)/../virtualc64/VCCore/rvlib/Devices -I$(SRCROOT)/../virtualc64/VCCore/rvlib/FileSystems/CBM -I$(SRCROOT)/../virtualc64/VCCore/rvlib/Images -I$(SRCROOT)/../virtualc64/VCCore/rvlib/Images/ADF -I$(SRCROOT)/../virtualc64/VCCore/rvlib/Images/D64 -I$(SRCROOT)/../virtualc64/VCCore/rvlib/Images/DMS -I$(SRCROOT)/../virtualc64/VCCore/rvlib/Images/Encoders -I$(SRCROOT)/../virtualc64/VCCore/rvlib/Images/EXE -I$(SRCROOT)/../virtualc64/VCCore/rvlib/Images/IMG -I$(SRCROOT)/../virtualc64/VCCore/rvlib/Images/ST -I$(SRCROOT)/../virtualc64/VCCore/utlib/include -I$(SRCROOT)/../virtualc64/VCCore/utlib/include/utl -I$(SRCROOT)/../virtualc64/VCCore/utlib/include/utl/abilities -I$(SRCROOT)/../virtualc64/VCCore/utlib/thirdparty";
 			};
 			membershipExceptions = (
 				VCCore.xcconfig,
@@ -889,7 +889,8 @@
 					"-lrvlib",
 					"-lresid",
 					"-lxdms",
-					"-lutlib_core",
+					"-lutlib",
+					"-lz",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.c64ide.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -941,7 +942,8 @@
 					"-lrvlib",
 					"-lresid",
 					"-lxdms",
-					"-lutlib_core",
+					"-lutlib",
+					"-lz",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.c64ide.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";

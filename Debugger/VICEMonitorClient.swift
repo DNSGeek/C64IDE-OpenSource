@@ -192,27 +192,53 @@ class VICEMonitorClient {
                 while let newlineRange = accumulated.range(of: "\n") {
                     let line = String(accumulated[accumulated.startIndex..<newlineRange.lowerBound])
                     accumulated = String(accumulated[newlineRange.upperBound...])
+                    dispatch(line)
+                }
 
-                    let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !trimmed.isEmpty else { continue }
-
-                    if Self.isBreakpointHit(trimmed) {
-                        onBreakpoint?(trimmed)
-                    }
-                    onResponse?(trimmed)
+                // The prompt has no newline after it. Hand it on as soon as
+                // it is all that is left, so the reply it ends is complete
+                // now rather than when the next one arrives.
+                let (prompts, rest) = Self.splitPrompts(accumulated)
+                if !prompts.isEmpty, rest.allSatisfy(\.isWhitespace) {
+                    prompts.forEach { onResponse?($0) }
+                    accumulated = ""
                 }
             }
         }
     }
 
-    /// True only for VICE's "the CPU stopped here" announcement, which looks
-    /// like `#1 (Stop on  exec 0810)   0810`.
-    ///
-    /// Deliberately does *not* match `BREAK: 1  C:$0810  (Stop on exec)` —
-    /// that's a row of `break`'s breakpoint *listing*. Treating those as hits
-    /// made every `refreshBreakpointMap()` fire a phantom breakpoint event for
-    /// each breakpoint that existed.
-    private static func isBreakpointHit(_ line: String) -> Bool {
-        line.hasPrefix("#") && line.contains("(Stop")
+    /// Hands one line of monitor output to `onResponse` / `onBreakpoint`,
+    /// with any prompts at its front as lines of their own.
+    private func dispatch(_ line: String) {
+        let (prompts, rest) = Self.splitPrompts(line)
+        prompts.forEach { onResponse?($0) }
+
+        // Only the end is trimmed: leading spaces line up the caret VICE
+        // puts under a syntax error. The parsers trim for themselves.
+        var text = String(rest)
+        while text.last?.isWhitespace == true { text.removeLast() }
+        guard !text.allSatisfy(\.isWhitespace) else { return }
+
+        if VICEResponseParser.isCheckpointHit(text) {
+            onBreakpoint?(text.trimmingCharacters(in: .whitespaces))
+        }
+        onResponse?(text)
+    }
+
+    /// VICE ends every reply with its prompt, `(C:$0821) `, and sends no
+    /// newline after it. Split on newlines alone, the prompt waited until the
+    /// next reply arrived and was then glued to the front of that reply's
+    /// first line. Nothing ever saw a prompt line, so every request that ends
+    /// at the prompt (memory, disassembly, breakpoint list) ran into its
+    /// timeout and came back empty. This splits the prompts off the front of
+    /// `text` (several when replies were empty) and returns the rest.
+    private static func splitPrompts(_ text: String) -> (prompts: [String], rest: Substring) {
+        var prompts: [String] = []
+        var rest = Substring(text)
+        while let match = rest.drop(while: \.isWhitespace).prefixMatch(of: /\([0-9A-Za-z]+:\$[0-9A-Fa-f]{4}\)/) {
+            prompts.append(String(match.output))
+            rest = rest[match.range.upperBound...]
+        }
+        return (prompts, rest)
     }
 }

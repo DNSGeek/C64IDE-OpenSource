@@ -207,6 +207,11 @@ protocol DebuggableTarget: EmulatorTarget {
     /// Called on the main thread when execution pauses for any reason
     /// (breakpoint, step complete, manual pause).
     @MainActor var onPause: ((RegisterState) -> Void)? { get set }
+
+    /// Called on the main thread with the target's reply to a command typed
+    /// into the debugger console, one line at a time. The debugger sets this
+    /// while it is attached.
+    @MainActor var onConsoleOutput: ((String) -> Void)? { get set }
 }
 
 /// Default no-op watchpoint implementations.

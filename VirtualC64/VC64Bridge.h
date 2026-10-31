@@ -155,6 +155,10 @@ typedef NS_ENUM(NSInteger, VC64Standard) {
 /// until reset.
 - (void)vc64:(VC64Bridge *)bridge didJamAtPC:(uint16_t)pc;
 - (void)vc64BridgeRetroShellDidUpdate:(VC64Bridge *)bridge;
+
+/// RetroShell finished a line of console output. Typed commands come back
+/// too, as the prompt followed by the command.
+- (void)vc64:(VC64Bridge *)bridge didPrintRetroShellLine:(NSString *)line;
 @end
 
 // ─────────────────────────────────────────────────────────────
@@ -451,6 +455,9 @@ typedef NS_ENUM(NSInteger, VC64Standard) {
 
 /// Returns YES if a breakpoint is set at addr.
 - (BOOL)hasBreakpointAt:(uint16_t)address;
+
+/// Addresses of all breakpoints, in the order they were set.
+- (NSArray<NSNumber *> *)breakpointAddresses;
 
 /// Set a memory watchpoint at the given address.
 - (void)setWatchpointAt:(uint16_t)address;

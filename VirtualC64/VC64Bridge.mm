@@ -13,10 +13,76 @@
 // ── VirtualC64 C++ headers ──────────────────────────────────
 // Adjust this path to match where you've placed the VC64 library headers.
 #include "VirtualC64.h"
+// Internal header, for Memory::poke() in -writeByte:toAddress:.
+#include "Memory.h"
 // ────────────────────────────────────────────────────────────
 
 #include <string>
 #include <cmath>
+#include <functional>
+#include <ostream>
+#include <streambuf>
+
+// ─────────────────────────────────────────────────────────────
+// MARK: - Failure helpers
+// ─────────────────────────────────────────────────────────────
+
+// VCCore reports failures by throwing, and since v6.2 every call that waits
+// for the emulator thread also throws while that thread isn't running (not
+// launched yet, or halted). An exception must never unwind through an
+// Objective-C or Swift frame, so methods without an NSError out-parameter
+// run such calls through here and log the failure instead.
+template <typename F>
+static void guarded(const char *what, F &&body)
+{
+    try {
+        body();
+    } catch (std::exception &e) {
+        NSLog(@"VC64Bridge: %s failed: %s", what, e.what());
+    }
+}
+
+// Sets an option and waits until it is in effect, so get() reads the new
+// value straight away. v6.2's set() needs a running emulator thread; before
+// launch the queued variant is used, which VCCore carries out at launch.
+static void setOption(vc64::VirtualC64 *emu, vc64::Opt opt, int64_t value)
+{
+    guarded("set", [&]{
+        if (emu->isLaunched()) emu->set(opt, value);
+        else                   emu->setAsync(opt, value);
+    });
+}
+
+// ─────────────────────────────────────────────────────────────
+// MARK: - RetroShell output
+// ─────────────────────────────────────────────────────────────
+
+// RetroShell copies every finished console line, command echoes included,
+// into an extra output stream (RetroShellAPI::setStream). This unbuffered
+// stream buffer collects the characters of a line and hands each complete
+// line to `sink`. RetroShell writes to it on the emulator thread.
+class LineForwarder : public std::streambuf {
+public:
+    explicit LineForwarder(std::function<void(const std::string &)> sink)
+    : sink(std::move(sink)) { }
+
+protected:
+    int_type overflow(int_type c) override
+    {
+        if (traits_type::eq_int_type(c, traits_type::eof())) return traits_type::not_eof(c);
+        if (c == '\n') {
+            sink(line);
+            line.clear();
+        } else {
+            line.push_back(traits_type::to_char_type(c));
+        }
+        return c;
+    }
+
+private:
+    std::function<void(const std::string &)> sink;
+    std::string line;
+};
 
 // ─────────────────────────────────────────────────────────────
 // MARK: - Message mapping helper (C++ → ObjC enum)
@@ -97,6 +163,15 @@ static vc64::C64Key mapKey(VC64KeyCode key)
     id<MTLTexture>  _metalTexture;
     NSInteger       _metalTextureWidth;
     NSInteger       _metalTextureHeight;
+
+    // ROMs are installed after the thread is launched (see -launch...), so
+    // a launched emulator is not necessarily a ready one.
+    BOOL            _romsLoaded;
+
+    // The stream RetroShell copies its output into (see LineForwarder).
+    // Created at launch; deleted after _emu, which still writes to it.
+    LineForwarder   *_shellBuffer;
+    std::ostream    *_shellStream;
 }
 
 // Pump the message queue and dispatch to delegate.
@@ -125,13 +200,18 @@ static vc64::C64Key mapKey(VC64KeyCode key)
 - (void)dealloc
 {
     if (_emu) {
+        // Stop message delivery first, so a message posted during teardown
+        // never reaches the listener pointer of an object that is going away.
+        _emu->removeListener();
         // Halt the thread if still running
         if (_emu->isRunning() || _emu->isPaused()) {
-            _emu->halt();
+            guarded("halt", [&]{ _emu->halt(); });
         }
         delete _emu;
         _emu = nullptr;
     }
+    delete _shellStream;
+    delete _shellBuffer;
     [super dealloc];
 }
 
@@ -145,8 +225,67 @@ static vc64::C64Key mapKey(VC64KeyCode key)
                       error:(NSError **)error
 {
     try {
+        // Register the message callback. The listener pointer is bridged
+        // to self via __bridge so ARC doesn't complain.
+        __weak VC64Bridge *weakSelf = self;
+
+        // A failed ROM load leaves the thread running, so a retry must not
+        // launch it a second time (that throws ALREADY_LAUNCHED).
+        if (!_emu->isLaunched()) {
+            _emu->launch(
+                (__bridge const void *)weakSelf,
+                [](const void *ptr, vc64::Message msg, std::exception_ptr exception) {
+
+                    // This callback fires on the emulator thread.
+                    // Dispatch to main for all delegate calls.
+                    VC64Bridge *bridge = (__bridge VC64Bridge *)ptr;
+                    VC64Message mapped = mapMessage(msg.type);
+                    uint16_t    data   = (uint16_t)(msg.value & 0xFFFF);
+
+                    // A message can carry the failure of a queued request.
+                    // Nothing in the IDE waits on those results; log them.
+                    if (exception) {
+                        try { std::rethrow_exception(exception); }
+                        catch (std::exception &e) {
+                            NSLog(@"VC64Bridge: emulator reported: %s", e.what());
+                        }
+                        catch (...) { }
+                    }
+
+                    dispatch_async(dispatch_get_main_queue(), ^{
+                        [bridge _handleMessage:mapped rawData:data];
+                    });
+                }
+            );
+
+            // Forward RetroShell's output, line by line, to the delegate.
+            // The bridge is held weakly: a line still on its way to the main
+            // queue when the bridge goes away is dropped.
+            // The emulator thread has no autorelease pool of its own.
+            _shellBuffer = new LineForwarder([weakSelf](const std::string &line) {
+                @autoreleasepool {
+                    NSString *text = [NSString stringWithUTF8String:line.c_str()] ?: @"";
+                    dispatch_async(dispatch_get_main_queue(), ^{
+                        VC64Bridge *bridge = weakSelf;
+                        id<VC64BridgeDelegate> d = bridge.delegate;
+                        if ([d respondsToSelector:@selector(vc64:didPrintRetroShellLine:)]) {
+                            [d vc64:bridge didPrintRetroShellLine:text];
+                        }
+                    });
+                }
+            });
+            _shellStream = new std::ostream(_shellBuffer);
+            _emu->retroShell.setStream(*_shellStream);
+        }
+
+        // NOTE: We do NOT install a separate polling NSTimer. The launch
+        // callback above already dispatches each message to main as it's
+        // produced. A second 60Hz pump was wasteful and risked saturating
+        // the main runloop, making the host IDE feel unresponsive.
+
         // Install ROMs. Pass nil to use VirtualC64's built-in OpenROMs
-        // (they're less accurate but handy for testing).
+        // (they're less accurate but handy for testing). Since v6.2 the ROM
+        // calls run on the emulator thread, so they come after launch().
         if (kernalROM) {
             _emu->c64.loadRom(std::string(kernalROM.UTF8String));
         } else {
@@ -158,31 +297,7 @@ static vc64::C64Key mapKey(VC64KeyCode key)
         if (charROM) {
             _emu->c64.loadRom(std::string(charROM.UTF8String));
         }
-
-        // Register the message callback. The listener pointer is bridged
-        // to self via __bridge so ARC doesn't complain.
-        __weak VC64Bridge *weakSelf = self;
-
-        _emu->launch(
-            (__bridge const void *)weakSelf,
-            [](const void *ptr, vc64::Message msg) {
-
-                // This callback fires on the emulator thread.
-                // Dispatch to main for all delegate calls.
-                VC64Bridge *bridge = (__bridge VC64Bridge *)ptr;
-                VC64Message mapped = mapMessage(msg.type);
-                uint16_t    data   = (uint16_t)(msg.value & 0xFFFF);
-
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    [bridge _handleMessage:mapped rawData:data];
-                });
-            }
-        );
-
-        // NOTE: We do NOT install a separate polling NSTimer. The launch
-        // callback above already dispatches each message to main as it's
-        // produced. A second 60Hz pump was wasteful and risked saturating
-        // the main runloop, making the host IDE feel unresponsive.
+        _romsLoaded = YES;
 
         return YES;
 
@@ -232,7 +347,7 @@ static vc64::C64Key mapKey(VC64KeyCode key)
             // pc0 holds the address the jammed instruction started at, which
             // is the address the IDE wants to surface.
             if ([d respondsToSelector:@selector(vc64:didJamAtPC:)]) {
-                uint16_t jamPC = _emu->cpu.getCachedInfo().pc0;
+                uint16_t jamPC = [self _currentCPUInfo].pc0;
                 [d vc64:self didJamAtPC:jamPC];
             }
             break;
@@ -257,32 +372,38 @@ static vc64::C64Key mapKey(VC64KeyCode key)
     // Drain any messages that weren't caught by the launch callback.
     // (Shouldn't happen in practice, but good belt-and-suspenders.)
     vc64::Message msg;
-    while (_emu->c64.getMsg(msg)) {
+    std::exception_ptr exception;
+    while (_emu->c64.getMsg(msg, exception)) {
         VC64Message mapped = mapMessage(msg.type);
         [self _handleMessage:mapped rawData:(uint16_t)(msg.value & 0xFFFF)];
     }
 }
 
-- (BOOL)isReady    { return _emu->isLaunched(); }
+- (BOOL)isReady    { return _emu->isLaunched() && _romsLoaded; }
 - (BOOL)isPoweredOn{ return _emu->isPoweredOn(); }
 - (BOOL)isRunning  { return _emu->isRunning();  }
 - (BOOL)isPaused   { return _emu->isPaused();   }
 
-- (void)powerOn    { _emu->powerOn();  }
-- (void)powerOff   { _emu->powerOff(); }
-- (void)hardReset  { _emu->hardReset(); }
-- (void)softReset  { _emu->softReset(); }
-- (void)halt       { _emu->halt(); }
+// Since v6.2 the plain state calls wait for the emulator thread. The Async
+// ones queue the request and return at once, as these did before v6.2.
+- (void)powerOn    { _emu->powerOnAsync();  }
+- (void)powerOff   { _emu->powerOffAsync(); }
+- (void)hardReset  { _emu->hardResetAsync(); }
+- (void)softReset  { _emu->softResetAsync(); }
+- (void)halt       { guarded("halt", [&]{ _emu->halt(); }); }
 - (void)wakeUp     { _emu->wakeUp(); }
 
 // ─────────────────────────────────────────────────────────────
 // MARK: Run Control
 // ─────────────────────────────────────────────────────────────
 
-- (void)run     { _emu->run();     }
-- (void)pause   { _emu->pause();   }
-- (void)warpOn  { _emu->warpOn();  }
-- (void)warpOff { _emu->warpOff(); }
+// runAsync() still throws if a ROM is missing. Warp requests now name a
+// source (0-6) and warp stays on while any source asks for it; the bridge
+// is a single client, so it always uses source 0.
+- (void)run     { guarded("run", [&]{ _emu->runAsync(); }); }
+- (void)pause   { _emu->pauseAsync();    }
+- (void)warpOn  { _emu->warpOnAsync(0);  }
+- (void)warpOff { _emu->warpOffAsync(0); }
 
 - (void)setWarpBootDuration:(NSInteger)seconds
 {
@@ -290,7 +411,7 @@ static vc64::C64Key mapKey(VC64KeyCode key)
     // machine in warp while cpu.clock < sec(warpBoot), then exits warp
     // automatically — see Emulator::computeFrame's warp check.
     if (!_emu) return;
-    _emu->set(vc64::Opt::C64_WARP_BOOT, (int64_t)seconds);
+    setOption(_emu, vc64::Opt::C64_WARP_BOOT, (int64_t)seconds);
 }
 
 - (NSInteger)warpBootDuration
@@ -307,7 +428,7 @@ static vc64::C64Key mapKey(VC64KeyCode key)
 {
     try {
         _emu->c64.flash(std::filesystem::path(path.UTF8String));
-        _emu->run();
+        _emu->runAsync();
         return YES;
     } catch (std::exception &e) {
         if (error) {
@@ -341,7 +462,7 @@ static vc64::C64Key mapKey(VC64KeyCode key)
 - (void)ejectDiskFromDrive:(NSInteger)driveNumber
 {
     vc64::DriveAPI &drive = (driveNumber == 9) ? _emu->drive9 : _emu->drive8;
-    drive.ejectDisk();
+    guarded("ejectDisk", [&]{ drive.ejectDisk(); });
 }
 
 - (BOOL)saveDiskInDrive:(NSInteger)driveNumber
@@ -422,12 +543,13 @@ static vc64::C64Key mapKey(VC64KeyCode key)
 - (nullable const uint32_t *)texturePointerWidth:(NSInteger *)width
                                           height:(NSInteger *)height
 {
-    utl::isize w = 0, h = 0;
     // nr is the frame counter — we don't need it, pass a local.
     utl::isize nr = 0;
-    const uint32_t *ptr = _emu->videoPort.getTexture(&nr, &w, &h);
-    if (width)  *width  = (NSInteger)w;
-    if (height) *height = (NSInteger)h;
+    const uint32_t *ptr = _emu->videoPort.getTexture(&nr);
+    // The texture always has the fixed size vc64::Tex::width x height
+    // (v6.2 dropped the size out-parameters).
+    if (width)  *width  = ptr ? (NSInteger)vc64::Tex::width  : 0;
+    if (height) *height = ptr ? (NSInteger)vc64::Tex::height : 0;
     return ptr;
 }
 
@@ -437,11 +559,10 @@ static vc64::C64Key mapKey(VC64KeyCode key)
 
     _emu->videoPort.lockTexture();
 
-    NSInteger w = 0, h = 0;
-    utl::isize nr = 0, cw = 0, ch = 0;
-    const uint32_t *src = _emu->videoPort.getTexture(&nr, &cw, &ch);
-    w = (NSInteger)cw;
-    h = (NSInteger)ch;
+    utl::isize nr = 0;
+    const uint32_t *src = _emu->videoPort.getTexture(&nr);
+    NSInteger w = (NSInteger)vc64::Tex::width;
+    NSInteger h = (NSInteger)vc64::Tex::height;
 
     if (!src) {
         _emu->videoPort.unlockTexture();
@@ -511,7 +632,7 @@ static vc64::C64Key mapKey(VC64KeyCode key)
     // because audio engines occasionally report fractional rates, but
     // HOST_SAMPLE_RATE is an integer option — round to the nearest Hz.
     if (!_emu) return;
-    _emu->set(vc64::Opt::HOST_SAMPLE_RATE, (int64_t)llround(hz));
+    setOption(_emu, vc64::Opt::HOST_SAMPLE_RATE, (int64_t)llround(hz));
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -523,14 +644,14 @@ static vc64::C64Key mapKey(VC64KeyCode key)
     if (!_emu) return;
 
     if (standard == VC64StandardNTSC) {
-        _emu->set(vc64::Opt::VICII_REVISION,
+        setOption(_emu, vc64::Opt::VICII_REVISION,
                   (int64_t)vc64::VICIIRev::NTSC_6567);
-        _emu->set(vc64::Opt::POWER_GRID,
+        setOption(_emu, vc64::Opt::POWER_GRID,
                   (int64_t)vc64::PowerGrid::STABLE_60HZ);
     } else {
-        _emu->set(vc64::Opt::VICII_REVISION,
+        setOption(_emu, vc64::Opt::VICII_REVISION,
                   (int64_t)vc64::VICIIRev::PAL_6569_R3);
-        _emu->set(vc64::Opt::POWER_GRID,
+        setOption(_emu, vc64::Opt::POWER_GRID,
                   (int64_t)vc64::PowerGrid::STABLE_50HZ);
     }
 }
@@ -583,21 +704,35 @@ static vc64::C64Key mapKey(VC64KeyCode key)
 // MARK: Debugger — Execution control
 // ─────────────────────────────────────────────────────────────
 
-- (void)stepInto    { _emu->stepInto();    }
-- (void)stepOver    { _emu->stepOver();    }
-- (void)stepCycle   { _emu->stepCycle();   }
-- (void)finishLine  { _emu->finishLine();  }
-- (void)finishFrame { _emu->finishFrame(); }
+// These throw if the emulator is already running.
+- (void)stepInto    { guarded("stepInto",    [&]{ _emu->stepInto();    }); }
+- (void)stepOver    { guarded("stepOver",    [&]{ _emu->stepOver();    }); }
+- (void)stepCycle   { guarded("stepCycle",   [&]{ _emu->stepCycle();   }); }
+- (void)finishLine  { guarded("finishLine",  [&]{ _emu->finishLine();  }); }
+- (void)finishFrame { guarded("finishFrame", [&]{ _emu->finishFrame(); }); }
 
 // ─────────────────────────────────────────────────────────────
 // MARK: Debugger — CPU / Memory inspection
 // ─────────────────────────────────────────────────────────────
 
+// The CPU state as it is now. getCachedInfo() is refreshed only while
+// auto-inspection covers the CPU, which the IDE never switches on, so since
+// v6.2 it keeps returning whatever the first read saw. getInfo() reads the
+// live state; suspending the emulator thread around it makes the read
+// consistent and lets a step that is still being carried out finish first.
+- (vc64::CPUInfo)_currentCPUInfo
+{
+    vc64::CPUInfo info = {};
+    _emu->suspend();
+    info = _emu->cpu.getInfo();
+    _emu->resume();
+    return info;
+}
+
 - (VC64RegisterState)registers
 {
     VC64RegisterState state = {};
-    // getCachedInfo() is safe to call from any thread (reads a snapshot).
-    const vc64::CPUInfo &info = _emu->cpu.getCachedInfo();
+    const vc64::CPUInfo info = [self _currentCPUInfo];
     state.pc    = info.pc;
     state.a     = info.a;
     state.x     = info.x;
@@ -607,28 +742,41 @@ static vc64::C64Key mapKey(VC64KeyCode key)
     return state;
 }
 
+// Reads `count` bytes from `start` on, as the CPU sees them and without side
+// effects. VCCore's MemoryAPI doesn't expose a direct peek; the public read
+// is the memory debugger's hexDump(), which formats a range read from one
+// memory source (RAM/ROM/IO/Cartridge). The mapping can change every 4 KB,
+// so the range is dumped page by page with the source MemInfo gives for that
+// page, and the hex text is parsed back into bytes. As with the registers,
+// the live MemInfo is read with the emulator suspended: the cached one is
+// never refreshed and would miss bank switches.
+- (void)_readBytes:(uint8_t *)out from:(uint16_t)start count:(NSUInteger)count
+{
+    _emu->suspend();
+    const vc64::MemInfo info = _emu->mem.getInfo();
+    NSUInteger done = 0;
+    while (done < count) {
+        uint16_t addr = (uint16_t)(start + done);
+        NSUInteger chunk = MIN(count - done, (NSUInteger)(0x1000 - (addr & 0x0FFF)));
+        std::string dump = _emu->mem.debugger.hexDump(info.peekSrc[addr >> 12],
+                                                      addr, (utl::isize)chunk);
+        // "A9 00 8D ...": two digits and a space per byte, "--" where
+        // nothing is mapped (read as 0).
+        for (NSUInteger i = 0; i < chunk; i++) {
+            unsigned int val = 0;
+            if (3 * i + 2 <= dump.size()) sscanf(dump.c_str() + 3 * i, "%2x", &val);
+            out[done + i] = (uint8_t)val;
+        }
+        done += chunk;
+    }
+    _emu->resume();
+}
+
 - (uint8_t)readByte:(uint16_t)address
 {
-    // VCCore's MemoryAPI doesn't expose a direct peek; the only public read
-    // mechanism is memdump() which returns a formatted string. Read the
-    // current memory mapping (RAM/ROM/IO/Cartridge) for this address from
-    // the cached MemInfo, then format/parse a single byte through memdump.
-    //
-    // NOTE: This is per-byte string formatting + sscanf. Fine for single
-    // reads; awful in tight loops. For bulk reads, prefer -readMemoryFrom:to:
-    // which still calls this in a loop, but at least batches via the same path.
-    // A future optimization is to convince Dirk to expose Memory::spypeek()
-    // on MemoryAPI, or to call memdump() once for a range and parse the
-    // whole block.
-    const vc64::MemInfo &info = _emu->mem.getCachedInfo();
-    vc64::MemType src = info.peekSrc[address >> 12];
-    std::string dump = _emu->mem.memdump(address, 1, true, 0, src);
-    // The dump format is "XXXX: YY" — extract the hex byte.
-    auto pos = dump.find(": ");
-    if (pos == std::string::npos) return 0;
-    unsigned int val = 0;
-    sscanf(dump.c_str() + pos + 2, "%02x", &val);
-    return (uint8_t)val;
+    uint8_t value = 0;
+    [self _readBytes:&value from:address count:1];
+    return value;
 }
 
 - (NSData *)readMemoryFrom:(uint16_t)start to:(uint16_t)end
@@ -637,32 +785,31 @@ static vc64::C64Key mapKey(VC64KeyCode key)
     if (count == 0) return [NSData data];
 
     NSMutableData *data = [NSMutableData dataWithLength:count];
-    uint8_t *bytes = (uint8_t *)data.mutableBytes;
-
-    for (uint16_t addr = start; ; ++addr) {
-        bytes[addr - start] = [self readByte:addr];
-        if (addr == end) break;  // avoid wraparound on end == 0xFFFF
-    }
+    [self _readBytes:(uint8_t *)data.mutableBytes from:start count:count];
     return data;
 }
 
 - (void)writeByte:(uint8_t)value toAddress:(uint16_t)address
 {
-    // VirtualC64 doesn't expose a direct mem.writeByte() in the public API,
-    // so we go through RetroShell which is available and safe.
-    // Alternative: call the non-public Memory::poke() if you link the full source.
-    NSString *cmd = [NSString stringWithFormat:@"m %04X %02X", address, value];
-    [self retroShellExec:cmd];
+    // VirtualC64 doesn't expose a memory write in the public API. RetroShell's
+    // 'w' command is only known to the debugger console, which the shell
+    // isn't in (entering it switches on track mode and prints into the
+    // console), and the "m <addr> <value>" sent before only dumps memory.
+    // 'w' calls Memory::poke(), so do the same on the emulator thread via
+    // call(). The byte lands where a CPU write would: RAM, or the I/O
+    // registers while they are banked in.
+    guarded("writeByte", [&]{
+        _emu->call([&]{ _emu->getMemory().poke(address, value); });
+    });
 }
 
 - (NSString *)disassembleAt:(uint16_t)address
 {
-    char buf[64] = {};
     // VCCore Peddle format chars: %p=PC, %b=instr bytes, %i=mnemonic.
     // NOTE: %x is the X register, not PC. The format string "%04p  %b  %i"
     // correctly outputs PC, instruction bytes, and mnemonic.
-    _emu->cpu.disassemble(buf, "%04p  %b  %i", address);
-    return @(buf);
+    std::string line = _emu->cpu.debugger.disassemble(address, "%04p  %b  %i");
+    return @(line.c_str());
 }
 
 - (NSArray<NSString *> *)disassemble:(NSInteger)count
@@ -670,11 +817,11 @@ static vc64::C64Key mapKey(VC64KeyCode key)
 {
     NSMutableArray<NSString *> *result = [NSMutableArray arrayWithCapacity:(NSUInteger)count];
     uint16_t pc = address;
-    char buf[64] = {};
 
     for (NSInteger i = 0; i < count; i++) {
-        utl::isize bytes = _emu->cpu.disassemble(buf, "%04p  %b  %i", pc);
-        [result addObject:@(buf)];
+        utl::isize bytes = 0;
+        std::string line = _emu->cpu.debugger.disassemble(pc, "%04p  %b  %i", &bytes);
+        [result addObject:@(line.c_str())];
         // bytes is the instruction length — advance PC accordingly.
         if (bytes <= 0) bytes = 1;  // guard against malformed output
         pc += (uint16_t)bytes;
@@ -686,66 +833,61 @@ static vc64::C64Key mapKey(VC64KeyCode key)
 // MARK: Debugger — Breakpoints
 // ─────────────────────────────────────────────────────────────
 
+// v6.2's GuardsAPI sets and removes guards by address and returns once the
+// emulator thread has done it, so hasBreakpointAt: sees the change at once.
+// It replaces the RetroShell commands used before ("break <addr>", "break
+// delete"), which RetroShell rejected: it wants "break at <addr>" and a
+// guard number for "delete".
+
 - (void)setBreakpointAt:(uint16_t)address
 {
     // Guard: if there's already a breakpoint there, don't add another.
-    if (_emu->cpu.breakpointAt(address) != nullptr) return;
-    // VirtualC64's public API reads breakpoints but doesn't expose
-    // add/remove directly — go through RetroShell for set/delete.
-    // The debugger console command is: "break <addr>"
-    NSString *cmd = [NSString stringWithFormat:@"break %04X", address];
-    [self retroShellExec:cmd];
+    if ([self hasBreakpointAt:address]) return;
+    guarded("setBreakpointAt", [&]{ _emu->cpu.breakpoints.setAt(address); });
 }
 
 - (void)deleteBreakpointAt:(uint16_t)address
 {
-    // Find the breakpoint's guard index, then delete by number.
-    // The public API lets us query by address but not delete by address,
-    // so we walk the numbered list.
-    for (long i = 0; ; i++) {
-        vc64::Guard *g = _emu->cpu.breakpointNr(i);
-        if (!g) break;
-        if (g->addr == (uint32_t)address) {
-            NSString *cmd = [NSString stringWithFormat:@"break delete %ld", i];
-            [self retroShellExec:cmd];
-            break;
-        }
-    }
+    // removeAt() throws for an address without a breakpoint.
+    if (![self hasBreakpointAt:address]) return;
+    guarded("deleteBreakpointAt", [&]{ _emu->cpu.breakpoints.removeAt(address); });
 }
 
 - (void)deleteAllBreakpoints
 {
-    [self retroShellExec:@"break delete"];
+    guarded("deleteAllBreakpoints", [&]{ _emu->cpu.breakpoints.removeAll(); });
 }
 
 - (BOOL)hasBreakpointAt:(uint16_t)address
 {
-    return _emu->cpu.breakpointAt((uint32_t)address) != nullptr;
+    return _emu->cpu.breakpoints.guardAt(address).has_value();
+}
+
+- (NSArray<NSNumber *> *)breakpointAddresses
+{
+    NSMutableArray<NSNumber *> *result = [NSMutableArray array];
+    const vc64::GuardsAPI &breakpoints = _emu->cpu.breakpoints;
+    for (utl::isize i = 0, n = breakpoints.elements(); i < n; i++) {
+        if (auto info = breakpoints.guardNr(i)) [result addObject:@((uint16_t)info->addr)];
+    }
+    return result;
 }
 
 - (void)setWatchpointAt:(uint16_t)address
 {
-    if (_emu->cpu.watchpointAt(address) != nullptr) return;
-    NSString *cmd = [NSString stringWithFormat:@"watch %04X", address];
-    [self retroShellExec:cmd];
+    if ([self hasWatchpointAt:address]) return;
+    guarded("setWatchpointAt", [&]{ _emu->cpu.watchpoints.setAt(address); });
 }
 
 - (void)deleteWatchpointAt:(uint16_t)address
 {
-    for (long i = 0; ; i++) {
-        vc64::Guard *g = _emu->cpu.watchpointNr(i);
-        if (!g) break;
-        if (g->addr == (uint32_t)address) {
-            NSString *cmd = [NSString stringWithFormat:@"watch delete %ld", i];
-            [self retroShellExec:cmd];
-            break;
-        }
-    }
+    if (![self hasWatchpointAt:address]) return;
+    guarded("deleteWatchpointAt", [&]{ _emu->cpu.watchpoints.removeAt(address); });
 }
 
 - (BOOL)hasWatchpointAt:(uint16_t)address
 {
-    return _emu->cpu.watchpointAt((uint32_t)address) != nullptr;
+    return _emu->cpu.watchpoints.guardAt(address).has_value();
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -754,8 +896,10 @@ static vc64::C64Key mapKey(VC64KeyCode key)
 
 - (NSString *)retroShellText
 {
-    const char *text = _emu->retroShell.text();
-    return text ? @(text) : @"";
+    // text() now returns a copy and suspends the emulator while it makes it.
+    std::string text;
+    guarded("retroShellText", [&]{ text = _emu->retroShell.text(); });
+    return [NSString stringWithUTF8String:text.c_str()] ?: @"";
 }
 
 - (void)retroShellExec:(NSString *)command
@@ -768,7 +912,10 @@ static vc64::C64Key mapKey(VC64KeyCode key)
 
 - (void)retroShellExecScript:(NSString *)path
 {
-    _emu->retroShell.execScript(std::filesystem::path(path.UTF8String));
+    // Runs asynchronously; throws only if the file can't be opened.
+    guarded("retroShellExecScript", [&]{
+        _emu->retroShell.execScriptAsync(std::filesystem::path(path.UTF8String));
+    });
 }
 
 - (void)enterCommander { _emu->retroShell.press(std::string("commander\n")); }

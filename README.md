@@ -120,17 +120,19 @@ This is an Xcode project written in Swift with a small amount of Objective-C++
    by [VirtualC64](https://github.com/dirkwhoffmann/virtualc64) by Dirk
    Hoffmann. Its C++ source must be cloned **as a sibling** of this repository
    (the Xcode project references headers via `$(SRCROOT)/../virtualc64`), and
-   its static libraries built with CMake:
+   its static libraries built with CMake. The bridge is written against
+   VirtualC64 **v6.2**; other releases change the API it uses.
 
    ```sh
-   # Clone VirtualC64 next to C64IDE-OpenSource
-   git clone https://github.com/dirkwhoffmann/virtualc64.git ../virtualc64
+   # Clone VirtualC64 v6.2 next to C64IDE-OpenSource
+   git clone --branch v6.2 https://github.com/dirkwhoffmann/virtualc64.git ../virtualc64
 
-   # Build the static libraries
+   # Build the static libraries (universal: Apple silicon and Intel)
    mkdir ../virtualc64/build
    cd ../virtualc64/build
-   cmake ../VCCore -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_DEPLOYMENT_TARGET=13.3
-   make -j$(sysctl -n hw.logicalcpu)
+   cmake ../VCCore -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_DEPLOYMENT_TARGET=13.3 \
+         "-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64"
+   make -j$(sysctl -n hw.logicalcpu) VCCore
 
    # Copy them into the project
    cd -
