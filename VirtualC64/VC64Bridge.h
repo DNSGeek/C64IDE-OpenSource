@@ -155,6 +155,10 @@ typedef NS_ENUM(NSInteger, VC64Standard) {
 /// until reset.
 - (void)vc64:(VC64Bridge *)bridge didJamAtPC:(uint16_t)pc;
 - (void)vc64BridgeRetroShellDidUpdate:(VC64Bridge *)bridge;
+
+/// RetroShell finished a line of console output. Typed commands come back
+/// too, as the prompt followed by the command.
+- (void)vc64:(VC64Bridge *)bridge didPrintRetroShellLine:(NSString *)line;
 @end
 
 // ─────────────────────────────────────────────────────────────

@@ -19,6 +19,9 @@
 
 #include <string>
 #include <cmath>
+#include <functional>
+#include <ostream>
+#include <streambuf>
 
 // ─────────────────────────────────────────────────────────────
 // MARK: - Failure helpers
@@ -49,6 +52,37 @@ static void setOption(vc64::VirtualC64 *emu, vc64::Opt opt, int64_t value)
         else                   emu->setAsync(opt, value);
     });
 }
+
+// ─────────────────────────────────────────────────────────────
+// MARK: - RetroShell output
+// ─────────────────────────────────────────────────────────────
+
+// RetroShell copies every finished console line, command echoes included,
+// into an extra output stream (RetroShellAPI::setStream). This unbuffered
+// stream buffer collects the characters of a line and hands each complete
+// line to `sink`. RetroShell writes to it on the emulator thread.
+class LineForwarder : public std::streambuf {
+public:
+    explicit LineForwarder(std::function<void(const std::string &)> sink)
+    : sink(std::move(sink)) { }
+
+protected:
+    int_type overflow(int_type c) override
+    {
+        if (traits_type::eq_int_type(c, traits_type::eof())) return traits_type::not_eof(c);
+        if (c == '\n') {
+            sink(line);
+            line.clear();
+        } else {
+            line.push_back(traits_type::to_char_type(c));
+        }
+        return c;
+    }
+
+private:
+    std::function<void(const std::string &)> sink;
+    std::string line;
+};
 
 // ─────────────────────────────────────────────────────────────
 // MARK: - Message mapping helper (C++ → ObjC enum)
@@ -133,6 +167,11 @@ static vc64::C64Key mapKey(VC64KeyCode key)
     // ROMs are installed after the thread is launched (see -launch...), so
     // a launched emulator is not necessarily a ready one.
     BOOL            _romsLoaded;
+
+    // The stream RetroShell copies its output into (see LineForwarder).
+    // Created at launch; deleted after _emu, which still writes to it.
+    LineForwarder   *_shellBuffer;
+    std::ostream    *_shellStream;
 }
 
 // Pump the message queue and dispatch to delegate.
@@ -171,6 +210,8 @@ static vc64::C64Key mapKey(VC64KeyCode key)
         delete _emu;
         _emu = nullptr;
     }
+    delete _shellStream;
+    delete _shellBuffer;
     [super dealloc];
 }
 
@@ -216,6 +257,25 @@ static vc64::C64Key mapKey(VC64KeyCode key)
                     });
                 }
             );
+
+            // Forward RetroShell's output, line by line, to the delegate.
+            // The bridge is held weakly: a line still on its way to the main
+            // queue when the bridge goes away is dropped.
+            // The emulator thread has no autorelease pool of its own.
+            _shellBuffer = new LineForwarder([weakSelf](const std::string &line) {
+                @autoreleasepool {
+                    NSString *text = [NSString stringWithUTF8String:line.c_str()] ?: @"";
+                    dispatch_async(dispatch_get_main_queue(), ^{
+                        VC64Bridge *bridge = weakSelf;
+                        id<VC64BridgeDelegate> d = bridge.delegate;
+                        if ([d respondsToSelector:@selector(vc64:didPrintRetroShellLine:)]) {
+                            [d vc64:bridge didPrintRetroShellLine:text];
+                        }
+                    });
+                }
+            });
+            _shellStream = new std::ostream(_shellBuffer);
+            _emu->retroShell.setStream(*_shellStream);
         }
 
         // NOTE: We do NOT install a separate polling NSTimer. The launch
