@@ -412,22 +412,25 @@ final class VC64EmulatorWindowController: NSWindowController, NSWindowDelegate {
     private var renderer: VC64Renderer!
     private var displayLink: CVDisplayLink?
 
-    /// Native C64 PAL output is 403 × 284 visible pixels.
+    /// The PAL picture is 384 × 284 visible pixels (VC64VideoStandard).
     /// Double it for a crisp non-retina window; the MTKView handles scaling.
-    private let windowWidth:  CGFloat = 806
+    /// syncVideoStandard(_:) resizes to the standard actually emulated.
+    private let windowWidth:  CGFloat = 768
     private let windowHeight: CGFloat = 568
 
     init(target: VC64RunTarget) {
         self.target = target
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 806, height: 568),
+            contentRect: NSRect(x: 0, y: 0, width: windowWidth, height: windowHeight),
             styleMask:   [.titled, .closable, .miniaturizable, .resizable],
             backing:     .buffered,
             defer:       false
         )
         window.title            = "VirtualC64"
-        window.minSize          = NSSize(width: 403, height: 284)
+        // One emulated pixel per point at the smallest. NTSC is shorter
+        // (235 lines), so the floor is its height.
+        window.minSize          = NSSize(width: 384, height: 235)
         window.backgroundColor  = .black
         window.center()
 
@@ -461,7 +464,7 @@ final class VC64EmulatorWindowController: NSWindowController, NSWindowDelegate {
         renderer.visibleRect = standard.visibleAreaUV
 
         // Resize so the content aspect matches the crop (PAL 384x284 vs
-        // NTSC 411x235 source pixels, doubled). Skip if unchanged so we
+        // NTSC 384x235 source pixels, doubled). Skip if unchanged so we
         // don't stomp a user resize on every run.
         let uv = standard.visibleAreaUV
         let size = NSSize(
@@ -601,9 +604,15 @@ final class VC64EmulatorWindowController: NSWindowController, NSWindowDelegate {
 /// not transparent), so it returns (0,0,1,1) — useless. We use hardcoded
 /// crop values per standard instead.
 ///
-/// NOTE: These UV coordinates are empirically tuned against VCCore's output.
-/// If the underlying renderer changes its internal texture layout, these
-/// values will need to be re-tuned.
+/// The rects come from VCCore's layout constants (Constants.h): the visible
+/// pixels of a line are FIRST_VISIBLE_PIXEL (104) on, VISIBLE_PIXELS (384)
+/// wide, for both standards, and the picture starts at FIRST_VISIBLE_LINE
+/// (16). It ends after line 299 (PAL) or 250 (NTSC); measured from VirtualC64
+/// 6.2's frames, where those are the last border lines. The NTSC rect used
+/// before (x 55..465, y 27..261) sat 49 pixels left of the picture and 11
+/// lines below it: checkerboard down the left and along the bottom, the right
+/// border cut to 10 pixels, no top border. VirtualC64's own app crops to the
+/// same rects less one column and line (Canvas.largestVisible).
 enum VC64VideoStandard {
     case pal
     case ntsc
@@ -613,31 +622,22 @@ enum VC64VideoStandard {
     var visibleAreaUV: SIMD4<Float> {
         switch self {
         case .pal:
-            // Empirically tuned against VCCore's PAL output to eliminate the
-            // checkerboard debug pattern. The visible area is biased rightward
-            // inside the 520-wide buffer (it's not centred). If you see a
-            // checkerboard sliver on the left, raise uMin. If the right border
-            // looks clipped, raise uMax. Top/bottom are well-centred.
-            //   x: [102, 486] of 520  (width 384, gives natural-looking side
-            //                          borders roughly matching top/bottom)
-            //   y: [16, 300] of 312   (height 284, classic PAL active height)
+            //   x: [104, 488) of 520  (border 32 + screen 320 + border 32)
+            //   y: [16, 300) of 312   (284 lines: top border 35, bottom 49)
             return SIMD4<Float>(
-                102.0 / 520.0,   // uMin ≈ 0.1962
+                104.0 / 520.0,   // uMin = 0.2
                 16.0 / 312.0,    // vMin ≈ 0.0513
-                486.0 / 520.0,   // uMax ≈ 0.9346
+                488.0 / 520.0,   // uMax ≈ 0.9385
                 300.0 / 312.0    // vMax ≈ 0.9615
             )
         case .ntsc:
-            // NTSC visible region inside VCCore's texture:
-            //   x: [55, 466] of 520  (width 411)
-            //   y: [27, 262] of 312  (height 235)
-            // NTSC pixels are slightly wider than PAL, and the active area
-            // starts a bit earlier horizontally.
+            //   x: [104, 488) of 520  (as PAL)
+            //   y: [16, 251) of 312   (235 lines: top border 10, bottom 25)
             return SIMD4<Float>(
-                55.0 / 520.0,    // uMin ≈ 0.1058
-                27.0 / 312.0,    // vMin ≈ 0.0865
-                466.0 / 520.0,   // uMax ≈ 0.8962
-                262.0 / 312.0    // vMax ≈ 0.8397
+                104.0 / 520.0,   // uMin = 0.2
+                16.0 / 312.0,    // vMin ≈ 0.0513
+                488.0 / 520.0,   // uMax ≈ 0.9385
+                251.0 / 312.0    // vMax ≈ 0.8045
             )
         }
     }
