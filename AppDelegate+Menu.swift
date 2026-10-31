@@ -308,6 +308,9 @@ extension AppDelegate {
         let completion = NSMenuItem(title: "Code Completion", action: #selector(toggleCodeCompletion(_:)), keyEquivalent: "")
         completion.target = self
         menu.addItem(completion)
+        let tooltips = NSMenuItem(title: "Hover Tooltips", action: #selector(toggleHoverTooltips(_:)), keyEquivalent: "")
+        tooltips.target = self
+        menu.addItem(tooltips)
 
         return menuItem(submenu: menu)
     }

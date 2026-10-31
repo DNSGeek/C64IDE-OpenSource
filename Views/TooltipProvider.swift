@@ -14,6 +14,24 @@ class TooltipProvider {
     // Stores notification observer tokens for safe cleanup in deinit
     private var observers: [NSObjectProtocol] = []
 
+    // MARK: - Setting
+
+    /// UserDefaults key for the View > Hover Tooltips toggle. On until the
+    /// user switches it off.
+    static let hoverTooltipsDefaultsKey = "HoverTooltipsEnabled"
+
+    /// Posted after the toggle changes so a tooltip already on screen goes away.
+    static let hoverTooltipsSettingDidChange =
+        Notification.Name("C64IDE.hoverTooltipsSettingDidChange")
+
+    static var hoverTooltipsEnabled: Bool {
+        get { UserDefaults.standard.object(forKey: hoverTooltipsDefaultsKey) as? Bool ?? true }
+        set {
+            UserDefaults.standard.set(newValue, forKey: hoverTooltipsDefaultsKey)
+            NotificationCenter.default.post(name: hoverTooltipsSettingDidChange, object: nil)
+        }
+    }
+
     /// Initializes the tooltip provider for a given text view and file type.
     /// Registers for window focus-change notifications to manage tooltip lifecycle.
     init(textView: NSTextView, fileType: C64FileType) {
@@ -56,6 +74,15 @@ class TooltipProvider {
                 self?.hideTooltip()
             }
         })
+
+        // Hide a tooltip left on screen when the setting is switched off
+        observers.append(NotificationCenter.default.addObserver(
+            forName: Self.hoverTooltipsSettingDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.hideTooltip()
+        })
     }
 
     deinit {
@@ -74,6 +101,11 @@ class TooltipProvider {
 
     /// Handles mouse movement events to trigger tooltip display.
     func handleMouseMoved(at point: NSPoint, in textView: NSTextView) {
+        guard Self.hoverTooltipsEnabled else {
+            hideTooltip()
+            return
+        }
+
         // Convert screen point to text view coordinate space
         let textPoint = textView.convert(point, from: nil)
         let charIndex = textView.characterIndexForInsertion(at: textPoint)

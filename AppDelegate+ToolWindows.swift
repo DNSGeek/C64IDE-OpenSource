@@ -421,6 +421,9 @@ extension AppDelegate: NSMenuItemValidation {
         case #selector(toggleCodeCompletion(_:)):
             menuItem.state = EditorViewController.codeCompletionEnabled ? .on : .off
             return true
+        case #selector(toggleHoverTooltips(_:)):
+            menuItem.state = TooltipProvider.hoverTooltipsEnabled ? .on : .off
+            return true
         default:
             return true
         }
@@ -450,6 +453,13 @@ extension AppDelegate {
     /// read on every keystroke, so open editors follow it at once.
     @objc func toggleCodeCompletion(_ sender: Any?) {
         EditorViewController.codeCompletionEnabled.toggle()
+    }
+
+    /// Turns the editor's hover tooltips (keyword help and syntax-check
+    /// messages) on or off. Each mouse move reads the setting, so open
+    /// editors follow it at once.
+    @objc func toggleHoverTooltips(_ sender: Any?) {
+        TooltipProvider.hoverTooltipsEnabled.toggle()
     }
 
     /// Opens the build and emulator preferences sheet.
