@@ -35,10 +35,8 @@ final class VC64RunTarget: NSObject, @MainActor DebuggableTarget {
     var onBreakpoint: ((UInt16) -> Void)?
     var onJam:        ((UInt16) -> Void)?
     var onPause:      ((RegisterState) -> Void)?
-
-    /// RetroShell's console output, one line at a time, typed commands
-    /// included. The debugger sets this while it is attached.
-    var onShellOutput: ((String) -> Void)?
+    /// All of RetroShell's console output, typed commands included.
+    var onConsoleOutput: ((String) -> Void)?
 
     // MARK: - State
 
@@ -383,7 +381,7 @@ extension VC64RunTarget: VC64BridgeDelegate {
     nonisolated func vc64BridgeRetroShellDidUpdate(_ bridge: VC64Bridge) { }
 
     nonisolated func vc64(_ bridge: VC64Bridge, didPrintRetroShellLine line: String) {
-        MainActor.assumeIsolated { onShellOutput?(line) }
+        MainActor.assumeIsolated { onConsoleOutput?(line) }
     }
 
     nonisolated func vc64(_ bridge: VC64Bridge, didReceive message: VC64Message) {

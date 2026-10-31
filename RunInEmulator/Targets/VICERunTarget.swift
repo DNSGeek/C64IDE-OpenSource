@@ -32,6 +32,7 @@ final class VICERunTarget: NSObject, @MainActor DebuggableTarget {
     /// invoked for VICE targets. Declared to satisfy DebuggableTarget.
     var onJam:        ((UInt16) -> Void)?
     var onPause:      ((RegisterState) -> Void)?
+    var onConsoleOutput: ((String) -> Void)?
 
     // MARK: - Configuration
 
@@ -484,9 +485,23 @@ final class VICERunTarget: NSObject, @MainActor DebuggableTarget {
     // MARK: - Private — Send
 
     /// Send a raw command string to the VICE monitor. Used by the debugger
-    /// console's free-entry command field.
+    /// console's free-entry command field. The reply, up to the next prompt,
+    /// goes to `onConsoleOutput`. A command that leaves the monitor (`x`, `g`)
+    /// gets no prompt, so its request also collects whatever VICE prints
+    /// next, such as the stop at the next breakpoint.
     func sendRawMonitorCommand(_ command: String) {
-        sendRaw(command)
+        responseQueue.async { [weak self] in
+            guard let self else { return }
+            if let stale = self.pendingRequest { stale.cont(stale.lines) }
+            self.pendingRequest = VICEPendingRequest(kind: .generic) { [weak self] lines in
+                let reply = lines.filter { !VICEResponseParser.isPromptLine($0) }
+                guard !reply.isEmpty else { return }
+                DispatchQueue.main.async { [weak self] in
+                    MainActor.assumeIsolated { reply.forEach { self?.onConsoleOutput?($0) } }
+                }
+            }
+            self.monitorClient?.send(command)
+        }
     }
 
     private func sendRaw(_ command: String) {
@@ -542,7 +557,7 @@ final class VICERunTarget: NSObject, @MainActor DebuggableTarget {
         guard var req = pendingRequest else { return }
         req.lines.append(line)
 
-        if isTerminalLine(line, for: req.kind) {
+        if isTerminalLine(line, for: req) {
             pendingRequest = nil
             req.cont(req.lines)
         } else {
@@ -550,13 +565,19 @@ final class VICERunTarget: NSObject, @MainActor DebuggableTarget {
         }
     }
 
-    private nonisolated func isTerminalLine(_ line: String, for kind: VICEPendingRequest.Kind) -> Bool {
-        switch kind {
+    /// `request.lines` already holds `line`.
+    private nonisolated func isTerminalLine(_ line: String, for request: VICEPendingRequest) -> Bool {
+        switch request.kind {
         case .registers:     return line.hasPrefix(".;")
         case .memory,
              .disassemble,
              .breakpointList,
-             .generic:       return VICEResponseParser.isPromptLine(line)
+             .generic:
+            // A command that reaches VICE while the machine runs is answered
+            // by the prompt it prints on entering the monitor first, then the
+            // reply, then the reply's own prompt. Only that last one ends it.
+            return VICEResponseParser.isPromptLine(line)
+                && request.lines.contains { !VICEResponseParser.isPromptLine($0) }
         }
     }
 

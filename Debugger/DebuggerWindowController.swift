@@ -68,7 +68,7 @@ class DebuggerViewController: NSViewController {
                 old.onPause      = nil
                 old.onLog        = chainedForwardLog
                 chainedForwardLog = nil
-                (old as? VC64RunTarget)?.onShellOutput = nil
+                old.onConsoleOutput = nil
             }
             bindToTarget()
         }
@@ -497,13 +497,12 @@ class DebuggerViewController: NSViewController {
             commandField.placeholderString = "Type a RetroShell command…"
         }
 
-        // RetroShell's replies, typed commands included (it echoes them
-        // after its prompt, which shows the console the shell is in).
-        if let vc64 = t as? VC64RunTarget {
-            vc64.onShellOutput = { [weak self] line in
-                guard let self else { return }
-                self.appendConsole(line, color: self.consoleGreen)
-            }
+        // Replies to the commands typed below.
+        t.onConsoleOutput = { [weak self] line in
+            guard let self else { return }
+            self.appendConsole(line, color: self.consoleGreen)
+        }
+        if t is VC64RunTarget {
             appendConsole("RetroShell: 'help' lists its commands, 'debugger' switches to its debug console.",
                           color: .gray)
         }
@@ -618,10 +617,8 @@ class DebuggerViewController: NSViewController {
     }
 
     /// Routes a raw command to whichever console the target speaks: VICE's
-    /// text monitor or VirtualC64's RetroShell. RetroShell's replies come back
-    /// through onShellOutput (see bindToTarget). VICE's replies to these raw
-    /// commands are not shown: its target only collects the lines that answer
-    /// its own requests.
+    /// text monitor or VirtualC64's RetroShell. Replies come back through the
+    /// target's onConsoleOutput (see bindToTarget).
     private func sendMonitorCommand(_ cmd: String, to target: any DebuggableTarget) {
         if let vice = target as? VICERunTarget {
             vice.sendRawMonitorCommand(cmd)

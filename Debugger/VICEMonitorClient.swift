@@ -192,17 +192,51 @@ class VICEMonitorClient {
                 while let newlineRange = accumulated.range(of: "\n") {
                     let line = String(accumulated[accumulated.startIndex..<newlineRange.lowerBound])
                     accumulated = String(accumulated[newlineRange.upperBound...])
+                    dispatch(line)
+                }
 
-                    let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !trimmed.isEmpty else { continue }
-
-                    if Self.isBreakpointHit(trimmed) {
-                        onBreakpoint?(trimmed)
-                    }
-                    onResponse?(trimmed)
+                // The prompt has no newline after it. Hand it on as soon as
+                // it is all that is left, so the reply it ends is complete
+                // now rather than when the next one arrives.
+                let (prompts, rest) = Self.splitPrompts(accumulated)
+                if !prompts.isEmpty, rest.allSatisfy(\.isWhitespace) {
+                    prompts.forEach { onResponse?($0) }
+                    accumulated = ""
                 }
             }
         }
+    }
+
+    /// Hands one line of monitor output to `onResponse` / `onBreakpoint`,
+    /// with any prompts at its front as lines of their own.
+    private func dispatch(_ line: String) {
+        let (prompts, rest) = Self.splitPrompts(line)
+        prompts.forEach { onResponse?($0) }
+
+        let trimmed = rest.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        if Self.isBreakpointHit(trimmed) {
+            onBreakpoint?(trimmed)
+        }
+        onResponse?(trimmed)
+    }
+
+    /// VICE ends every reply with its prompt, `(C:$0821) `, and sends no
+    /// newline after it. Split on newlines alone, the prompt waited until the
+    /// next reply arrived and was then glued to the front of that reply's
+    /// first line. Nothing ever saw a prompt line, so every request that ends
+    /// at the prompt (memory, disassembly, breakpoint list) ran into its
+    /// timeout and came back empty. This splits the prompts off the front of
+    /// `text` (several when replies were empty) and returns the rest.
+    private static func splitPrompts(_ text: String) -> (prompts: [String], rest: Substring) {
+        var prompts: [String] = []
+        var rest = Substring(text)
+        while let match = rest.drop(while: \.isWhitespace).prefixMatch(of: /\([0-9A-Za-z]+:\$[0-9A-Fa-f]{4}\)/) {
+            prompts.append(String(match.output))
+            rest = rest[match.range.upperBound...]
+        }
+        return (prompts, rest)
     }
 
     /// True only for VICE's "the CPU stopped here" announcement, which looks
