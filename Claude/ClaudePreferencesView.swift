@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 // MARK: - View Model
 
@@ -61,6 +62,11 @@ final class ClaudePreferencesViewModel: ObservableObject {
     }
 
     private func opportunisticRefresh(for provider: ClaudeAPIProvider) async {
+        // Custom has no default URL to fall back to; don't probe one.
+        if provider == .custom,
+           ClaudeAPIService.shared.customBaseURL(for: provider).isEmpty {
+            return
+        }
         let key = ClaudeAPIService.shared.loadAPIKey(for: provider)
         await ClaudeModelCatalog.shared.refreshIfStale(
             provider: provider,
@@ -72,9 +78,22 @@ final class ClaudePreferencesViewModel: ObservableObject {
         }
     }
 
-    /// Catalog entry for the currently selected model.
+    /// The model name as typed, trimmed.
+    var trimmedModelID: String {
+        selectedModelID.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// True when the typed model name matches an entry in the fetched list,
+    /// so its capabilities (thinking, token limit) are actually known.
+    var isListedModel: Bool {
+        models.contains { $0.id == trimmedModelID }
+    }
+
+    /// Catalog entry for the model currently typed/selected, or a neutral
+    /// stand-in when it isn't in the list.
     var selectedModel: ClaudeModelOption {
-        models.first { $0.id == selectedModelID } ?? ClaudeAPIService.shared.modelOption(for: selectedProvider)
+        models.first { $0.id == trimmedModelID }
+            ?? ClaudeAPIService.unlistedModelOption(id: trimmedModelID)
     }
 
     /// Valid max-token range for the currently selected model.
@@ -89,8 +108,13 @@ final class ClaudePreferencesViewModel: ObservableObject {
     func refreshModels() async {
         let provider = selectedProvider
         let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedKey.isEmpty else {
+        guard !trimmedKey.isEmpty || !provider.requiresAPIKey else {
             errorMessage = "Enter an API key before refreshing the model list."
+            return
+        }
+        if provider == .custom,
+           customBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            errorMessage = "Enter the Custom API URL before refreshing the model list."
             return
         }
 
@@ -115,7 +139,7 @@ final class ClaudePreferencesViewModel: ObservableObject {
                 provider: provider,
                 apiKey: trimmedKey,
                 baseURL: baseURL,
-                keepingSelected: selectedModelID
+                keepingSelected: trimmedModelID
             )
             errorMessage = nil
         } catch {
@@ -128,9 +152,10 @@ final class ClaudePreferencesViewModel: ObservableObject {
         guard provider == selectedProvider else { return } // user switched providers meanwhile
         models          = ClaudeModelCatalog.shared.models(for: provider)
         modelsFetchedAt = ClaudeModelCatalog.shared.fetchedAt(for: provider)
-        // If a refresh removed the selected model, fall back to the
-        // service's resolution (default, or newest available).
-        if !models.isEmpty, !models.contains(where: { $0.id == selectedModelID }) {
+        // The model name is free text: a refresh never replaces what the
+        // user typed, even if the new list doesn't contain it. Only fill
+        // in a default when the field is empty.
+        if trimmedModelID.isEmpty {
             selectedModelID = ClaudeAPIService.shared.modelID(for: provider)
         }
     }
@@ -140,8 +165,14 @@ final class ClaudePreferencesViewModel: ObservableObject {
     /// returns false.
     func save() -> Bool {
         let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedKey.isEmpty else {
+        guard !trimmedKey.isEmpty || !selectedProvider.requiresAPIKey else {
             errorMessage = "API key cannot be empty."
+            return false
+        }
+
+        let modelID = trimmedModelID
+        guard !modelID.isEmpty else {
+            errorMessage = "Enter a model name, or pick one from the list."
             return false
         }
 
@@ -170,11 +201,17 @@ final class ClaudePreferencesViewModel: ObservableObject {
             return false
         }
 
-        do {
-            try ClaudeAPIService.shared.saveAPIKey(trimmedKey, for: selectedProvider)
-        } catch {
-            errorMessage = "Failed to save: \(error.localizedDescription)"
-            return false
+        if trimmedKey.isEmpty {
+            // Only reachable for Custom: no key means no key, so drop any
+            // previously stored one rather than keep sending it.
+            ClaudeAPIService.shared.deleteAPIKey(for: selectedProvider)
+        } else {
+            do {
+                try ClaudeAPIService.shared.saveAPIKey(trimmedKey, for: selectedProvider)
+            } catch {
+                errorMessage = "Failed to save: \(error.localizedDescription)"
+                return false
+            }
         }
 
         ClaudeAPIService.shared.apiProvider = selectedProvider
@@ -183,7 +220,7 @@ final class ClaudePreferencesViewModel: ObservableObject {
         } else {
             ClaudeAPIService.shared.setCustomBaseURL(trimmedCustomURL, for: selectedProvider)
         }
-        ClaudeAPIService.shared.setModelID(selectedModelID, for: selectedProvider)
+        ClaudeAPIService.shared.setModelID(modelID, for: selectedProvider)
         ClaudeAPIService.shared.thinkingEnabled = thinkingEnabled
         ClaudeAPIService.shared.maxTokens = tokens
 
@@ -216,6 +253,9 @@ struct ClaudePreferencesView: View {
         guard viewModel.selectedProvider == .anthropic else {
             return "Extended thinking is only wired up for Anthropic models right now."
         }
+        if !viewModel.isListedModel {
+            return "Extended thinking is off for models that aren't in the fetched list, since their capabilities are unknown."
+        }
         switch viewModel.selectedModel.thinking {
         case .alwaysOn:
             return "This model manages thinking automatically; it cannot be turned off."
@@ -231,7 +271,9 @@ struct ClaudePreferencesView: View {
             return "Model list fetched \(fetched.formatted(date: .abbreviated, time: .shortened))."
         }
         if viewModel.models.isEmpty {
-            return "No models yet for \(viewModel.selectedProvider.displayName). Add an API key, then Refresh."
+            return viewModel.selectedProvider.requiresAPIKey
+                ? "No models yet for \(viewModel.selectedProvider.displayName). Type a model name, or add an API key and Refresh."
+                : "No models yet. Type a model name, or set the API URL and Refresh."
         }
         return "Built-in placeholder list for \(viewModel.selectedProvider.displayName). Save an API key, then Refresh to fetch the current list."
     }
@@ -250,12 +292,15 @@ struct ClaudePreferencesView: View {
             }
             .pickerStyle(.menu)
 
-            Text("Enter your API key for \(viewModel.selectedProvider.displayName). It's stored securely in the macOS Keychain, separately for each provider.")
+            Text(viewModel.selectedProvider.requiresAPIKey
+                 ? "Enter your API key for \(viewModel.selectedProvider.displayName). It's stored securely in the macOS Keychain, separately for each provider."
+                 : "API key is optional for a custom endpoint; leave it blank if your server doesn't use one. If set, it's stored securely in the macOS Keychain.")
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            SecureField("API Key", text: $viewModel.apiKey)
+            SecureField(viewModel.selectedProvider.requiresAPIKey ? "API Key" : "API Key (optional)",
+                        text: $viewModel.apiKey)
                 .textFieldStyle(.roundedBorder)
                 .font(.system(.body, design: .monospaced))
 
@@ -285,7 +330,7 @@ struct ClaudePreferencesView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 } else {
                     TextField(
-                        viewModel.selectedProvider == .custom ? "Required, e.g. https://your-server/v1" : "Optional override",
+                        viewModel.selectedProvider == .custom ? "Required, e.g. http://localhost:11434 or https://your-server" : "Optional override",
                         text: $viewModel.customBaseURL
                     )
                     .textFieldStyle(.roundedBorder)
@@ -293,7 +338,7 @@ struct ClaudePreferencesView: View {
                     .autocorrectionDisabled()
 
                     Text(viewModel.selectedProvider == .custom
-                         ? "Base URL for your custom, OpenAI-compatible API endpoint."
+                         ? "Base URL for your custom, OpenAI-compatible API endpoint. Plain http:// is allowed for self-hosted servers, but it sends your prompts and API key unencrypted; use https:// for anything outside your own network."
                          : "Optional. Point this at a compatible proxy instead of \(viewModel.selectedProvider.defaultBaseURL). Leave blank to use the default.")
                         .font(.caption)
                         .foregroundColor(.secondary)
@@ -306,18 +351,15 @@ struct ClaudePreferencesView: View {
             // Model selection + refresh
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
-                    if viewModel.models.isEmpty {
-                        Text("No models available yet.")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    } else {
-                        Picker("Model:", selection: $viewModel.selectedModelID) {
-                            ForEach(viewModel.models) { option in
-                                Text(option.displayName).tag(option.id)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                    }
+                    // Editable: type any model name, or pick from the
+                    // fetched list with the arrow. The list holds model IDs
+                    // because that's what gets sent to the API.
+                    Text("Model:")
+                    ModelNameComboBox(
+                        text: $viewModel.selectedModelID,
+                        items: viewModel.models.map(\.id)
+                    )
+                    .frame(minWidth: 240)
 
                     if viewModel.isRefreshingModels {
                         ProgressView()
@@ -329,6 +371,13 @@ struct ClaudePreferencesView: View {
                         .controlSize(.small)
                         .help("Fetch the current model list for \(viewModel.selectedProvider.displayName)")
                     }
+                }
+                if !viewModel.trimmedModelID.isEmpty {
+                    Text(viewModel.isListedModel
+                         ? viewModel.selectedModel.displayName
+                         : "Not in the fetched list; it will be sent as typed.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 }
                 Text(modelListCaption)
                     .font(.caption)
@@ -386,10 +435,80 @@ struct ClaudePreferencesView: View {
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(viewModel.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(viewModel.selectedProvider.requiresAPIKey
+                          && viewModel.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
         .padding(20)
         .frame(width: 460)
+    }
+}
+
+// MARK: - Model Name Combo Box
+
+/// Editable model-name field with a dropdown of known models: an NSComboBox,
+/// since SwiftUI has no combo box on macOS 13. Typing updates `text`
+/// directly; choosing a list entry replaces `text` with that entry.
+private struct ModelNameComboBox: NSViewRepresentable {
+    @Binding var text: String
+    var items: [String]
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeNSView(context: Context) -> NSComboBox {
+        let box = NSComboBox()
+        box.usesDataSource = false
+        box.completes = true                // inline autocomplete from the list
+        box.numberOfVisibleItems = 15
+        box.isButtonBordered = true
+        box.font = .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+        box.placeholderString = "Model name"
+        box.delegate = context.coordinator
+        box.addItems(withObjectValues: items)
+        context.coordinator.items = items
+        box.stringValue = text
+        return box
+    }
+
+    func updateNSView(_ box: NSComboBox, context: Context) {
+        context.coordinator.parent = self
+        if context.coordinator.items != items {
+            box.removeAllItems()
+            box.addItems(withObjectValues: items)
+            context.coordinator.items = items
+        }
+        // Only push external changes (provider switch, list pick, default
+        // fill-in). While typing, the delegate keeps both sides equal, so
+        // this never fires mid-edit and never moves the cursor.
+        if box.stringValue != text {
+            box.stringValue = text
+        }
+    }
+
+    final class Coordinator: NSObject, NSComboBoxDelegate {
+        var parent: ModelNameComboBox
+        var items: [String] = []
+
+        init(_ parent: ModelNameComboBox) { self.parent = parent }
+
+        func controlTextDidChange(_ notification: Notification) {
+            guard let box = notification.object as? NSComboBox else { return }
+            parent.text = box.stringValue
+        }
+
+        func controlTextDidEndEditing(_ notification: Notification) {
+            guard let box = notification.object as? NSComboBox else { return }
+            parent.text = box.stringValue
+        }
+
+        // Fires before the field's stringValue changes, so read the picked
+        // item directly instead of box.stringValue.
+        func comboBoxSelectionDidChange(_ notification: Notification) {
+            guard let box = notification.object as? NSComboBox else { return }
+            let index = box.indexOfSelectedItem
+            guard index >= 0, index < box.numberOfItems,
+                  let picked = box.itemObjectValue(at: index) as? String else { return }
+            parent.text = picked
+        }
     }
 }

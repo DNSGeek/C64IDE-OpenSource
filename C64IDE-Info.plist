@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	Merged into the Xcode-generated Info.plist (GENERATE_INFOPLIST_FILE = YES).
+	Only keys that cannot be expressed as INFOPLIST_KEY_* build settings live here.
+
+	NSAllowsArbitraryLoads permits plain http:// to any host, so the AI
+	assistant can reach self-hosted LLM servers whatever their host name
+	(including custom TLDs that route on the Host header) and the U64 client
+	can reach an Ultimate 64 by host name. ATS has no "any private host"
+	option, so this is all-or-nothing. Code that must be secure
+	(UpdateChecker) enforces https itself.
+
+	Do NOT add NSAllowsLocalNetworking alongside this key: macOS ignores
+	NSAllowsArbitraryLoads when NSAllowsLocalNetworking is present.
+	-->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
+</dict>
+</plist>

@@ -157,7 +157,8 @@ final class ClaudeModelCatalog {
         if let fetched = fetchedAt(for: provider), Date().timeIntervalSince(fetched) < Self.cacheTTL {
             return
         }
-        guard let apiKey, !apiKey.isEmpty else { return }
+        let apiKey = apiKey ?? ""
+        guard !apiKey.isEmpty || !provider.requiresAPIKey else { return }
         try? await forceRefresh(
             provider: provider,
             apiKey: apiKey,
@@ -322,7 +323,9 @@ final class ClaudeModelCatalog {
 
     private func fetchOpenAIStyleModels(apiKey: String, baseURL: URL, provider: ClaudeAPIProvider) async throws -> [ClaudeModelOption] {
         var request = URLRequest(url: baseURL.appendingPathComponent("v1/models"))
-        request.setValue(provider.apiKeyPrefix + apiKey, forHTTPHeaderField: provider.apiKeyHeader)
+        if !apiKey.isEmpty {
+            request.setValue(provider.apiKeyPrefix + apiKey, forHTTPHeaderField: provider.apiKeyHeader)
+        }
         request.timeoutInterval = 30
 
         let (data, response): (Data, URLResponse)

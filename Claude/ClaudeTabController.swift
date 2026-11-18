@@ -358,7 +358,7 @@ final class ClaudeTabController: NSViewController {
         let text = inputField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !isWaiting else { return }
 
-        guard ClaudeAPIService.shared.hasAPIKey else {
+        guard ClaudeAPIService.shared.isReadyToSend else {
             appendError("No API key configured for \(ClaudeAPIService.shared.apiProvider.displayName). Click ⚙ to add one.")
             return
         }

@@ -203,7 +203,10 @@ final class ClaudeAPIService {
         context: ClaudeIDEContext
     ) async throws -> (text: String, usage: ClaudeUsage) {
 
-        guard let apiKey = loadAPIKey() else {
+        // Custom endpoints (Ollama, LM Studio, ...) often need no key, so an
+        // empty key is allowed there; every other provider requires one.
+        let apiKey = loadAPIKey() ?? ""
+        guard !apiKey.isEmpty || !apiProvider.requiresAPIKey else {
             throw ClaudeAPIError.noAPIKey
         }
 
@@ -392,7 +395,9 @@ final class ClaudeAPIService {
         request.httpMethod = "POST"
         request.httpBody   = bodyData
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(apiProvider.apiKeyPrefix + apiKey, forHTTPHeaderField: apiProvider.apiKeyHeader)
+        if !apiKey.isEmpty {
+            request.setValue(apiProvider.apiKeyPrefix + apiKey, forHTTPHeaderField: apiProvider.apiKeyHeader)
+        }
         request.timeoutInterval = 300
 
         let (data, response): (Data, URLResponse)
@@ -627,14 +632,14 @@ final class ClaudeAPIService {
     /// isn't in its catalog, e.g. after a model is retired.
     func modelID(for provider: ClaudeAPIProvider) -> String {
         let available = Self.availableModels(for: provider)
-        let storedRaw = UserDefaults.standard.string(forKey: Self.modelDefaultsKey(for: provider))
+        let stored = UserDefaults.standard.string(forKey: Self.modelDefaultsKey(for: provider))?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
-        if let stored = storedRaw, available.contains(where: { $0.id == stored }) {
-            return stored
-        }
-        if available.isEmpty, let stored = storedRaw, !stored.isEmpty {
-            // Nothing fetched yet to validate against (e.g. Custom before
-            // the first successful Refresh) — trust the last saved value.
+        // The model name is free text in Preferences, so a saved value is
+        // used as-is even when it isn't in the fetched list (a model newer
+        // than the provider's list endpoint, or one a custom server serves
+        // but doesn't advertise). Only fall back when nothing is saved.
+        if !stored.isEmpty {
             return stored
         }
         if let fallback = Self.defaultModelID(for: provider),
@@ -660,13 +665,15 @@ final class ClaudeAPIService {
         if let option = ClaudeModelCatalog.shared.option(for: id, provider: provider) {
             return option
         }
-        if let first = Self.availableModels(for: provider).first {
-            return first
-        }
-        // No catalog entry yet (e.g. Custom before the first Refresh) —
-        // synthesize a placeholder instead of borrowing another provider's
-        // model.
-        return ClaudeModelOption(
+        return Self.unlistedModelOption(id: id)
+    }
+
+    /// Stand-in for a model that isn't in the fetched list (typed by hand,
+    /// or no list fetched yet). Its real capabilities are unknown, so it
+    /// gets neutral defaults: no extended thinking, the general token cap.
+    /// Never borrow another listed model's capabilities for it.
+    static func unlistedModelOption(id: String) -> ClaudeModelOption {
+        ClaudeModelOption(
             id: id.isEmpty ? "unknown" : id,
             displayName: id.isEmpty ? "No model selected" : id,
             thinking: .unsupported,
@@ -811,6 +818,10 @@ final class ClaudeAPIService {
     /// Convenience: whether the currently selected provider has a key.
     var hasAPIKey: Bool { hasAPIKey(for: apiProvider) }
 
+    /// Whether the current provider has what it needs to send a request:
+    /// a stored key, or no key required (Custom).
+    var isReadyToSend: Bool { !apiProvider.requiresAPIKey || hasAPIKey }
+
     /// Delete the stored API key for a specific provider.
     func deleteAPIKey(for provider: ClaudeAPIProvider) {
         let query: [CFString: Any] = [
@@ -926,4 +937,12 @@ final class ClaudeAPIService {
 
         return prompt
     }
+}
+
+// MARK: - API Key Requirement
+
+extension ClaudeAPIProvider {
+    /// Custom endpoints are usually self-hosted servers (Ollama, LM Studio,
+    /// llama.cpp, ...) that take no key, so the key is optional there.
+    var requiresAPIKey: Bool { self != .custom }
 }
