@@ -80,6 +80,7 @@ extension AppDelegate {
         recentMenuItem.submenu = recentMenu
         recentMenuItem.tag = 9001
         menu.addItem(recentMenuItem)
+        recentProjectsMenu = recentMenu
         rebuildRecentProjectsMenu()
 
         menu.addItem(.separator())
