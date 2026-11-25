@@ -73,9 +73,8 @@ final class ProjectManager {
             recentProjects = Array(recentProjects.prefix(maxRecentProjects))
         }
         UserDefaults.standard.set(recentProjects.map { $0.path }, forKey: recentProjectsKey)
-        // Rebuild the Recent Projects submenu
-        NotificationCenter.default.post(name: .projectDidOpen, object: self,
-                                        userInfo: ["projectURL": url])
+        // The caller posts .projectDidOpen, whose handler rebuilds the
+        // Recent Projects submenu; posting it here too ran that handler twice.
     }
 
     func clearRecentProjects() {

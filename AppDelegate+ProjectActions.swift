@@ -216,9 +216,7 @@ extension AppDelegate {
 
     /// Rebuilds the recent projects submenu with current entries.
     @MainActor func rebuildRecentProjectsMenu() {
-        guard let fileMenu = NSApp.mainMenu?.item(withTitle: "File")?.submenu,
-              let recentItem = fileMenu.items.first(where: { $0.tag == 9001 }),
-              let recentMenu = recentItem.submenu else { return }
+        guard let recentMenu = recentProjectsMenu else { return }
 
         recentMenu.removeAllItems()
         let recents = ProjectManager.shared.recentProjects

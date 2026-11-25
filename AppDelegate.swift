@@ -55,5 +55,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var pendingBuildContinuation: ((BuildResult) -> Void)?
     /// Optional reference to the active About panel.
     var aboutPanel: NSPanel?
+    /// The File → Recent Projects submenu, kept so it can be rebuilt directly
+    /// (the top-level File menu item is untitled, so a title lookup fails).
+    var recentProjectsMenu: NSMenu?
 }
 
