@@ -25,6 +25,31 @@ enum ReferenceTab: Int, CaseIterable {
     }
 }
 
+// MARK: - Shared Detail Text View
+
+/// Builds the read-only detail pane used by the Commands, Memory and ROM tabs.
+///
+/// Uses NSTextView.scrollableTextView() so the text view tracks the scroll
+/// view's width and grows vertically. A bare NSTextView(frame: .zero) dropped
+/// into a scroll view stays 0 pt wide after layout; newer AppKit happens to
+/// recover from that, but macOS 15 does not, and the pane renders empty.
+fileprivate func makeReferenceDetailTextView() -> (scrollView: NSScrollView, textView: NSTextView) {
+    let scrollView = NSTextView.scrollableTextView()
+    scrollView.hasVerticalScroller = true
+    scrollView.borderType = .noBorder
+
+    // scrollableTextView() always returns an NSTextView document view.
+    let textView = scrollView.documentView as! NSTextView
+    textView.isEditable = false
+    textView.isSelectable = true
+    textView.isRichText = true
+    textView.backgroundColor = AppTheme.current.panelDetailBackground
+    textView.textColor = AppTheme.current.panelText
+    textView.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+    textView.textContainerInset = NSSize(width: 8, height: 8)
+    return (scrollView: scrollView, textView: textView)
+}
+
 // MARK: - Reference Panel Controller
 
 /// Orchestrates the reference panel, managing tabs, search, and theme updates.
@@ -627,18 +652,9 @@ class CommandListViewController: NSViewController, NSTableViewDataSource, NSTabl
         view.addSubview(tableScrollView)
 
         // ── Detail ───────────────────────────────────────────
-        detailView = NSTextView(frame: .zero)
-        detailView.isEditable = false
-        detailView.isSelectable = true
-        detailView.backgroundColor = AppTheme.current.panelDetailBackground
-        detailView.textColor = AppTheme.current.panelText
-        detailView.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
-        detailView.textContainerInset = NSSize(width: 8, height: 8)
-
-        detailScrollView = NSScrollView(frame: .zero)
-        detailScrollView.documentView = detailView
-        detailScrollView.hasVerticalScroller = true
-        detailScrollView.borderType = .noBorder
+        let detail = makeReferenceDetailTextView()
+        detailScrollView = detail.scrollView
+        detailView = detail.textView
         view.addSubview(detailScrollView)
 
         selectFirstEntry()
@@ -858,18 +874,9 @@ class MemoryReferenceViewController: NSViewController, NSTableViewDataSource, NS
         tableScrollView.backgroundColor = bgColor
         view.addSubview(tableScrollView)
 
-        detailView = NSTextView(frame: .zero)
-        detailView.isEditable = false
-        detailView.isSelectable = true
-        detailView.backgroundColor = AppTheme.current.panelDetailBackground
-        detailView.textColor = AppTheme.current.panelText
-        detailView.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
-        detailView.textContainerInset = NSSize(width: 8, height: 8)
-
-        detailScrollView = NSScrollView(frame: .zero)
-        detailScrollView.documentView = detailView
-        detailScrollView.hasVerticalScroller = true
-        detailScrollView.borderType = .noBorder
+        let detail = makeReferenceDetailTextView()
+        detailScrollView = detail.scrollView
+        detailView = detail.textView
         view.addSubview(detailScrollView)
 
         if !filteredEntries.isEmpty {
@@ -1077,18 +1084,9 @@ class KernalListViewController: NSViewController, NSTableViewDataSource, NSTable
         tableScrollView.backgroundColor = bgColor
         view.addSubview(tableScrollView)
 
-        detailView = NSTextView(frame: .zero)
-        detailView.isEditable = false
-        detailView.isSelectable = true
-        detailView.backgroundColor = AppTheme.current.panelDetailBackground
-        detailView.textColor = AppTheme.current.panelText
-        detailView.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
-        detailView.textContainerInset = NSSize(width: 8, height: 8)
-
-        detailScrollView = NSScrollView(frame: .zero)
-        detailScrollView.documentView = detailView
-        detailScrollView.hasVerticalScroller = true
-        detailScrollView.borderType = .noBorder
+        let detail = makeReferenceDetailTextView()
+        detailScrollView = detail.scrollView
+        detailView = detail.textView
         view.addSubview(detailScrollView)
 
         if !filteredItems.isEmpty {
