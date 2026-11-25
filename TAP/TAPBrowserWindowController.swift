@@ -337,15 +337,18 @@ class TAPBrowserViewController: NSViewController,
         logDisclosure.autoresizingMask = [.minYMargin]
         view.addSubview(logDisclosure)
 
-        logTextView = NSTextView(frame: .zero)
+        // scrollableTextView() wires the text view to track the scroll view's
+        // width. A bare NSTextView(frame: .zero) stays 0 pt wide after the
+        // scroll view is resized, and renders nothing on macOS 15.
+        logScrollView = NSTextView.scrollableTextView()
+        logScrollView.frame = NSRect(x: 12, y: 56, width: w - 24, height: 0)
+        logTextView = logScrollView.documentView as? NSTextView
         logTextView.isEditable      = false
         logTextView.isSelectable    = true
         logTextView.backgroundColor = tableBg
         logTextView.textColor       = dimColor
         logTextView.font            = NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
 
-        logScrollView = NSScrollView(frame: NSRect(x: 12, y: 56, width: w - 24, height: 0))
-        logScrollView.documentView         = logTextView
         logScrollView.hasVerticalScroller  = true
         logScrollView.borderType           = .noBorder
         logScrollView.autoresizingMask     = [.width]
