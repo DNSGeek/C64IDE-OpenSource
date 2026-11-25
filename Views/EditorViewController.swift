@@ -45,6 +45,59 @@ private final class TooltipTextView: NSTextView {
         }
     }
 
+    /// 1-indexed source line the debugger is stopped on, or nil. Painted as a
+    /// full-width band in `drawBackground(in:)` so it sits *behind* the glyphs.
+    var debugExecutionLine: Int? {
+        didSet {
+            if debugExecutionLine != oldValue { needsDisplay = true }
+        }
+    }
+
+    override func drawBackground(in rect: NSRect) {
+        super.drawBackground(in: rect)
+        guard let line = debugExecutionLine,
+              let band = debugLineRect(for: line),
+              band.intersects(rect) else { return }
+        let color = AppTheme.current.isDark
+            ? NSColor(red: 0.25, green: 0.22, blue: 0.08, alpha: 1.0)
+            : NSColor(red: 0.98, green: 0.92, blue: 0.70, alpha: 1.0)
+        color.setFill()
+        band.intersection(rect).fill()
+    }
+
+    /// Full-width rect (view coordinates) covering every line fragment of the
+    /// given 1-indexed source line, including soft-wrapped continuations.
+    private func debugLineRect(for line: Int) -> NSRect? {
+        guard line >= 1, let lm = layoutManager, let tc = textContainer else { return nil }
+        let text = string as NSString
+        var start = 0
+        var current = 1
+        while current < line {
+            let r = text.range(of: "\n", options: [], range: NSRange(location: start, length: text.length - start))
+            guard r.location != NSNotFound else { return nil }
+            start = r.location + 1
+            current += 1
+        }
+        let origin = textContainerOrigin
+        var fragRect: NSRect
+        if start >= text.length {
+            // Empty final line after a trailing newline.
+            fragRect = lm.extraLineFragmentRect
+            if fragRect.isEmpty { return nil }
+        } else {
+            let charRange = text.lineRange(for: NSRange(location: start, length: 0))
+            let glyphRange = lm.glyphRange(forCharacterRange: charRange, actualCharacterRange: nil)
+            guard glyphRange.length > 0 else { return nil }
+            fragRect = .null
+            lm.enumerateLineFragments(forGlyphRange: glyphRange) { r, _, container, _, _ in
+                if container === tc { fragRect = fragRect.union(r) }
+            }
+            if fragRect.isNull { return nil }
+        }
+        return NSRect(x: bounds.minX, y: fragRect.minY + origin.y,
+                      width: bounds.width, height: fragRect.height)
+    }
+
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         if let area = hoverTrackingArea {
@@ -305,6 +358,7 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSTextStorageD
     func highlightDebugLine(_ line: Int) {
         gutter?.debugExecutionLine = line
         gutter?.needsDisplay = true
+        (textView as? TooltipTextView)?.debugExecutionLine = line
         scrollToLine(line)
     }
 
@@ -317,6 +371,7 @@ class EditorViewController: NSViewController, NSTextViewDelegate, NSTextStorageD
     func clearDebugHighlight() {
         gutter?.debugExecutionLine = nil
         gutter?.needsDisplay = true
+        (textView as? TooltipTextView)?.debugExecutionLine = nil
     }
 
     /// Scrolls the visible viewport to ensure a 1-indexed line is visible.

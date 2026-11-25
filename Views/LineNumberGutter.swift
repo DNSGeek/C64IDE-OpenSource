@@ -33,7 +33,8 @@ class LineNumberGutter: NSView {
     var diagnosticLines: [Int: DiagnosticSeverity] = [:]
 
     /// 1-indexed line number representing the current debug execution point.
-    /// Drawing a yellow arrow and highlighting the line background.
+    /// Drawn as a yellow arrow in the gutter; the editor text view paints the
+    /// matching line background behind the source text.
     var debugExecutionLine: Int? {
         didSet { needsDisplay = true }
     }
@@ -137,14 +138,11 @@ class LineNumberGutter: NSView {
             arrowPath.close()
             arrowPath.fill()
 
-            // Highlight the editor background for this line
-            let bgColor = AppTheme.current.isDark
-                ? NSColor(red: 0.25, green: 0.22, blue: 0.08, alpha: 1.0)
-                : NSColor(red: 0.98, green: 0.92, blue: 0.70, alpha: 1.0)
-            bgColor.setFill()
-            // Note: Drawing to superview bounds may clip if the editor is resized. 
-            // For production, consider clipping to the editor's visible rect.
-            NSRect(x: Self.gutterWidth, y: y, width: superview?.bounds.width ?? 800, height: height).fill()
+            // The editor-side line band is drawn by the text view itself
+            // (TooltipTextView.drawBackground) so it stays behind the glyphs.
+            // Never paint outside the gutter's bounds here: since macOS 14
+            // NSView.clipsToBounds defaults to false, so an overflowing fill
+            // lands on top of the text and hides the source line (issue #12).
         }
 
         // Draw breakpoint dot
